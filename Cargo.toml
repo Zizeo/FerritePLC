@@ -1,0 +1,49 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/ferrite-core",
+    "crates/ferrite-ir",
+    "crates/ferrite-lang-ld",
+    "crates/ferrite-lang-sfc",
+    "crates/ferrite-lang-st",
+    "crates/ferrite-lang-fbd",
+    "crates/ferrite-project",
+    "crates/ferrite-runtime",
+    "crates/ferrite-gui",
+    "crates/ferrite-cli",
+]
+default-members = ["crates/ferrite-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["FerritePLC Team"]
+
+[workspace.dependencies]
+ferrite-core = { path = "crates/ferrite-core" }
+ferrite-ir = { path = "crates/ferrite-ir" }
+ferrite-lang-ld = { path = "crates/ferrite-lang-ld" }
+ferrite-lang-sfc = { path = "crates/ferrite-lang-sfc" }
+ferrite-lang-st = { path = "crates/ferrite-lang-st" }
+ferrite-lang-fbd = { path = "crates/ferrite-lang-fbd" }
+ferrite-project = { path = "crates/ferrite-project" }
+ferrite-runtime = { path = "crates/ferrite-runtime" }
+ferrite-gui = { path = "crates/ferrite-gui" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+thiserror = "2.0"
+anyhow = "1.0"
+logos = "0.15"
+clap = { version = "4.5", features = ["derive"] }
+ratatui = "0.29"
+crossterm = "0.28"
+eframe = "0.31"
+egui = "0.31"
+rfd = "0.15"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

@@ -1,0 +1,81 @@
+{
+  "name": "main_safety",
+  "comment": "Safety interlocks + Rising/Falling Edge Start/Stop latching",
+  "rungs": [
+    {
+      "id": "Rung_Safety",
+      "comment": "Master safety permissive: EStop_OK & Guard_Door_Closed & !High_Temp_Alarm & !Overpressure_Fault",
+      "elements": [
+        {
+          "type": "contact",
+          "symbol": "EStop_OK",
+          "kind": "NORMALLY_OPEN"
+        },
+        {
+          "type": "contact",
+          "symbol": "Guard_Door_Closed",
+          "kind": "NORMALLY_OPEN"
+        },
+        {
+          "type": "contact",
+          "symbol": "High_Temp_Alarm",
+          "kind": "NORMALLY_CLOSED"
+        },
+        {
+          "type": "contact",
+          "symbol": "Overpressure_Fault",
+          "kind": "NORMALLY_CLOSED"
+        }
+      ],
+      "coils": [
+        {
+          "symbol": "Permissive_OK",
+          "kind": "NORMAL"
+        }
+      ]
+    },
+    {
+      "id": "Rung_Start_RisingEdge",
+      "comment": "Rising edge |P| on Start_Button generates 1-scan Start_Pulse and latches Cycle_Latched (S)",
+      "elements": [
+        {
+          "type": "contact",
+          "symbol": "Permissive_OK",
+          "kind": "NORMALLY_OPEN"
+        },
+        {
+          "type": "contact",
+          "symbol": "Start_Button",
+          "kind": "RISING_EDGE"
+        }
+      ],
+      "coils": [
+        {
+          "symbol": "Start_Pulse",
+          "kind": "NORMAL"
+        },
+        {
+          "symbol": "Cycle_Latched",
+          "kind": "SET"
+        }
+      ]
+    },
+    {
+      "id": "Rung_Stop_FallingEdge",
+      "comment": "Falling edge |N| on Stop_Button release unlatches Cycle_Latched (R)",
+      "elements": [
+        {
+          "type": "contact",
+          "symbol": "Stop_Button",
+          "kind": "FALLING_EDGE"
+        }
+      ],
+      "coils": [
+        {
+          "symbol": "Cycle_Latched",
+          "kind": "RESET"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+schema_version = 1
+name = "my_automation_plant"
+version = "0.2.0"
+scan_cycle_ms = 50
+watchdog_us = 10000
+
+[[tasks]]
+name = "MainTask"
+kind = "cyclic"
+priority = 1
+interval_ms = 50
+pou_order = [
+    "main_safety",
+    "batch_seq",
+    "cip_clean",
+    "math_pid",
+    "pump_ctrl",
+]
+
+[[pous]]
+name = "main_safety"
+language = "ld"
+path = "pous/main_safety.ld.json"
+
+[[pous]]
+name = "batch_seq"
+language = "sfc"
+path = "pous/batch_seq.sfc.json"
+
+[[pous]]
+name = "cip_clean"
+language = "sfc"
+path = "pous/cip_clean.sfc.json"
+
+[[pous]]
+name = "math_pid"
+language = "st"
+path = "pous/math_pid.st"
+
+[[pous]]
+name = "pump_ctrl"
+language = "fbd"
+path = "pous/pump_ctrl.fbd.json"

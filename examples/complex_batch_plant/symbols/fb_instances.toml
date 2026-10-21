@@ -1,0 +1,31 @@
+[[instances]]
+name = "Fill_Timer"
+kind = "TON"
+comment = ""
+in_bool = false
+r_bool = false
+s_bool = false
+ld_bool = false
+q = false
+pt_ms = 1000
+et_ms = 0
+pv = 0
+cv = 0
+prev_in = false
+running = false
+
+[[instances]]
+name = "Alarm_Debounce"
+kind = "TON"
+comment = ""
+in_bool = false
+r_bool = false
+s_bool = false
+ld_bool = false
+q = false
+pt_ms = 1000
+et_ms = 0
+pv = 0
+cv = 0
+prev_in = false
+running = false

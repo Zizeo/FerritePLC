@@ -1,0 +1,79 @@
+{
+  "name": "cip_clean",
+  "comment": "Subordinate Clean-In-Place (CIP) Grafcet controlled by batch_seq.X6.state",
+  "steps": [
+    {
+      "id": "0",
+      "name": "CIP_Standby",
+      "kind": "initial",
+      "actions": []
+    },
+    {
+      "id": "1",
+      "name": "CIP_Rinse_Active",
+      "kind": "normal",
+      "actions": [
+        {
+          "qualifier": "N",
+          "target": "CIP_Pump",
+          "duration": null
+        },
+        {
+          "qualifier": "N",
+          "target": "Sanitizer_Valve",
+          "duration": null
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "name": "CIP_Complete",
+      "kind": "normal",
+      "actions": [
+        {
+          "qualifier": "P",
+          "target": "Sanitize_Count := Sanitize_Count + 1;",
+          "duration": null
+        }
+      ]
+    }
+  ],
+  "transitions": [
+    {
+      "id": "T_CIP_Start",
+      "from_steps": [
+        "0"
+      ],
+      "to_steps": [
+        "1"
+      ],
+      "receptivity": "batch_seq.X6.state AND Permissive_OK",
+      "convergence": "and",
+      "divergence": "and"
+    },
+    {
+      "id": "T_CIP_Done",
+      "from_steps": [
+        "1"
+      ],
+      "to_steps": [
+        "2"
+      ],
+      "receptivity": "Tank_Level = 0",
+      "convergence": "and",
+      "divergence": "and"
+    },
+    {
+      "id": "T_CIP_Reset",
+      "from_steps": [
+        "2"
+      ],
+      "to_steps": [
+        "0"
+      ],
+      "receptivity": "batch_seq.X0.state",
+      "convergence": "and",
+      "divergence": "and"
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "name": "pump_ctrl",
+  "comment": "Pump activation, CIP header OR gate, and temperature/level comparators",
+  "composites": [],
+  "blocks": [
+    {
+      "id": "Blk_Pump_Gate",
+      "op": "AND",
+      "inputs": {
+        "IN1": {
+          "kind": "value",
+          "expr": "Permissive_OK"
+        },
+        "IN2": {
+          "kind": "value",
+          "expr": "Fill_Valve"
+        }
+      },
+      "outputs": {
+        "OUT": "Pump_Active"
+      }
+    },
+    {
+      "id": "Blk_CIP_Header",
+      "op": "OR",
+      "inputs": {
+        "IN1": {
+          "kind": "link",
+          "from_block": "Blk_Pump_Gate",
+          "from_pin": "OUT"
+        },
+        "IN2": {
+          "kind": "value",
+          "expr": "CIP_Pump"
+        }
+      },
+      "outputs": {
+        "OUT": "Main_Header_Active"
+      }
+    },
+    {
+      "id": "Blk_Temp_Comparator",
+      "op": "GT",
+      "inputs": {
+        "IN2": {
+          "kind": "value",
+          "expr": "80.0"
+        },
+        "IN1": {
+          "kind": "value",
+          "expr": "Tank_Temp"
+        }
+      },
+      "outputs": {
+        "OUT": "High_Temp_Alarm"
+      }
+    },
+    {
+      "id": "Blk_Level_Guard",
+      "op": "GE",
+      "inputs": {
+        "IN2": {
+          "kind": "value",
+          "expr": "95"
+        },
+        "IN1": {
+          "kind": "value",
+          "expr": "Tank_Level"
+        }
+      },
+      "outputs": {
+        "OUT": "Overpressure_Fault"
+      }
+    }
+  ]
+}

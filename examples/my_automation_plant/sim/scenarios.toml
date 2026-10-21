@@ -1,0 +1,114 @@
+[[scenarios]]
+name = "complex_parallel_and_or_cross_sfc_cycle"
+description = "Verifies LD edges (|P|/|N|) -> SFC AND/OR Divergence & Convergence -> Cross-SFC CIP sequence -> ST & FBD"
+total_scans = 8
+
+[[scenarios.steps]]
+scan = 1
+description = "Scan 1: Safety interlocks healthy -> Permissive_OK, batch_seq.X0 & cip_clean.X0 initialized"
+
+[scenarios.steps.set]
+Stop_Button = true
+EStop_OK = true
+Fast_Recipe_Mode = true
+Guard_Door_Closed = true
+
+[scenarios.steps.expect]
+Permissive_OK = true
+"cip_clean.X0.state" = true
+"batch_seq.X0.state" = true
+
+[[scenarios.steps]]
+scan = 2
+description = "Scan 2: Start_Button rising edge |P| -> T1_AndDiv splits into parallel Step 1 (Water) & Step 2 (Reagent)"
+
+[scenarios.steps.set]
+Start_Button = true
+
+[scenarios.steps.expect]
+Cycle_Latched = true
+"batch_seq.X2.state" = true
+Batch_Count = 1
+Start_Pulse = true
+Main_Header_Active = true
+Fill_Valve = true
+Dosing_Valve = true
+Reagent_Ready = true
+Pump_Active = true
+"batch_seq.X1.state" = true
+Tank_Level = 25
+
+[[scenarios.steps]]
+scan = 3
+description = "Scan 3: Start_Pulse clears after 1 scan while Cycle_Latched stays SET; Tank_Level reaches 50%"
+
+[scenarios.steps.set]
+Start_Button = false
+
+[scenarios.steps.expect]
+Cycle_Latched = true
+Tank_Level = 50
+Start_Pulse = false
+
+[[scenarios.steps]]
+scan = 4
+description = "Scan 4: T2_AndConv synchronizes Step 1 & Step 2 into Step 3 (Recipe Selection)"
+
+[scenarios.steps.set]
+
+[scenarios.steps.expect]
+"batch_seq.X2.state" = false
+"batch_seq.X3.state" = true
+Fill_Valve = false
+"batch_seq.X1.state" = false
+
+[[scenarios.steps]]
+scan = 5
+description = "Scan 5: T3_Or_Fast (OR Divergence) selects Step 4 (Alt_Fast_Mix) based on Fast_Recipe_Mode"
+
+[scenarios.steps.set]
+
+[scenarios.steps.expect]
+Mix_Done = true
+"batch_seq.X5.state" = false
+"batch_seq.X4.state" = true
+Heater_On = true
+Tank_Temp = 45.0
+
+[[scenarios.steps]]
+scan = 6
+description = "Scan 6: T5_OrConv merges into Step 6 -> triggers subordinate cip_clean.X1 via cross-SFC transition"
+
+[scenarios.steps.set]
+
+[scenarios.steps.expect]
+Main_Header_Active = true
+Sanitizer_Valve = true
+"cip_clean.X1.state" = true
+Tank_Level = 0
+CIP_Pump = true
+"batch_seq.X6.state" = true
+
+[[scenarios.steps]]
+scan = 7
+description = "Scan 7: cip_clean advances to X2 (CIP_Complete); Stop_Button falling edge |N| unlatches Cycle_Latched"
+
+[scenarios.steps.set]
+Stop_Button = false
+
+[scenarios.steps.expect]
+"cip_clean.X2.state" = true
+Sanitize_Count = 1
+Cycle_Latched = false
+
+[[scenarios.steps]]
+scan = 8
+description = "Scan 8: batch_seq sees cip_clean.X2.state -> returns to X0 and resets cip_clean to X0 via S/R actions"
+
+[scenarios.steps.set]
+
+[scenarios.steps.expect]
+"cip_clean.X0.state" = true
+CIP_Pump = false
+"batch_seq.X0.state" = true
+Main_Header_Active = false
