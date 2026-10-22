@@ -20,6 +20,28 @@ pub enum WorkspaceTab {
     SymbolsAndConfig,
 }
 
+/// Visual theme of FerritePLC Studio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UiTheme {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl UiTheme {
+    pub fn visuals(self) -> Visuals {
+        match self {
+            UiTheme::Dark => Visuals::dark(),
+            UiTheme::Light => Visuals::light(),
+        }
+    }
+}
+
+/// Maximum number of undo snapshots kept in memory.
+const MAX_HISTORY: usize = 100;
+/// Edits closer together than this are coalesced into a single undo step (e.g. typing).
+const HISTORY_COALESCE: Duration = Duration::from_millis(800);
+
 pub struct FerriteStudioApp {
     pub project: Project,
     pub runtime: Option<PlcRuntime>,
@@ -34,6 +56,7 @@ pub struct FerriteStudioApp {
     pub new_pou_lang: LanguageKind,
     pub open_path_input: String,
     pub ui_lang: UiLanguage,
+    pub ui_theme: UiTheme,
     pub show_left_explorer: bool,
     pub show_right_io: bool,
     pub show_bottom_diagnostics: bool,
@@ -41,6 +64,10 @@ pub struct FerriteStudioApp {
     pub detach_right_io: bool,
     pub show_close_confirm_modal: bool,
     pub allowed_to_close: bool,
+    pub undo_stack: Vec<Project>,
+    pub redo_stack: Vec<Project>,
+    last_committed_project: Project,
+    last_edit_time: Option<Instant>,
 }
 
 impl FerriteStudioApp {
@@ -68,6 +95,7 @@ impl FerriteStudioApp {
             .to_string();
 
         Self {
+            last_committed_project: initial_project.clone(),
             project: initial_project,
             runtime,
             diagnostics,
@@ -81,6 +109,7 @@ impl FerriteStudioApp {
             new_pou_lang: LanguageKind::Ld,
             open_path_input,
             ui_lang,
+            ui_theme: UiTheme::Dark,
             show_left_explorer: true,
             show_right_io: true,
             show_bottom_diagnostics: true,
@@ -88,7 +117,76 @@ impl FerriteStudioApp {
             detach_right_io: false,
             show_close_confirm_modal: false,
             allowed_to_close: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            last_edit_time: None,
         }
+    }
+
+    /// Records a history snapshot whenever the project differs from the last committed state.
+    /// Rapid successive edits (typing, dragging) are coalesced into a single undo step.
+    pub fn track_history(&mut self) {
+        if self.project == self.last_committed_project {
+            return;
+        }
+        let now = Instant::now();
+        let coalesce = self
+            .last_edit_time
+            .is_some_and(|t| now.duration_since(t) < HISTORY_COALESCE);
+        if !coalesce {
+            let prev = std::mem::replace(&mut self.last_committed_project, self.project.clone());
+            self.undo_stack.push(prev);
+            if self.undo_stack.len() > MAX_HISTORY {
+                self.undo_stack.remove(0);
+            }
+        } else {
+            self.last_committed_project = self.project.clone();
+        }
+        self.redo_stack.clear();
+        self.last_edit_time = Some(now);
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
+    pub fn undo(&mut self) {
+        if let Some(prev) = self.undo_stack.pop() {
+            let current = std::mem::replace(&mut self.project, prev);
+            self.redo_stack.push(current);
+            self.after_history_jump(true);
+        }
+    }
+
+    pub fn redo(&mut self) {
+        if let Some(next) = self.redo_stack.pop() {
+            let current = std::mem::replace(&mut self.project, next);
+            self.undo_stack.push(current);
+            self.after_history_jump(false);
+        }
+    }
+
+    fn after_history_jump(&mut self, was_undo: bool) {
+        self.last_committed_project = self.project.clone();
+        self.last_edit_time = None;
+        self.modified = true;
+        if let WorkspaceTab::Pou(name) = &self.active_tab
+            && !self.project.pous.contains_key(name)
+        {
+            self.active_tab = WorkspaceTab::SymbolsAndConfig;
+        }
+        self.recompile_and_reset();
+        let lang = self.ui_lang;
+        self.status_banner = if was_undo {
+            lang.tr("Undo applied.", "Annulation appliquée.")
+        } else {
+            lang.tr("Redo applied.", "Rétablissement appliqué.")
+        }
+        .to_string();
     }
 
     pub fn recompile_and_reset(&mut self) {
@@ -239,9 +337,11 @@ impl FerriteStudioApp {
         let show_b = self.show_bottom_diagnostics;
         let det_l = self.detach_left_explorer;
         let det_r = self.detach_right_io;
+        let saved_theme = self.ui_theme;
         match Project::load(&path) {
             Ok(proj) => {
                 *self = Self::with_language(proj, saved_lang);
+                self.ui_theme = saved_theme;
                 self.show_left_explorer = show_l;
                 self.show_right_io = show_r;
                 self.show_bottom_diagnostics = show_b;
@@ -622,7 +722,7 @@ impl FerriteStudioApp {
                         "Shared Function Block Instances:",
                         "Instances de Blocs Fonctionnels Partagés :",
                     ));
-                    for fb in rt.tags.fbs() {
+                    for fb in rt.tags.fbs_mut() {
                         egui::Frame::NONE
                             .fill(Color32::from_rgb(26, 32, 42))
                             .stroke(Stroke::new(
@@ -632,9 +732,9 @@ impl FerriteStudioApp {
                             .inner_margin(6.0)
                             .corner_radius(4.0)
                             .show(ui, |ui| {
-                                ui.horizontal(|ui| {
+                                ui.horizontal_wrapped(|ui| {
                                     ui.strong(&fb.name);
-                                    ui.monospace(format!("({:?})", fb.kind));
+                                    ui.monospace(format!("({})", fb.kind.label()));
                                     let q_col = if fb.q {
                                         Color32::from_rgb(46, 213, 115)
                                     } else {
@@ -645,17 +745,87 @@ impl FerriteStudioApp {
                                         format!("IN={} | Q={}", fb.in_bool, fb.q),
                                     );
                                 });
-                                let ratio = if fb.pt_ms > 0 {
-                                    (fb.et_ms as f32 / fb.pt_ms as f32).clamp(0.0, 1.0)
+                                if fb.kind.is_corrector() {
+                                    ui.monospace(format!(
+                                        "SP={:.2} | PV={:.2} | ERR={:.2} => OUT={:.2}",
+                                        fb.sp_real, fb.pv_real, fb.err_real, fb.out_real
+                                    ));
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label("Kp:");
+                                        if ui
+                                            .add(
+                                                egui::DragValue::new(&mut fb.kp)
+                                                    .speed(0.1)
+                                                    .range(-10000.0..=10000.0),
+                                            )
+                                            .changed()
+                                            && let Some(p_fb) = self
+                                                .project
+                                                .fb_instances
+                                                .instances
+                                                .iter_mut()
+                                                .find(|f| f.name == fb.name)
+                                        {
+                                            p_fb.kp = fb.kp;
+                                        }
+                                        if fb.kind.has_integral() {
+                                            ui.label("Ti(s):");
+                                            if ui
+                                                .add(
+                                                    egui::DragValue::new(&mut fb.ti_s)
+                                                        .speed(0.1)
+                                                        .range(0.001..=10000.0),
+                                                )
+                                                .changed()
+                                                && let Some(p_fb) = self
+                                                    .project
+                                                    .fb_instances
+                                                    .instances
+                                                    .iter_mut()
+                                                    .find(|f| f.name == fb.name)
+                                            {
+                                                p_fb.ti_s = fb.ti_s;
+                                            }
+                                        }
+                                        if fb.kind.has_derivative() {
+                                            ui.label("Td(s):");
+                                            if ui
+                                                .add(
+                                                    egui::DragValue::new(&mut fb.td_s)
+                                                        .speed(0.05)
+                                                        .range(0.0..=10000.0),
+                                                )
+                                                .changed()
+                                                && let Some(p_fb) = self
+                                                    .project
+                                                    .fb_instances
+                                                    .instances
+                                                    .iter_mut()
+                                                    .find(|f| f.name == fb.name)
+                                            {
+                                                p_fb.td_s = fb.td_s;
+                                            }
+                                        }
+                                        if ui
+                                            .small_button(lang.tr("Reset ∫", "RAZ ∫"))
+                                            .clicked()
+                                        {
+                                            fb.reset_corrector();
+                                        }
+                                    });
                                 } else {
-                                    0.0
-                                };
-                                ui.add(
-                                    egui::ProgressBar::new(ratio).text(format!(
-                                        "ET: {} ms / PT: {} ms | CV: {}",
-                                        fb.et_ms, fb.pt_ms, fb.cv
-                                    )),
-                                );
+                                    let ratio = if fb.pt_ms > 0 {
+                                        (fb.et_ms as f32 / fb.pt_ms as f32).clamp(0.0, 1.0)
+                                    } else {
+                                        0.0
+                                    };
+                                    ui.add(
+                                        egui::ProgressBar::new(ratio).text(format!(
+                                            "ET: {} ms / PT: {} ms | CV: {}",
+                                            fb.et_ms, fb.pt_ms, fb.cv
+                                        )),
+                                    );
+                                }
                             });
                         ui.add_space(4.0);
                     }
@@ -674,8 +844,25 @@ impl FerriteStudioApp {
 
 impl eframe::App for FerriteStudioApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_visuals(Visuals::dark());
+        ctx.set_visuals(self.ui_theme.visuals());
         let lang = self.ui_lang;
+
+        // Undo / Redo keyboard shortcuts (skipped while a text field owns the keyboard,
+        // so TextEdit keeps its own native undo).
+        if !ctx.wants_keyboard_input() {
+            let undo_sc = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
+            let redo_sc = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y);
+            let redo_sc2 = egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::Z,
+            );
+            // Check the more specific Ctrl+Shift+Z first so it isn't consumed as Ctrl+Z.
+            if ctx.input_mut(|i| i.consume_shortcut(&redo_sc2) || i.consume_shortcut(&redo_sc)) {
+                self.redo();
+            } else if ctx.input_mut(|i| i.consume_shortcut(&undo_sc)) {
+                self.undo();
+            }
+        }
 
         // Intercept OS window close event to show the Save / Don't Save / Cancel confirmation popup
         if ctx.input(|i| i.viewport().close_requested()) && !self.allowed_to_close {
@@ -988,38 +1175,57 @@ impl eframe::App for FerriteStudioApp {
                         );
                     });
 
-                    // Collapsible LANGUAGE Menu
-                    ui.menu_button(
-                        format!(
-                            "{} ({}) v",
-                            lang.tr("Language", "Langue"),
+                    // Undo / Redo
+                    if ui
+                        .add_enabled(self.can_undo(), egui::Button::new(lang.tr("↶ Undo", "↶ Annuler")))
+                        .on_hover_text(lang.tr("Undo (Ctrl+Z)", "Annuler (Ctrl+Z)"))
+                        .clicked()
+                    {
+                        self.undo();
+                    }
+                    if ui
+                        .add_enabled(self.can_redo(), egui::Button::new(lang.tr("↷ Redo", "↷ Rétablir")))
+                        .on_hover_text(lang.tr("Redo (Ctrl+Y / Ctrl+Shift+Z)", "Rétablir (Ctrl+Y / Ctrl+Maj+Z)"))
+                        .clicked()
+                    {
+                        self.redo();
+                    }
+
+                    ui.separator();
+
+                    // Collapsible OPTIONS Menu (UI Language + Theme)
+                    ui.menu_button(lang.tr("Options v", "Options v"), |ui| {
+                        ui.set_min_width(200.0);
+                        ui.strong(format!(
+                            "{} ({})",
+                            lang.tr("UI Language", "Langue de l'interface"),
                             self.ui_lang.code()
-                        ),
-                        |ui| {
-                            if ui
-                                .selectable_value(
-                                    &mut self.ui_lang,
-                                    UiLanguage::En,
-                                    "EN - English",
-                                )
-                                .clicked()
-                            {
-                                self.status_banner = "Language switched to English.".to_string();
-                                ui.close_menu();
-                            }
-                            if ui
-                                .selectable_value(
-                                    &mut self.ui_lang,
-                                    UiLanguage::Fr,
-                                    "FR - Français",
-                                )
-                                .clicked()
-                            {
-                                self.status_banner = "Langue basculée en Français.".to_string();
-                                ui.close_menu();
-                            }
-                        },
-                    );
+                        ));
+                        if ui
+                            .selectable_value(&mut self.ui_lang, UiLanguage::En, "EN - English")
+                            .clicked()
+                        {
+                            self.status_banner = "Language switched to English.".to_string();
+                        }
+                        if ui
+                            .selectable_value(&mut self.ui_lang, UiLanguage::Fr, "FR - Français")
+                            .clicked()
+                        {
+                            self.status_banner = "Langue basculée en Français.".to_string();
+                        }
+                        ui.separator();
+                        ui.strong(lang.tr("Theme", "Thème"));
+                        ui.selectable_value(
+                            &mut self.ui_theme,
+                            UiTheme::Dark,
+                            lang.tr("🌙 Dark", "🌙 Sombre"),
+                        );
+                        ui.selectable_value(
+                            &mut self.ui_theme,
+                            UiTheme::Light,
+                            lang.tr("☀ Light", "☀ Clair"),
+                        );
+                    });
 
                     ui.separator();
 
@@ -1446,7 +1652,8 @@ impl eframe::App for FerriteStudioApp {
                             render_fbd_editor(
                                 ui,
                                 fbd_prog,
-                                self.runtime.as_ref(),
+                                &mut self.project.fb_instances.instances,
+                                self.runtime.as_mut(),
                                 &mut self.modified,
                                 lang,
                             );
@@ -1460,5 +1667,8 @@ impl eframe::App for FerriteStudioApp {
                 }
             }
         });
+
+        // Snapshot any project edit made this frame into the undo history
+        self.track_history();
     }
 }

@@ -46,6 +46,20 @@ pub fn render_symbols_editor(
                 .push(FbInstance::new(format!("Timer_{next_n}"), StandardFbKind::Ton));
             *modified = true;
         }
+        if ui
+            .button(lang.tr(
+                "+ Add PID Corrector",
+                "+ Ajouter Correcteur PID",
+            ))
+            .clicked()
+        {
+            let next_n = project.fb_instances.instances.len() + 1;
+            project
+                .fb_instances
+                .instances
+                .push(FbInstance::new(format!("PID_{next_n}"), StandardFbKind::PidMixed));
+            *modified = true;
+        }
     });
     ui.add_space(6.0);
 
@@ -202,8 +216,11 @@ pub fn render_symbols_editor(
                 .show(ui, |ui| {
                     ui.strong(lang.tr("Instance Name", "Nom d'Instance"));
                     ui.strong(lang.tr("FB Type", "Type FB"));
-                    ui.strong(lang.tr("Default PT (ms)", "PT par défaut (ms)"));
-                    ui.strong(lang.tr("Default PV", "PV par défaut"));
+                    ui.strong(lang.tr(
+                        "Parameters (Gain Kp / Ti / Td or PT / PV)",
+                        "Paramètres (Gain Kp / Ti / Td ou PT / PV)",
+                    ));
+                    ui.strong(lang.tr("Formula / Range", "Formule / Bornes"));
                     ui.strong("Action");
                     ui.end_row();
 
@@ -212,32 +229,89 @@ pub fn render_symbols_editor(
                             *modified = true;
                         }
                         egui::ComboBox::from_id_salt(format!("fb_kind_cb_{idx}"))
-                            .selected_text(format!("{:?}", fb.kind))
+                            .selected_text(fb.kind.label())
                             .show_ui(ui, |ui| {
-                                for k in [
-                                    StandardFbKind::Ton,
-                                    StandardFbKind::Tof,
-                                    StandardFbKind::Tp,
-                                    StandardFbKind::Ctu,
-                                    StandardFbKind::Ctd,
-                                    StandardFbKind::RTrig,
-                                    StandardFbKind::FTrig,
-                                    StandardFbKind::Sr,
-                                    StandardFbKind::Rs,
-                                ] {
+                                for k in StandardFbKind::ALL {
                                     if ui
-                                        .selectable_value(&mut fb.kind, k, format!("{k:?}"))
+                                        .selectable_value(&mut fb.kind, k, k.label())
+                                        .changed()
+                                    {
+                                        if k.is_corrector() {
+                                            fb.in_bool = true;
+                                        }
+                                        *modified = true;
+                                    }
+                                }
+                            });
+                        if fb.kind.is_corrector() {
+                            ui.horizontal(|ui| {
+                                ui.label("Kp:");
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut fb.kp)
+                                            .speed(0.1)
+                                            .range(-10000.0..=10000.0),
+                                    )
+                                    .changed()
+                                {
+                                    *modified = true;
+                                }
+                                if fb.kind.has_integral() {
+                                    ui.label("Ti(s):");
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut fb.ti_s)
+                                                .speed(0.1)
+                                                .range(0.001..=10000.0),
+                                        )
+                                        .changed()
+                                    {
+                                        *modified = true;
+                                    }
+                                }
+                                if fb.kind.has_derivative() {
+                                    ui.label("Td(s):");
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut fb.td_s)
+                                                .speed(0.05)
+                                                .range(0.0..=10000.0),
+                                        )
                                         .changed()
                                     {
                                         *modified = true;
                                     }
                                 }
                             });
-                        if ui.add(egui::DragValue::new(&mut fb.pt_ms)).changed() {
-                            *modified = true;
-                        }
-                        if ui.add(egui::DragValue::new(&mut fb.pv)).changed() {
-                            *modified = true;
+                            ui.horizontal(|ui| {
+                                ui.monospace(fb.kind.formula_hint());
+                                ui.label("Min:");
+                                if ui
+                                    .add(egui::DragValue::new(&mut fb.out_min).speed(1.0))
+                                    .changed()
+                                {
+                                    *modified = true;
+                                }
+                                ui.label("Max:");
+                                if ui
+                                    .add(egui::DragValue::new(&mut fb.out_max).speed(1.0))
+                                    .changed()
+                                {
+                                    *modified = true;
+                                }
+                            });
+                        } else {
+                            ui.horizontal(|ui| {
+                                ui.label("PT(ms):");
+                                if ui.add(egui::DragValue::new(&mut fb.pt_ms)).changed() {
+                                    *modified = true;
+                                }
+                                ui.label("PV:");
+                                if ui.add(egui::DragValue::new(&mut fb.pv)).changed() {
+                                    *modified = true;
+                                }
+                            });
+                            ui.label("-");
                         }
                         if ui
                             .small_button(lang.tr("Delete", "Supprimer"))

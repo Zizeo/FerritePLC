@@ -8,7 +8,7 @@ pub mod i18n;
 
 use std::path::{Path, PathBuf};
 
-pub use app::{FerriteStudioApp, WorkspaceTab};
+pub use app::{FerriteStudioApp, UiTheme, WorkspaceTab};
 use ferrite_project::{MANIFEST_FILE_NAME, Project, ProjectError};
 pub use i18n::UiLanguage;
 use thiserror::Error;
@@ -144,6 +144,49 @@ mod tests {
             "PROGRAM test\n (* comment *)\n IF %IX0.0 AND X1.state THEN %MW10 := 42; END_IF;\nEND_PROGRAM",
         );
         assert!(!job.sections.is_empty());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_undo_redo_and_theme() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_gui_undo_redo_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = FerriteStudioApp::new(proj);
+        assert_eq!(app.ui_theme, UiTheme::Dark);
+        app.ui_theme = UiTheme::Light;
+        assert!(!app.ui_theme.visuals().dark_mode);
+
+        assert!(!app.can_undo() && !app.can_redo());
+        let original_name = app.project.manifest.name.clone();
+
+        // Edit 1
+        app.project.manifest.name = "edited_once".to_string();
+        app.track_history();
+        assert!(app.can_undo());
+
+        app.undo();
+        assert_eq!(app.project.manifest.name, original_name);
+        assert!(app.can_redo());
+        // Undo must not itself be recorded as a new edit
+        app.track_history();
+        assert!(app.can_redo());
+
+        app.redo();
+        assert_eq!(app.project.manifest.name, "edited_once");
+        assert!(!app.can_redo());
+
+        // A fresh edit after undo clears the redo stack
+        app.undo();
+        app.project.manifest.name = "branch".to_string();
+        app.track_history();
+        assert!(!app.can_redo());
+        app.undo();
+        assert_eq!(app.project.manifest.name, original_name);
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
