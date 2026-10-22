@@ -25,11 +25,103 @@ pub enum StandardFbKind {
     Sr,
     /// Reset-Dominant Bistable (`S: BOOL, R1: BOOL -> Q1: BOOL`)
     Rs,
+    /// Proportional Corrector: `OUT = Kp * (SP - PV)`
+    P,
+    /// Proportional-Integral Corrector: `OUT = Kp * (e + (1/Ti) * ∫e dt)`
+    Pi,
+    /// Parallel PID Corrector: `OUT = Kp * e + (1/Ti) * ∫e dt + Td * de/dt`
+    PidParallel,
+    /// Series (Interacting) PID Corrector: `C(s) = Kp * (1 + 1/(Ti*s)) * (1 + Td*s)`
+    PidSeries,
+    /// Mixed (Ideal / Standard ISA) PID Corrector: `OUT = Kp * (e + (1/Ti) * ∫e dt + Td * de/dt)`
+    #[serde(alias = "PID")]
+    PidMixed,
 }
 
 impl StandardFbKind {
+    pub const ALL: [Self; 14] = [
+        Self::Ton,
+        Self::Tof,
+        Self::Tp,
+        Self::Ctu,
+        Self::Ctd,
+        Self::RTrig,
+        Self::FTrig,
+        Self::Sr,
+        Self::Rs,
+        Self::P,
+        Self::Pi,
+        Self::PidParallel,
+        Self::PidSeries,
+        Self::PidMixed,
+    ];
+
+    pub const CORRECTORS: [Self; 5] = [
+        Self::P,
+        Self::Pi,
+        Self::PidParallel,
+        Self::PidSeries,
+        Self::PidMixed,
+    ];
+
+    pub fn is_corrector(self) -> bool {
+        matches!(
+            self,
+            Self::P | Self::Pi | Self::PidParallel | Self::PidSeries | Self::PidMixed
+        )
+    }
+
+    pub fn has_integral(self) -> bool {
+        matches!(
+            self,
+            Self::Pi | Self::PidParallel | Self::PidSeries | Self::PidMixed
+        )
+    }
+
+    pub fn has_derivative(self) -> bool {
+        matches!(self, Self::PidParallel | Self::PidSeries | Self::PidMixed)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ton => "TON",
+            Self::Tof => "TOF",
+            Self::Tp => "TP",
+            Self::Ctu => "CTU",
+            Self::Ctd => "CTD",
+            Self::RTrig => "R_TRIG",
+            Self::FTrig => "F_TRIG",
+            Self::Sr => "SR",
+            Self::Rs => "RS",
+            Self::P => "P",
+            Self::Pi => "PI",
+            Self::PidParallel => "PID_PARALLEL",
+            Self::PidSeries => "PID_SERIES",
+            Self::PidMixed => "PID_MIXED",
+        }
+    }
+
+    pub fn formula_hint(self) -> &'static str {
+        match self {
+            Self::P => "u(t) = Kp · e(t)",
+            Self::Pi => "u(t) = Kp · [ e(t) + (1/Ti)·∫e(t)dt ]",
+            Self::PidParallel => "u(t) = Kp·e(t) + (1/Ti)·∫e(t)dt + Td·de(t)/dt",
+            Self::PidSeries => "C(s) = Kp · (1 + 1/(Ti·s)) · (1 + Td·s)",
+            Self::PidMixed => "u(t) = Kp · [ e(t) + (1/Ti)·∫e(t)dt + Td·de(t)/dt ]",
+            _ => "",
+        }
+    }
+
     pub fn pin_type(self, pin: &str) -> Option<IecType> {
         let p = pin.to_ascii_uppercase();
+        if self.is_corrector() {
+            return match p.as_str() {
+                "EN" | "IN" | "R" | "RESET" | "Q" => Some(IecType::Bool),
+                "SP" | "PV" | "ERR" | "KP" | "GAIN" | "TI" | "TD" | "OUT_MIN" | "OUT_MAX"
+                | "OUT" | "CV" => Some(IecType::Real),
+                _ => None,
+            };
+        }
         match (self, p.as_str()) {
             (Self::Ton | Self::Tof | Self::Tp, "IN" | "Q") => Some(IecType::Bool),
             (Self::Ton | Self::Tof | Self::Tp, "PT" | "ET") => Some(IecType::Time),
@@ -43,6 +135,26 @@ impl StandardFbKind {
             _ => None,
         }
     }
+}
+
+fn default_kp() -> f32 {
+    2.0
+}
+
+fn default_ti_s() -> f32 {
+    5.0
+}
+
+fn default_td_s() -> f32 {
+    0.5
+}
+
+fn default_out_min() -> f32 {
+    -1000.0
+}
+
+fn default_out_max() -> f32 {
+    1000.0
 }
 
 /// Fixed, allocation-free state for a shared Function Block instance.
@@ -73,6 +185,33 @@ pub struct FbInstance {
     pub pv: i16,
     #[serde(default)]
     pub cv: i16,
+    // Corrector (P / PI / PID Parallel / Series / Mixed) parameters & signals
+    #[serde(default = "default_kp")]
+    pub kp: f32,
+    #[serde(default = "default_ti_s")]
+    pub ti_s: f32,
+    #[serde(default = "default_td_s")]
+    pub td_s: f32,
+    #[serde(default)]
+    pub sp_real: f32,
+    #[serde(default)]
+    pub pv_real: f32,
+    #[serde(default)]
+    pub err_real: f32,
+    #[serde(default)]
+    pub out_real: f32,
+    #[serde(default = "default_out_min")]
+    pub out_min: f32,
+    #[serde(default = "default_out_max")]
+    pub out_max: f32,
+    #[serde(default)]
+    pub integral_accum: f32,
+    #[serde(default)]
+    pub prev_err: f32,
+    #[serde(default)]
+    pub has_prev_sample: bool,
+    #[serde(default)]
+    pub direct_err_mode: bool,
     // Internal edge/pulse memory
     #[serde(default)]
     pub prev_in: bool,
@@ -86,7 +225,7 @@ impl FbInstance {
             name: name.into(),
             kind,
             comment: String::new(),
-            in_bool: false,
+            in_bool: kind.is_corrector(),
             r_bool: false,
             s_bool: false,
             ld_bool: false,
@@ -95,6 +234,19 @@ impl FbInstance {
             et_ms: 0,
             pv: 0,
             cv: 0,
+            kp: default_kp(),
+            ti_s: default_ti_s(),
+            td_s: default_td_s(),
+            sp_real: 0.0,
+            pv_real: 0.0,
+            err_real: 0.0,
+            out_real: 0.0,
+            out_min: default_out_min(),
+            out_max: default_out_max(),
+            integral_accum: 0.0,
+            prev_err: 0.0,
+            has_prev_sample: false,
+            direct_err_mode: false,
             prev_in: false,
             running: false,
         };
@@ -106,6 +258,26 @@ impl FbInstance {
 
     pub fn read_pin(&self, pin: &str) -> Result<IecValue, CoreError> {
         let p = pin.to_ascii_uppercase();
+        if self.kind.is_corrector() {
+            return match p.as_str() {
+                "EN" | "IN" => Ok(IecValue::Bool(self.in_bool)),
+                "R" | "RESET" => Ok(IecValue::Bool(self.r_bool)),
+                "Q" => Ok(IecValue::Bool(self.q)),
+                "SP" => Ok(IecValue::Real(self.sp_real)),
+                "PV" => Ok(IecValue::Real(self.pv_real)),
+                "ERR" => Ok(IecValue::Real(self.err_real)),
+                "KP" | "GAIN" => Ok(IecValue::Real(self.kp)),
+                "TI" => Ok(IecValue::Real(self.ti_s)),
+                "TD" => Ok(IecValue::Real(self.td_s)),
+                "OUT_MIN" => Ok(IecValue::Real(self.out_min)),
+                "OUT_MAX" => Ok(IecValue::Real(self.out_max)),
+                "OUT" | "CV" => Ok(IecValue::Real(self.out_real)),
+                _ => Err(CoreError::UnknownFbPin {
+                    instance: self.name.clone(),
+                    pin: pin.to_string(),
+                }),
+            };
+        }
         match (self.kind, p.as_str()) {
             (StandardFbKind::Ton | StandardFbKind::Tof | StandardFbKind::Tp, "IN") => {
                 Ok(IecValue::Bool(self.in_bool))
@@ -148,6 +320,62 @@ impl FbInstance {
 
     pub fn write_pin(&mut self, pin: &str, val: &IecValue) -> Result<(), CoreError> {
         let p = pin.to_ascii_uppercase();
+        if self.kind.is_corrector() {
+            match p.as_str() {
+                "EN" | "IN" => {
+                    self.in_bool = val.as_bool()?;
+                }
+                "R" | "RESET" => {
+                    self.r_bool = val.as_bool()?;
+                }
+                "Q" => {
+                    self.q = val.as_bool()?;
+                }
+                "SP" => {
+                    self.sp_real = val.as_real()?;
+                    self.direct_err_mode = false;
+                }
+                "PV" => {
+                    self.pv_real = val.as_real()?;
+                    self.direct_err_mode = false;
+                }
+                "ERR" => {
+                    self.err_real = val.as_real()?;
+                    self.direct_err_mode = true;
+                }
+                "KP" | "GAIN" => {
+                    self.kp = val.as_real()?;
+                }
+                "TI" => {
+                    self.ti_s = match val {
+                        IecValue::Time(ms) => (*ms as f32) / 1000.0,
+                        other => other.as_real()?,
+                    };
+                }
+                "TD" => {
+                    self.td_s = match val {
+                        IecValue::Time(ms) => (*ms as f32) / 1000.0,
+                        other => other.as_real()?,
+                    };
+                }
+                "OUT_MIN" => {
+                    self.out_min = val.as_real()?;
+                }
+                "OUT_MAX" => {
+                    self.out_max = val.as_real()?;
+                }
+                "OUT" | "CV" => {
+                    self.out_real = val.as_real()?;
+                }
+                _ => {
+                    return Err(CoreError::UnknownFbPin {
+                        instance: self.name.clone(),
+                        pin: pin.to_string(),
+                    });
+                }
+            }
+            return Ok(());
+        }
         match (self.kind, p.as_str()) {
             (StandardFbKind::Ton | StandardFbKind::Tof | StandardFbKind::Tp, "IN") => {
                 self.in_bool = val.as_bool()?;
@@ -223,6 +451,15 @@ impl FbInstance {
             }
         }
         Ok(())
+    }
+
+    /// Resets internal integral/derivative memory of a P/PI/PID corrector.
+    pub fn reset_corrector(&mut self) {
+        self.integral_accum = 0.0;
+        self.prev_err = 0.0;
+        self.has_prev_sample = false;
+        self.out_real = 0.0;
+        self.q = false;
     }
 
     /// Evaluates the Function Block state machine for a scan step of `dt_ms` milliseconds.
@@ -321,6 +558,76 @@ impl FbInstance {
             StandardFbKind::Rs => {
                 // Reset-dominant: Q1 := NOT R1 AND (S OR Q1)
                 self.q = !self.r_bool && (self.s_bool || self.q);
+            }
+            StandardFbKind::P
+            | StandardFbKind::Pi
+            | StandardFbKind::PidParallel
+            | StandardFbKind::PidSeries
+            | StandardFbKind::PidMixed => {
+                if self.r_bool || !self.in_bool {
+                    self.reset_corrector();
+                    return;
+                }
+
+                if !self.direct_err_mode {
+                    self.err_real = self.sp_real - self.pv_real;
+                }
+                let e = self.err_real;
+                let dt_s = (dt_ms as f32) / 1000.0;
+
+                // Derivative of error de/dt
+                let de_dt = if self.has_prev_sample && dt_s > 1e-6 {
+                    (e - self.prev_err) / dt_s
+                } else {
+                    0.0
+                };
+
+                // Update integral accumulator ∫e(t)dt with anti-windup clamping
+                if self.kind.has_integral() && self.ti_s > 1e-6 && dt_s > 0.0 {
+                    self.integral_accum += e * dt_s;
+                    let max_span = (self.out_max - self.out_min).abs().max(1.0);
+                    let max_int = max_span * self.ti_s / self.kp.abs().max(1e-3);
+                    self.integral_accum = self.integral_accum.clamp(-max_int, max_int);
+                }
+
+                let i_over_ti = if self.kind.has_integral() && self.ti_s > 1e-6 {
+                    self.integral_accum / self.ti_s
+                } else {
+                    0.0
+                };
+                let td_de_dt = if self.kind.has_derivative() && self.td_s > 0.0 {
+                    self.td_s * de_dt
+                } else {
+                    0.0
+                };
+
+                let raw_out = match self.kind {
+                    StandardFbKind::P => self.kp * e,
+                    StandardFbKind::Pi => self.kp * (e + i_over_ti),
+                    StandardFbKind::PidParallel => self.kp * e + i_over_ti + td_de_dt,
+                    StandardFbKind::PidMixed => self.kp * (e + i_over_ti + td_de_dt),
+                    StandardFbKind::PidSeries => {
+                        // C(s) = Kp * (1 + 1/(Ti*s)) * (1 + Td*s)
+                        // u(t) = Kp * [ (1 + Td/Ti)*e(t) + (1/Ti)*∫e(t)dt + Td*de(t)/dt ]
+                        let series_p_factor = if self.ti_s > 1e-6 {
+                            1.0 + (self.td_s.max(0.0) / self.ti_s)
+                        } else {
+                            1.0
+                        };
+                        self.kp * (series_p_factor * e + i_over_ti + td_de_dt)
+                    }
+                    _ => 0.0,
+                };
+
+                let (lo, hi) = if self.out_min <= self.out_max {
+                    (self.out_min, self.out_max)
+                } else {
+                    (self.out_max, self.out_min)
+                };
+                self.out_real = raw_out.clamp(lo, hi);
+                self.prev_err = e;
+                self.has_prev_sample = true;
+                self.q = true;
             }
         }
     }

@@ -109,4 +109,58 @@ mod tests {
         assert_eq!(ctx.read_symbol("Timer_1.ET")?, IecValue::Time(100));
         Ok(())
     }
+
+    #[test]
+    fn test_p_pi_and_pid_parallel_series_mixed_correctors() -> Result<(), RuntimeError> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+        tags.create_fb("Corr_P", StandardFbKind::P);
+        tags.create_fb("Corr_PI", StandardFbKind::Pi);
+        tags.create_fb("Corr_PID_Par", StandardFbKind::PidParallel);
+        tags.create_fb("Corr_PID_Ser", StandardFbKind::PidSeries);
+        tags.create_fb("Corr_PID_Mix", StandardFbKind::PidMixed);
+
+        // dt = 1000 ms (1.0 s)
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 1000, 1);
+
+        // 1. P Corrector: e = 100 - 80 = 20, Kp = 2.5 -> OUT = 50.0
+        ctx.write_symbol("Corr_P.SP", IecValue::Real(100.0))?;
+        ctx.write_symbol("Corr_P.PV", IecValue::Real(80.0))?;
+        ctx.write_symbol("Corr_P.KP", IecValue::Real(2.5))?;
+        ctx.evaluate_fb("Corr_P")?;
+        assert_eq!(ctx.read_symbol("Corr_P.ERR")?, IecValue::Real(20.0));
+        assert_eq!(ctx.read_symbol("Corr_P.OUT")?, IecValue::Real(50.0));
+
+        // 2. PI Corrector: e = 10, Kp = 2.0, Ti = 4.0s, dt = 1.0s
+        // Scan 1: int = 10, OUT = 2.0 * (10 + 10/4) = 25.0
+        ctx.write_symbol("Corr_PI.SP", IecValue::Real(50.0))?;
+        ctx.write_symbol("Corr_PI.PV", IecValue::Real(40.0))?;
+        ctx.write_symbol("Corr_PI.KP", IecValue::Real(2.0))?;
+        ctx.write_symbol("Corr_PI.TI", IecValue::Real(4.0))?;
+        ctx.evaluate_fb("Corr_PI")?;
+        assert_eq!(ctx.read_symbol("Corr_PI.OUT")?, IecValue::Real(25.0));
+
+        // 3. PID Parallel vs Mixed vs Series with e1 = 10 (scan 1), e2 = 14 (scan 2), Kp=2, Ti=2s, Td=0.5s, dt=1s
+        for name in ["Corr_PID_Par", "Corr_PID_Ser", "Corr_PID_Mix"] {
+            ctx.write_symbol(&format!("{name}.SP"), IecValue::Real(50.0))?;
+            ctx.write_symbol(&format!("{name}.PV"), IecValue::Real(40.0))?;
+            ctx.write_symbol(&format!("{name}.KP"), IecValue::Real(2.0))?;
+            ctx.write_symbol(&format!("{name}.TI"), IecValue::Real(2.0))?;
+            ctx.write_symbol(&format!("{name}.TD"), IecValue::Real(0.5))?;
+            ctx.evaluate_fb(name)?;
+        }
+        // Step 2: PV drops to 36.0 -> e = 14.0, de/dt = 4.0, int = 10 + 14 = 24 -> i_over_ti = 12.0, td_de_dt = 2.0
+        for name in ["Corr_PID_Par", "Corr_PID_Ser", "Corr_PID_Mix"] {
+            ctx.write_symbol(&format!("{name}.PV"), IecValue::Real(36.0))?;
+            ctx.evaluate_fb(name)?;
+        }
+        // Parallel: Kp*e + int/Ti + Td*de/dt = 2*14 + 12 + 2 = 42.0
+        assert_eq!(ctx.read_symbol("Corr_PID_Par.OUT")?, IecValue::Real(42.0));
+        // Mixed: Kp * (e + int/Ti + Td*de/dt) = 2 * (14 + 12 + 2) = 56.0
+        assert_eq!(ctx.read_symbol("Corr_PID_Mix.OUT")?, IecValue::Real(56.0));
+        // Series: Kp * ((1 + Td/Ti)*e + int/Ti + Td*de/dt) = 2 * (1.25*14 + 12 + 2) = 63.0
+        assert_eq!(ctx.read_symbol("Corr_PID_Ser.OUT")?, IecValue::Real(63.0));
+
+        Ok(())
+    }
 }

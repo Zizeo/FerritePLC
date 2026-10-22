@@ -255,6 +255,10 @@ impl TagTable {
         &self.fbs
     }
 
+    pub fn fbs_mut(&mut self) -> &mut [FbInstance] {
+        &mut self.fbs
+    }
+
     /// Resolves the `IecType` of any symbol: direct address (`%IX0.0`), Grafcet symbol (`X0.state`),
     /// FB pin (`Timer_1.Q`), or named tag (`Start_Button`).
     pub fn symbol_type(&self, symbol: &str) -> Result<IecType, CoreError> {
