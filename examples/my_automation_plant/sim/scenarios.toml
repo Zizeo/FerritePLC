@@ -8,15 +8,15 @@ scan = 1
 description = "Scan 1: Safety interlocks healthy -> Permissive_OK, batch_seq.X0 & cip_clean.X0 initialized"
 
 [scenarios.steps.set]
-Stop_Button = true
-EStop_OK = true
 Fast_Recipe_Mode = true
+EStop_OK = true
+Stop_Button = true
 Guard_Door_Closed = true
 
 [scenarios.steps.expect]
-Permissive_OK = true
-"cip_clean.X0.state" = true
 "batch_seq.X0.state" = true
+"cip_clean.X0.state" = true
+Permissive_OK = true
 
 [[scenarios.steps]]
 scan = 2
@@ -26,17 +26,17 @@ description = "Scan 2: Start_Button rising edge |P| -> T1_AndDiv splits into par
 Start_Button = true
 
 [scenarios.steps.expect]
-Cycle_Latched = true
-"batch_seq.X2.state" = true
-Batch_Count = 1
-Start_Pulse = true
 Main_Header_Active = true
 Fill_Valve = true
-Dosing_Valve = true
+"batch_seq.X2.state" = true
+Start_Pulse = true
 Reagent_Ready = true
-Pump_Active = true
 "batch_seq.X1.state" = true
 Tank_Level = 25
+Dosing_Valve = true
+Cycle_Latched = true
+Batch_Count = 1
+Pump_Active = true
 
 [[scenarios.steps]]
 scan = 3
@@ -46,9 +46,9 @@ description = "Scan 3: Start_Pulse clears after 1 scan while Cycle_Latched stays
 Start_Button = false
 
 [scenarios.steps.expect]
-Cycle_Latched = true
 Tank_Level = 50
 Start_Pulse = false
+Cycle_Latched = true
 
 [[scenarios.steps]]
 scan = 4
@@ -57,9 +57,9 @@ description = "Scan 4: T2_AndConv synchronizes Step 1 & Step 2 into Step 3 (Reci
 [scenarios.steps.set]
 
 [scenarios.steps.expect]
+Fill_Valve = false
 "batch_seq.X2.state" = false
 "batch_seq.X3.state" = true
-Fill_Valve = false
 "batch_seq.X1.state" = false
 
 [[scenarios.steps]]
@@ -69,11 +69,11 @@ description = "Scan 5: T3_Or_Fast (OR Divergence) selects Step 4 (Alt_Fast_Mix) 
 [scenarios.steps.set]
 
 [scenarios.steps.expect]
-Mix_Done = true
 "batch_seq.X5.state" = false
-"batch_seq.X4.state" = true
-Heater_On = true
+Mix_Done = true
 Tank_Temp = 45.0
+Heater_On = true
+"batch_seq.X4.state" = true
 
 [[scenarios.steps]]
 scan = 6
@@ -83,11 +83,11 @@ description = "Scan 6: T5_OrConv merges into Step 6 -> triggers subordinate cip_
 
 [scenarios.steps.expect]
 Main_Header_Active = true
-Sanitizer_Valve = true
 "cip_clean.X1.state" = true
-Tank_Level = 0
 CIP_Pump = true
 "batch_seq.X6.state" = true
+Tank_Level = 0
+Sanitizer_Valve = true
 
 [[scenarios.steps]]
 scan = 7
@@ -108,7 +108,7 @@ description = "Scan 8: batch_seq sees cip_clean.X2.state -> returns to X0 and re
 [scenarios.steps.set]
 
 [scenarios.steps.expect]
-"cip_clean.X0.state" = true
+Main_Header_Active = false
 CIP_Pump = false
 "batch_seq.X0.state" = true
-Main_Header_Active = false
+"cip_clean.X0.state" = true
