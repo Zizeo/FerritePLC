@@ -655,7 +655,7 @@ pub fn parse_st_statements(src: &str, pou_name: &str) -> Result<Vec<IrStmt>, StE
     parser.parse_program()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StProgram {
     pub name: String,
     pub source: String,

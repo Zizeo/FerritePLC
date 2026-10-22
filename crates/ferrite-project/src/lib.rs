@@ -115,13 +115,13 @@ impl ProjectManifest {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct GlobalTagsFile {
     #[serde(default)]
     pub tags: Vec<TagEntry>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct FbInstancesFile {
     #[serde(default)]
     pub instances: Vec<FbInstance>,
@@ -150,13 +150,13 @@ pub struct SimScenario {
     pub steps: Vec<SimStep>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ScenariosFile {
     #[serde(default)]
     pub scenarios: Vec<SimScenario>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PouSource {
     Ld(LdProgram),
     Sfc(SfcProgram),
@@ -185,7 +185,7 @@ impl PouSource {
 }
 
 /// Self-contained FerritePLC project representation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Project {
     pub root_dir: PathBuf,
     pub manifest: ProjectManifest,
@@ -410,11 +410,26 @@ impl Project {
                 IecValue::Real(25.0),
                 "Process fluid temperature in Celsius",
             ),
+            TagEntry::new(
+                "Temp_Setpoint",
+                IecType::Real,
+                None,
+                IecValue::Real(60.0),
+                "Target temperature setpoint for P/PI/PID corrector",
+            ),
+            TagEntry::new(
+                "PID_Output",
+                IecType::Real,
+                None,
+                IecValue::Real(0.0),
+                "Control output from P/PI/PID corrector (0..100%)",
+            ),
         ];
 
         let fb_instances = vec![
             FbInstance::new("Fill_Timer", StandardFbKind::Ton),
             FbInstance::new("Alarm_Debounce", StandardFbKind::Ton),
+            FbInstance::new("Temp_PID", StandardFbKind::PidMixed),
         ];
 
         // 1. Ladder Diagram POU: main_safety.ld.json
@@ -1239,8 +1254,27 @@ END_PROGRAM
             table.register_fb(fb.clone());
         }
         for pou in self.pous.values() {
-            if let PouSource::Sfc(sfc) = pou {
-                sfc.register_introspection_symbols(&mut table)?;
+            match pou {
+                PouSource::Sfc(sfc) => {
+                    sfc.register_introspection_symbols(&mut table)?;
+                }
+                PouSource::Fbd(fbd) => {
+                    for blk in &fbd.blocks {
+                        if let FbdBlockKind::StandardFb { instance, fb_type } = &blk.kind {
+                            if let Some(existing) = table.get_fb_mut(instance) {
+                                if let Some(k) = fb_type {
+                                    existing.kind = *k;
+                                }
+                            } else {
+                                table.register_fb(FbInstance::new(
+                                    instance.clone(),
+                                    fb_type.unwrap_or(StandardFbKind::Ton),
+                                ));
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         Ok(table)

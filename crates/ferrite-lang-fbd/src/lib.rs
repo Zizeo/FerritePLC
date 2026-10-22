@@ -255,8 +255,10 @@ impl FbdProgram {
                 outputs: compiled_outputs,
                 composite_def: composite_local_fbs,
                 slot_out: IecValue::Bool(false),
+                slot_q: IecValue::Bool(false),
                 slot_et: IecValue::Time(0),
                 slot_cv: IecValue::Int(0),
+                slot_err: IecValue::Real(0.0),
             });
         }
 
@@ -269,9 +271,11 @@ impl FbdProgram {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PinSlot {
-    PrimaryOut, // OUT, Q, Q1
+    PrimaryOut, // OUT (Real for Correctors, Bool for logic/timers)
+    BoolOut,    // Q, Q1
     ElapsedTime, // ET
     CountValue,  // CV
+    ErrorOut,    // ERR
 }
 
 impl PinSlot {
@@ -279,6 +283,8 @@ impl PinSlot {
         match pin.to_ascii_uppercase().as_str() {
             "ET" => Self::ElapsedTime,
             "CV" => Self::CountValue,
+            "ERR" => Self::ErrorOut,
+            "Q" | "Q1" => Self::BoolOut,
             _ => Self::PrimaryOut,
         }
     }
@@ -298,16 +304,20 @@ struct CompiledFbdBlock {
     outputs: Vec<(PinSlot, String)>,
     composite_def: Option<CompositeFbDef>,
     slot_out: IecValue,
+    slot_q: IecValue,
     slot_et: IecValue,
     slot_cv: IecValue,
+    slot_err: IecValue,
 }
 
 impl CompiledFbdBlock {
     fn read_slot(&self, slot: PinSlot) -> IecValue {
         match slot {
             PinSlot::PrimaryOut => self.slot_out.clone(),
+            PinSlot::BoolOut => self.slot_q.clone(),
             PinSlot::ElapsedTime => self.slot_et.clone(),
             PinSlot::CountValue => self.slot_cv.clone(),
+            PinSlot::ErrorOut => self.slot_err.clone(),
         }
     }
 }
@@ -358,6 +368,7 @@ impl ExecutablePou for CompiledFbdPou {
                         false
                     };
                     self.blocks[idx].slot_out = IecValue::Bool(!v);
+                    self.blocks[idx].slot_q = IecValue::Bool(!v);
                 }
                 FbdBlockKind::And
                 | FbdBlockKind::Or
@@ -400,6 +411,7 @@ impl ExecutablePou for CompiledFbdPou {
                             )?;
                             acc = eval_binary_op(bin_op, &acc, &vn, pou_name)?;
                         }
+                        self.blocks[idx].slot_q = acc.clone();
                         self.blocks[idx].slot_out = acc;
                     }
                 }
@@ -418,9 +430,15 @@ impl ExecutablePou for CompiledFbdPou {
                     }
                     ctx.evaluate_fb(instance)?;
                     if let Some(fb) = ctx.tags.get_fb(instance) {
-                        self.blocks[idx].slot_out = IecValue::Bool(fb.q);
+                        if fb.kind.is_corrector() {
+                            self.blocks[idx].slot_out = IecValue::Real(fb.out_real);
+                        } else {
+                            self.blocks[idx].slot_out = IecValue::Bool(fb.q);
+                        }
+                        self.blocks[idx].slot_q = IecValue::Bool(fb.q);
                         self.blocks[idx].slot_et = IecValue::Time(fb.et_ms);
                         self.blocks[idx].slot_cv = IecValue::Int(fb.cv);
+                        self.blocks[idx].slot_err = IecValue::Real(fb.err_real);
                     }
                 }
                 FbdBlockKind::Composite { .. } => {
@@ -440,6 +458,7 @@ impl ExecutablePou for CompiledFbdPou {
                         result = result && v;
                     }
                     self.blocks[idx].slot_out = IecValue::Bool(result);
+                    self.blocks[idx].slot_q = IecValue::Bool(result);
                 }
             }
 
@@ -602,6 +621,123 @@ mod tests {
             })
         ));
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_fbd_p_pi_pid_corrector_blocks() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+        tags.register_tag(TagEntry::new(
+            "Setpoint",
+            IecType::Real,
+            None,
+            IecValue::Real(100.0),
+            "SP",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Process_Val",
+            IecType::Real,
+            None,
+            IecValue::Real(80.0),
+            "PV",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Cmd_Out",
+            IecType::Real,
+            None,
+            IecValue::Real(0.0),
+            "PID Output",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Heater_Active",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "Comparator output",
+        ))?;
+        tags.create_fb("PID_1", StandardFbKind::PidMixed);
+
+        let mut pid_in = HashMap::new();
+        pid_in.insert(
+            "SP".to_string(),
+            FbdInputSource::Value {
+                expr: "Setpoint".to_string(),
+            },
+        );
+        pid_in.insert(
+            "PV".to_string(),
+            FbdInputSource::Value {
+                expr: "Process_Val".to_string(),
+            },
+        );
+        pid_in.insert(
+            "KP".to_string(),
+            FbdInputSource::Value {
+                expr: "2.0".to_string(),
+            },
+        );
+        pid_in.insert(
+            "TI".to_string(),
+            FbdInputSource::Value {
+                expr: "4.0".to_string(),
+            },
+        );
+        pid_in.insert(
+            "TD".to_string(),
+            FbdInputSource::Value {
+                expr: "1.0".to_string(),
+            },
+        );
+        let mut pid_out = HashMap::new();
+        pid_out.insert("OUT".to_string(), "Cmd_Out".to_string());
+
+        let mut gt_in = HashMap::new();
+        gt_in.insert(
+            "IN1".to_string(),
+            FbdInputSource::Link {
+                from_block: "B_PID".to_string(),
+                from_pin: "OUT".to_string(),
+            },
+        );
+        gt_in.insert(
+            "IN2".to_string(),
+            FbdInputSource::Value {
+                expr: "45.0".to_string(),
+            },
+        );
+        let mut gt_out = HashMap::new();
+        gt_out.insert("OUT".to_string(), "Heater_Active".to_string());
+
+        let fbd = FbdProgram {
+            name: "pid_loop".to_string(),
+            comment: "PID Mixed corrector wired into GT comparator".to_string(),
+            composites: vec![],
+            blocks: vec![
+                FbdBlock {
+                    id: "B_PID".to_string(),
+                    kind: FbdBlockKind::StandardFb {
+                        instance: "PID_1".to_string(),
+                        fb_type: Some(StandardFbKind::PidMixed),
+                    },
+                    inputs: pid_in,
+                    outputs: pid_out,
+                },
+                FbdBlock {
+                    id: "B_GT".to_string(),
+                    kind: FbdBlockKind::Gt,
+                    inputs: gt_in,
+                    outputs: gt_out,
+                },
+            ],
+        };
+
+        let mut compiled = fbd.compile(&tags)?;
+        // dt = 1000 ms (1s): e = 20, int = 20, i/Ti = 5, de/dt = 0 -> OUT = 2.0 * (20 + 5) = 50.0
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 1000, 1);
+        compiled.execute(&mut ctx)?;
+        assert_eq!(ctx.read_symbol("Cmd_Out")?, IecValue::Real(50.0));
+        assert!(ctx.read_bool("Heater_Active")?);
         Ok(())
     }
 }
