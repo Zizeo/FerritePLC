@@ -1,1 +1,6 @@
 /target
+.gemini/
+AGENTS.md
+GEMINI.md
+.vscode/
+GAP_ANALYSIS_OPENPLC_VISUALPLC.md
