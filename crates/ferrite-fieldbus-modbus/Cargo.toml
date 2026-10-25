@@ -1,0 +1,17 @@
+[package]
+name = "ferrite-fieldbus-modbus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "ferrite_fieldbus_modbus"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+ferrite-core.workspace = true
+thiserror.workspace = true
+serde.workspace = true
