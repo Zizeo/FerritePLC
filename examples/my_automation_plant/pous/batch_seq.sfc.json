@@ -166,7 +166,7 @@
       "to_steps": [
         "6"
       ],
-      "receptivity": "Mix_Done OR Tank_Temp >= 60.0",
+      "receptivity": "Mix_Done AND Tank_Temp >= 60.0",
       "convergence": "or",
       "divergence": "and"
     },

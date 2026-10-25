@@ -4,6 +4,7 @@ data_type = "BOOL"
 address = "%IX0.0"
 initial_value = true
 read_only_outside_sfc = false
+retain = false
 comment = "Normally-closed emergency stop safety input"
 
 [[tags]]
@@ -12,6 +13,7 @@ data_type = "BOOL"
 address = "%IX0.1"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Operator cycle start pushbutton (rising edge |P| trigger)"
 
 [[tags]]
@@ -20,6 +22,7 @@ data_type = "BOOL"
 address = "%IX0.2"
 initial_value = true
 read_only_outside_sfc = false
+retain = false
 comment = "Operator cycle stop pushbutton (falling edge |N| release trigger)"
 
 [[tags]]
@@ -28,6 +31,7 @@ data_type = "BOOL"
 address = "%IX0.3"
 initial_value = true
 read_only_outside_sfc = false
+retain = false
 comment = "Safety guard door interlock switch"
 
 [[tags]]
@@ -36,6 +40,7 @@ data_type = "BOOL"
 address = "%IX0.4"
 initial_value = true
 read_only_outside_sfc = false
+retain = false
 comment = "Selector switch: TRUE = Fast Mix branch (OR Div), FALSE = Slow Cure branch"
 
 [[tags]]
@@ -44,6 +49,7 @@ data_type = "BOOL"
 address = "%MX0.0"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Master safety interlock output from Ladder -> Grafcet & FBD"
 
 [[tags]]
@@ -52,6 +58,7 @@ data_type = "BOOL"
 address = "%MX0.1"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "One-scan rising-edge start pulse from Ladder |P| contact"
 
 [[tags]]
@@ -60,6 +67,7 @@ data_type = "BOOL"
 address = "%MX0.2"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Set/Reset (S/R) latched run status from Ladder"
 
 [[tags]]
@@ -68,6 +76,7 @@ data_type = "BOOL"
 address = "%MX0.3"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Reagent dosing complete flag for AND convergence"
 
 [[tags]]
@@ -76,6 +85,7 @@ data_type = "BOOL"
 address = "%MX0.4"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Mixing complete flag for OR convergence"
 
 [[tags]]
@@ -84,6 +94,7 @@ data_type = "BOOL"
 address = "%QX0.0"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Water inlet valve driven by parallel branch Step 1"
 
 [[tags]]
@@ -92,6 +103,7 @@ data_type = "BOOL"
 address = "%QX0.1"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Chemical reagent dosing valve driven by parallel branch Step 2"
 
 [[tags]]
@@ -100,6 +112,7 @@ data_type = "BOOL"
 address = "%QX0.2"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "High-speed mixer motor driven by OR branch Step 4"
 
 [[tags]]
@@ -108,6 +121,7 @@ data_type = "BOOL"
 address = "%QX0.3"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Low-speed curing mixer driven by OR branch Step 5"
 
 [[tags]]
@@ -116,6 +130,7 @@ data_type = "BOOL"
 address = "%QX0.4"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Tank jacket heater contactor"
 
 [[tags]]
@@ -124,6 +139,7 @@ data_type = "BOOL"
 address = "%QX0.5"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Tank bottom drain valve"
 
 [[tags]]
@@ -132,6 +148,7 @@ data_type = "BOOL"
 address = "%QX0.6"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Main circulation pump output from FBD"
 
 [[tags]]
@@ -140,6 +157,7 @@ data_type = "BOOL"
 address = "%QX0.7"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Clean-In-Place pump driven by subordinate cip_clean SFC"
 
 [[tags]]
@@ -148,6 +166,7 @@ data_type = "BOOL"
 address = "%QX1.0"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Sanitizer spray valve driven by cip_clean SFC Step 1"
 
 [[tags]]
@@ -156,6 +175,7 @@ data_type = "BOOL"
 address = "%QX1.1"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Combined pump header status from FBD OR block"
 
 [[tags]]
@@ -164,6 +184,7 @@ data_type = "BOOL"
 address = "%QX1.2"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "High temperature alarm from FBD GT comparator -> breaks Ladder NC interlock"
 
 [[tags]]
@@ -172,6 +193,7 @@ data_type = "BOOL"
 address = "%QX1.3"
 initial_value = false
 read_only_outside_sfc = false
+retain = false
 comment = "Tank overfill/overpressure fault from FBD GE comparator"
 
 [[tags]]
@@ -180,6 +202,7 @@ data_type = "INT"
 address = "%MW10"
 initial_value = 0
 read_only_outside_sfc = false
+retain = false
 comment = "Tank level percentage (0..100) computed in ST"
 
 [[tags]]
@@ -188,6 +211,7 @@ data_type = "INT"
 address = "%MW12"
 initial_value = 0
 read_only_outside_sfc = false
+retain = false
 comment = "Completed batches counter"
 
 [[tags]]
@@ -196,6 +220,7 @@ data_type = "INT"
 address = "%MW14"
 initial_value = 0
 read_only_outside_sfc = false
+retain = false
 comment = "Completed Clean-In-Place (CIP) cycles counter"
 
 [[tags]]
@@ -203,4 +228,5 @@ name = "Tank_Temp"
 data_type = "REAL"
 initial_value = 25.0
 read_only_outside_sfc = false
+retain = false
 comment = "Process fluid temperature in Celsius"

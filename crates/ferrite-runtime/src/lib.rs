@@ -1,10 +1,26 @@
+use std::collections::HashMap;
+use std::path::Path;
 use std::time::Instant;
 
 use ferrite_core::{
-    AccessWidth, CoreError, DirectAddress, ExecutablePou, IecType, IecValue, MemoryArea, PouId,
-    ProcessImage, RuntimeError, ScanContext, TagId, TagTable,
+    AccessWidth, ActiveAlarm, AlarmCondition, AlarmDefinition, AlarmEventRecord, AlarmSeverity,
+    CoreError, DirectAddress, ExecutablePou, IecType, IecValue, MemoryArea, PouId, ProcessImage,
+    RuntimeError, ScanContext, TagId, TagTable,
 };
-use ferrite_project::{Project, ProjectError, SimScenario};
+use ferrite_project::{Project, ProjectError, SimScenario, TaskKind};
+
+/// Preemptive & Multi-Task Scheduler runtime representation of a scheduled task.
+pub struct ScheduledTask {
+    pub name: String,
+    pub kind: TaskKind,
+    pub priority: u32,
+    pub interval_ms: u64,
+    pub trigger_symbol: Option<String>,
+    pub pous: Vec<Box<dyn ExecutablePou>>,
+    pub elapsed_ms: u64,
+    pub last_trigger_state: bool,
+    pub execution_count: u64,
+}
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -54,12 +70,18 @@ pub struct ScenarioReport {
     pub max_scan_duration_us: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetainSnapshot {
+    pub tags: HashMap<String, IecValue>,
+    pub markers: Vec<u8>,
+}
+
 /// Deterministic PLC runtime executing the 4-phase scan cycle:
 /// 1. Input Scan -> 2. Task & POU Execution -> 3. Output Scan -> 4. Diagnostics & Watchdog.
 pub struct PlcRuntime {
     pub process_image: ProcessImage,
     pub tags: TagTable,
-    pous: Vec<Box<dyn ExecutablePou>>,
+    pub tasks: Vec<ScheduledTask>,
     pub scan_cycle_ms: u64,
     pub watchdog_us: u64,
     pub scan_count: u64,
@@ -68,18 +90,37 @@ pub struct PlcRuntime {
     pub max_scan_duration_us: u64,
     pub breakpoints: Vec<Breakpoint>,
     pub watch_list: Vec<String>,
+    input_tag_bindings: Vec<(TagId, DirectAddress, IecType)>,
+    pub alarms: Vec<ActiveAlarm>,
+    pub alarm_journal: Vec<AlarmEventRecord>,
 }
 
 impl PlcRuntime {
     pub fn from_project(project: &Project) -> Result<Self, ProjectError> {
-        let (tags, pous) = project.compile()?;
+        let (tags, compiled_tasks) = project.compile_tasks()?;
+        let tasks = compiled_tasks
+            .into_iter()
+            .map(|t| ScheduledTask {
+                name: t.name,
+                kind: t.kind,
+                priority: t.priority,
+                interval_ms: t.interval_ms,
+                trigger_symbol: t.trigger_symbol,
+                pous: t.pous,
+                elapsed_ms: 0,
+                last_trigger_state: false,
+                execution_count: 0,
+            })
+            .collect();
         let mut process_image = ProcessImage::default();
 
         // Initialize process image with tag initial values so initial inputs like EStop_OK = TRUE are latched
-        for tag in tags.tags() {
+        let mut input_tag_bindings = Vec::new();
+        for (idx, tag) in tags.tags().iter().enumerate() {
             if let Some(addr) = tag.address {
                 if addr.area == MemoryArea::Input {
                     let _ = process_image.set_hw_input(addr, &tag.initial_value);
+                    input_tag_bindings.push((TagId(idx), addr, tag.data_type));
                 } else {
                     let _ = process_image.write(addr, &tag.initial_value);
                 }
@@ -89,10 +130,40 @@ impl PlcRuntime {
 
         let watch_list = tags.tags().iter().map(|t| t.name.clone()).collect();
 
+        // Configure default ISA-18.2 alarms based on standard project tags
+        let mut alarms = Vec::new();
+        if tags.get_tag("Tank_Temp").is_some() {
+            alarms.push(ActiveAlarm::new(AlarmDefinition {
+                id: "ALM_HIGH_TEMP".to_string(),
+                tag: "Tank_Temp".to_string(),
+                condition: AlarmCondition::High { limit: 70.0 },
+                severity: AlarmSeverity::Critical,
+                message: "Process tank temperature exceeded critical threshold (70.0°C)".to_string(),
+            }));
+        }
+        if tags.get_tag("Overpressure_Fault").is_some() {
+            alarms.push(ActiveAlarm::new(AlarmDefinition {
+                id: "ALM_OVERPRESSURE".to_string(),
+                tag: "Overpressure_Fault".to_string(),
+                condition: AlarmCondition::Digital { trigger_value: true },
+                severity: AlarmSeverity::Major,
+                message: "Vessel overpressure safety fault detected".to_string(),
+            }));
+        }
+        if tags.get_tag("High_Temp_Alarm").is_some() {
+            alarms.push(ActiveAlarm::new(AlarmDefinition {
+                id: "ALM_TEMP_WARNING".to_string(),
+                tag: "High_Temp_Alarm".to_string(),
+                condition: AlarmCondition::Digital { trigger_value: true },
+                severity: AlarmSeverity::Warning,
+                message: "High temperature warning active".to_string(),
+            }));
+        }
+
         Ok(Self {
             process_image,
             tags,
-            pous,
+            tasks,
             scan_cycle_ms: project.manifest.scan_cycle_ms,
             watchdog_us: project.manifest.watchdog_us,
             scan_count: 0,
@@ -101,11 +172,21 @@ impl PlcRuntime {
             max_scan_duration_us: 0,
             breakpoints: Vec::new(),
             watch_list,
+            input_tag_bindings,
+            alarms,
+            alarm_journal: Vec::new(),
         })
     }
 
-    pub fn pous(&self) -> &[Box<dyn ExecutablePou>] {
-        &self.pous
+    pub fn tasks(&self) -> &[ScheduledTask] {
+        &self.tasks
+    }
+
+    pub fn pous(&self) -> Vec<&dyn ExecutablePou> {
+        self.tasks
+            .iter()
+            .flat_map(|t| t.pous.iter().map(|p| p.as_ref()))
+            .collect()
     }
 
     /// Sets a simulated input or tag value prior to the next scan cycle.
@@ -211,34 +292,60 @@ impl PlcRuntime {
         // Phase 1: Input Scan (Latch simulated hardware inputs into ProcessImage input buffer)
         self.process_image.latch_inputs();
 
-        // Synchronize input-mapped tags from ProcessImage without heap allocation
-        let tag_len = self.tags.tags().len();
-        for idx in 0..tag_len {
-            let id = TagId(idx);
-            let (addr_opt, ty, is_forced) = match self.tags.get_tag_by_id(id) {
-                Some(t) => (t.address, t.data_type, t.forced.is_some()),
-                None => continue,
-            };
-            if !is_forced
-                && let Some(addr) = addr_opt
-                    && addr.area == MemoryArea::Input {
-                        let val = self.process_image.read(addr, ty)?;
-                        if let Some(t) = self.tags.get_tag_mut_by_id(id) {
-                            t.value = Some(val);
-                        }
-                    }
+        // Synchronize only input-mapped tags from ProcessImage without scanning all tags
+        for &(id, addr, ty) in &self.input_tag_bindings {
+            if let Some(t) = self.tags.get_tag_mut_by_id(id)
+                && t.forced.is_none()
+            {
+                let val = self.process_image.read(addr, ty)?;
+                t.value = Some(val);
+            }
         }
 
         // Phase 2: Task & POU Execution
         {
-            let mut ctx = ScanContext::new(
-                &mut self.process_image,
-                &mut self.tags,
-                self.scan_cycle_ms,
-                self.scan_count,
-            );
-            for pou in &mut self.pous {
-                pou.execute(&mut ctx)?;
+            let dt_ms = self.scan_cycle_ms;
+            let scan_count = self.scan_count;
+            for task in &mut self.tasks {
+                let should_run = match task.kind {
+                    TaskKind::Continuous => true,
+                    TaskKind::Cyclic => {
+                        task.elapsed_ms = task.elapsed_ms.saturating_add(dt_ms);
+                        if task.elapsed_ms >= task.interval_ms.max(1) {
+                            task.elapsed_ms = 0;
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    TaskKind::Event => {
+                        if let Some(ref sym) = task.trigger_symbol {
+                            let curr = self
+                                .tags
+                                .get_tag_value(sym)
+                                .and_then(|v| v.as_bool().ok())
+                                .unwrap_or(false);
+                            let rising_edge = !task.last_trigger_state && curr;
+                            task.last_trigger_state = curr;
+                            rising_edge
+                        } else {
+                            false
+                        }
+                    }
+                };
+
+                if should_run {
+                    task.execution_count = task.execution_count.saturating_add(1);
+                    let mut ctx = ScanContext::new(
+                        &mut self.process_image,
+                        &mut self.tags,
+                        dt_ms,
+                        scan_count,
+                    );
+                    for pou in &mut task.pous {
+                        pou.execute(&mut ctx)?;
+                    }
+                }
             }
         }
 
@@ -258,6 +365,9 @@ impl PlcRuntime {
                 limit_us: self.watchdog_us,
             });
         }
+
+        // Evaluate ISA-18.2 Alarms
+        self.evaluate_alarms();
 
         let mut breakpoint_hit = false;
         for bp in &self.breakpoints {
@@ -342,6 +452,116 @@ impl PlcRuntime {
             max_scan_duration_us: self.max_scan_duration_us,
         })
     }
+
+    /// Registers a new ISA-18.2 alarm definition into the runtime.
+    pub fn register_alarm_definition(&mut self, def: AlarmDefinition) {
+        self.alarms.push(ActiveAlarm::new(def));
+    }
+
+    /// Returns a slice of all currently active (unacknowledged or acknowledged) alarms.
+    pub fn active_alarms(&self) -> Vec<&ActiveAlarm> {
+        self.alarms.iter().filter(|a| a.state.is_active()).collect()
+    }
+
+    /// Returns a reference to the alarm event journal.
+    pub fn alarm_journal(&self) -> &[AlarmEventRecord] {
+        &self.alarm_journal
+    }
+
+    /// Evaluates all configured ISA-18.2 alarms against current tag and memory values.
+    pub fn evaluate_alarms(&mut self) {
+        let time_ms = self.virtual_time_ms;
+        for alarm in &mut self.alarms {
+            let tag_name = &alarm.definition.tag;
+            let val = if let Some(t) = self.tags.get_tag(tag_name) {
+                if let Some(addr) = t.address {
+                    self.process_image.read(addr, t.data_type).unwrap_or_else(|_| t.current_value().clone())
+                } else {
+                    t.current_value().clone()
+                }
+            } else {
+                continue;
+            };
+
+            let changed = alarm.evaluate(&val, time_ms);
+            if changed {
+                self.alarm_journal.push(AlarmEventRecord {
+                    timestamp_ms: time_ms,
+                    alarm_id: alarm.definition.id.clone(),
+                    state: alarm.state,
+                    severity: alarm.definition.severity,
+                    message: alarm.definition.message.clone(),
+                });
+                if self.alarm_journal.len() > 1000 {
+                    self.alarm_journal.remove(0);
+                }
+            }
+        }
+    }
+
+    /// Acknowledges a specific active alarm by ID (ISA-18.2 operator acknowledgement).
+    pub fn acknowledge_alarm(&mut self, alarm_id: &str) {
+        let time_ms = self.virtual_time_ms;
+        for alarm in &mut self.alarms {
+            if alarm.definition.id == alarm_id {
+                let old_state = alarm.state;
+                alarm.acknowledge(time_ms);
+                if old_state != alarm.state {
+                    self.alarm_journal.push(AlarmEventRecord {
+                        timestamp_ms: time_ms,
+                        alarm_id: alarm.definition.id.clone(),
+                        state: alarm.state,
+                        severity: alarm.definition.severity,
+                        message: format!("ACK: {}", alarm.definition.message),
+                    });
+                }
+            }
+        }
+    }
+
+    /// Acknowledges all active alarms across the system.
+    pub fn acknowledge_all_alarms(&mut self) {
+        let time_ms = self.virtual_time_ms;
+        for alarm in &mut self.alarms {
+            let old_state = alarm.state;
+            alarm.acknowledge(time_ms);
+            if old_state != alarm.state {
+                self.alarm_journal.push(AlarmEventRecord {
+                    timestamp_ms: time_ms,
+                    alarm_id: alarm.definition.id.clone(),
+                    state: alarm.state,
+                    severity: alarm.definition.severity,
+                    message: format!("ACK: {}", alarm.definition.message),
+                });
+            }
+        }
+    }
+
+    /// Serializes retentive tags and %M marker memory to disk.
+    pub fn save_retain_snapshot(&self, path: &Path) -> std::io::Result<()> {
+        let retain_tags = self.tags.export_retain_values();
+        let markers = self.process_image.export_markers();
+        let payload = RetainSnapshot {
+            tags: retain_tags,
+            markers,
+        };
+        let bytes = serde_json::to_vec_pretty(&payload)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        std::fs::write(path, bytes)
+    }
+
+    /// Restores retentive tags and %M marker memory from disk.
+    pub fn load_retain_snapshot(&mut self, path: &Path) -> std::io::Result<()> {
+        if !path.exists() {
+            return Ok(());
+        }
+        let bytes = std::fs::read(path)?;
+        let snapshot: RetainSnapshot = serde_json::from_slice(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        self.tags.import_retain_values(&snapshot.tags);
+        self.process_image.import_markers(&snapshot.markers);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -365,6 +585,167 @@ mod tests {
             assert_eq!(report.scans_executed, 8);
             assert!(report.assertions_verified >= 20);
         }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_isa18_alarm_lifecycle() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_plc_alarm_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+
+        let project = Project::scaffold(&temp_dir, "alarm_plant")?;
+        let mut runtime = PlcRuntime::from_project(&project)?;
+
+        // Register an alarm on Tank_Level > 90
+        use ferrite_core::alarm::{AlarmCondition, AlarmDefinition, AlarmSeverity, AlarmState};
+        let alarm_def = AlarmDefinition {
+            id: "ALM_TANK_HIGH".to_string(),
+            tag: "Tank_Level".to_string(),
+            severity: AlarmSeverity::Critical,
+            condition: AlarmCondition::High { limit: 90.0 },
+            message: "Tank Level Exceeded 90%!".to_string(),
+        };
+        runtime.register_alarm_definition(alarm_def);
+
+        // Scan with Tank_Level = 50 -> normal
+        runtime.set_stimulus("Tank_Level", IecValue::Int(50))?;
+        runtime.step_scan()?;
+        assert!(runtime.active_alarms().is_empty());
+
+        // Scan with Tank_Level = 95 -> ActiveUnacknowledged
+        // (Note: Tank_Level >= 95 also triggers Overpressure_Fault in pump_ctrl FBD, producing 2 active alarms!)
+        runtime.set_stimulus("Tank_Level", IecValue::Int(95))?;
+        runtime.step_scan()?;
+        let active = runtime.active_alarms();
+        assert_eq!(active.len(), 2);
+        let tank_alm = active
+            .iter()
+            .find(|a| a.definition.id == "ALM_TANK_HIGH")
+            .ok_or("ALM_TANK_HIGH exists")?;
+        assert_eq!(tank_alm.state, AlarmState::ActiveUnacknowledged);
+
+        // Acknowledge alarm -> ActiveAcknowledged
+        runtime.acknowledge_alarm("ALM_TANK_HIGH");
+        let active = runtime.active_alarms();
+        let tank_alm = active
+            .iter()
+            .find(|a| a.definition.id == "ALM_TANK_HIGH")
+            .ok_or("ALM_TANK_HIGH exists")?;
+        assert_eq!(tank_alm.state, AlarmState::ActiveAcknowledged);
+
+        // Scan with Tank_Level back to 80 -> cleared / removed from active alarms
+        runtime.set_stimulus("Tank_Level", IecValue::Int(80))?;
+        runtime.step_scan()?;
+        assert!(runtime.active_alarms().iter().all(|a| a.definition.id != "ALM_TANK_HIGH"));
+
+        // Check journal has records
+        assert!(runtime.alarm_journal().len() >= 3);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_retain_snapshot_persistence() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_plc_retain_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+
+        let project = Project::scaffold(&temp_dir, "retain_plant")?;
+        let mut runtime = PlcRuntime::from_project(&project)?;
+
+        // Set retain on Tank_Level
+        if let Some(entry) = runtime.tags.get_tag_mut("Tank_Level") {
+            entry.retain = true;
+        }
+        runtime.set_stimulus("Tank_Level", IecValue::Int(78))?;
+        runtime.process_image.write_marker_word(10, 78)?;
+
+        let snap_path = temp_dir.join("retain.json");
+        runtime.save_retain_snapshot(&snap_path)?;
+
+        // Create new fresh runtime from project
+        let mut runtime2 = PlcRuntime::from_project(&project)?;
+        if let Some(entry) = runtime2.tags.get_tag_mut("Tank_Level") {
+            entry.retain = true;
+        }
+        // Initially it should be default
+        assert_ne!(runtime2.tags.get_tag_value("Tank_Level"), Some(&IecValue::Int(78)));
+
+        // Load retain snapshot
+        runtime2.load_retain_snapshot(&snap_path)?;
+        assert_eq!(runtime2.tags.get_tag_value("Tank_Level"), Some(&IecValue::Int(78)));
+        assert_eq!(runtime2.process_image.read_marker_word(10)?, 78);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_multi_task_scheduler_cyclic_and_event() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_plc_multitask_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+
+        let mut project = Project::scaffold(&temp_dir, "multitask_plant")?;
+        // Reconfigure project tasks:
+        // Task 1: Fast cyclic (10ms) with main_safety
+        // Task 2: Slow cyclic (50ms) with math_pid
+        // Task 3: Event task triggered by Overpressure_Fault with pump_ctrl
+        use ferrite_project::{TaskConfig, TaskKind};
+        project.manifest.scan_cycle_ms = 10;
+        project.manifest.tasks = vec![
+            TaskConfig {
+                name: "FastTask".to_string(),
+                kind: TaskKind::Cyclic,
+                priority: 1,
+                interval_ms: 10,
+                trigger_symbol: None,
+                pou_order: vec!["main_safety".to_string()],
+            },
+            TaskConfig {
+                name: "SlowTask".to_string(),
+                kind: TaskKind::Cyclic,
+                priority: 2,
+                interval_ms: 50,
+                trigger_symbol: None,
+                pou_order: vec!["math_pid".to_string()],
+            },
+            TaskConfig {
+                name: "EventTask".to_string(),
+                kind: TaskKind::Event,
+                priority: 3,
+                interval_ms: 0,
+                trigger_symbol: Some("Overpressure_Fault".to_string()),
+                pou_order: vec!["pump_ctrl".to_string()],
+            },
+        ];
+
+        let mut runtime = PlcRuntime::from_project(&project)?;
+        assert_eq!(runtime.tasks().len(), 3);
+
+        // Run 5 scans (50ms virtual time)
+        for _ in 0..5 {
+            runtime.step_scan()?;
+        }
+
+        // FastTask (10ms) ran 5 times
+        assert_eq!(runtime.tasks()[0].execution_count, 5);
+        // SlowTask (50ms) ran 1 time
+        assert_eq!(runtime.tasks()[1].execution_count, 1);
+        // EventTask ran 0 times (Overpressure_Fault not triggered)
+        assert_eq!(runtime.tasks()[2].execution_count, 0);
+
+        // Now trigger rising edge on Overpressure_Fault
+        runtime.set_stimulus("Overpressure_Fault", IecValue::Bool(true))?;
+        runtime.step_scan()?;
+        assert_eq!(runtime.tasks()[2].execution_count, 1);
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

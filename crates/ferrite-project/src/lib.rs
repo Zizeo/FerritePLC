@@ -58,7 +58,13 @@ pub enum ProjectError {
 
     #[error("Project validation failed with {0} error(s)")]
     ValidationFailed(usize),
+
+    #[error("PLCopen XML error: {0}")]
+    Xml(String),
 }
+
+pub mod plcopen;
+pub use plcopen::PlcOpenTc6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1313,6 +1319,59 @@ END_PROGRAM
 
         Ok(diagnostics)
     }
+}
+
+pub struct CompiledTask {
+    pub name: String,
+    pub kind: TaskKind,
+    pub priority: u32,
+    pub interval_ms: u64,
+    pub trigger_symbol: Option<String>,
+    pub pous: Vec<Box<dyn ExecutablePou>>,
+}
+
+impl Project {
+    /// Compiles all POUs grouped into their configured scheduled tasks.
+    pub fn compile_tasks(&self) -> Result<(TagTable, Vec<CompiledTask>), ProjectError> {
+        let tags = self.build_tag_table()?;
+        let mut tasks_sorted = self.manifest.tasks.clone();
+        tasks_sorted.sort_by_key(|t| t.priority);
+
+        let mut compiled_tasks = Vec::new();
+        for task in &tasks_sorted {
+            let mut pous = Vec::new();
+            for pou_name in &task.pou_order {
+                if let Some(pou) = self.pous.get(pou_name) {
+                    let exec: Box<dyn ExecutablePou> = match pou {
+                        PouSource::Ld(p) => Box::new(p.compile(&tags)?),
+                        PouSource::Sfc(p) => Box::new(p.compile(&tags)?),
+                        PouSource::St(p) => Box::new(p.compile(&tags)?),
+                        PouSource::Fbd(p) => Box::new(p.compile(&tags)?),
+                    };
+                    pous.push(exec);
+                }
+            }
+            compiled_tasks.push(CompiledTask {
+                name: task.name.clone(),
+                kind: task.kind,
+                priority: task.priority,
+                interval_ms: task.interval_ms,
+                trigger_symbol: task.trigger_symbol.clone(),
+                pous,
+            });
+        }
+        Ok((tags, compiled_tasks))
+    }
+
+    /// Exports the project to a standard PLCopen TC6 XML string.
+    pub fn export_plcopen_xml(&self) -> Result<String, ProjectError> {
+        PlcOpenTc6::export_project(self)
+    }
+
+    /// Imports a project from a PLCopen TC6 XML string into a target directory.
+    pub fn import_plcopen_xml(xml: &str, target_dir: &Path) -> Result<Self, ProjectError> {
+        PlcOpenTc6::import_project(xml, target_dir)
+    }
 
     /// Compiles all POUs in configured task priority and execution order.
     pub fn compile(&self) -> Result<(TagTable, Vec<Box<dyn ExecutablePou>>), ProjectError> {
@@ -1363,6 +1422,35 @@ mod tests {
         assert!(diags_after.is_empty());
 
         let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_plcopen_tc6_xml_export_and_import_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_plc_test_plcopen_orig");
+        let import_dir = env::temp_dir().join("ferrite_plc_test_plcopen_imported");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        if import_dir.exists() {
+            let _ = fs::remove_dir_all(&import_dir);
+        }
+
+        let proj = Project::scaffold(&temp_dir, "plcopen_plant")?;
+        let xml = proj.export_plcopen_xml()?;
+        assert!(xml.contains("<project xmlns=\"http://www.plcopen.org/xml/tc6_0201\">"));
+        assert!(xml.contains("<fileHeader companyName=\"FerritePLC\""));
+        assert!(xml.contains("<pou name=\"main_safety\""));
+        assert!(xml.contains("<pou name=\"math_pid\""));
+        assert!(xml.contains("<variable name=\"Tank_Level\""));
+
+        let imported = Project::import_plcopen_xml(&xml, &import_dir)?;
+        assert_eq!(imported.manifest.name, "plcopen_plant");
+        assert!(imported.global_tags.tags.iter().any(|t| t.name == "Tank_Level"));
+        assert!(imported.pous.contains_key("math_pid"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        let _ = fs::remove_dir_all(&import_dir);
         Ok(())
     }
 }

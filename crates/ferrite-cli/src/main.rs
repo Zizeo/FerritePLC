@@ -116,6 +116,24 @@ enum Commands {
         #[arg(short, long, default_value = "en")]
         locale: CliUiLang,
     },
+    /// Exports the project to standard PLCopen TC6 XML (IEC 61131-3)
+    ExportPlcopen {
+        /// Destination XML file path
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Project directory (defaults to current directory)
+        #[arg(short, long, default_value = ".")]
+        path: PathBuf,
+    },
+    /// Imports a project from standard PLCopen TC6 XML into a target folder
+    ImportPlcopen {
+        /// Source PLCopen XML file path
+        #[arg(short, long)]
+        input: PathBuf,
+        /// Target folder where the imported project will be created
+        #[arg(short, long)]
+        target_dir: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -171,6 +189,31 @@ fn main() -> Result<()> {
             } else {
                 run_tui_sim(&path)?;
             }
+        }
+        Some(Commands::ExportPlcopen { output, path }) => {
+            let project = Project::load(&path)
+                .with_context(|| format!("Failed to load project from {}", path.display()))?;
+            let xml = project
+                .export_plcopen_xml()
+                .with_context(|| "Failed to export PLCopen TC6 XML")?;
+            std::fs::write(&output, xml)
+                .with_context(|| format!("Failed to write XML to {}", output.display()))?;
+            println!(
+                "Successfully exported PLCopen TC6 XML for '{}' -> {}",
+                project.manifest.name,
+                output.display()
+            );
+        }
+        Some(Commands::ImportPlcopen { input, target_dir }) => {
+            let xml = std::fs::read_to_string(&input)
+                .with_context(|| format!("Failed to read XML file {}", input.display()))?;
+            let project = Project::import_plcopen_xml(&xml, &target_dir)
+                .with_context(|| format!("Failed to import PLCopen XML into {}", target_dir.display()))?;
+            println!(
+                "Successfully imported PLCopen project '{}' into {}",
+                project.manifest.name,
+                target_dir.display()
+            );
         }
     }
 
