@@ -113,7 +113,7 @@ fn step_state_symbols(pou_name: &str, step_id: &str) -> (String, String, String,
 
 /// Renders the visual Grafcet (IEC 60848 SFC) canvas with:
 /// - AND (`===`) & OR (`---`) Divergence and Convergence builder & 2D parallel branch rendering
-/// - Cross-SFC active state transition picker (`🔗 + SFC State ▾`)
+/// - Cross-SFC active state transition picker (`+ SFC State ▾`)
 /// - Cross-SFC & live Set / Force step state controls (`S`, `R`, `F`, `FZ` + live Set/Force buttons)
 /// - Drag-and-drop reordering of Steps and Transitions
 pub fn render_sfc_editor(

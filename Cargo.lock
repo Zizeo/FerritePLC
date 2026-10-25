@@ -1161,6 +1161,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_plot"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1794c66fb727dac28dffed2e4b548e5118d1cccc331d368a35411d68725dde71"
+dependencies = [
+ "ahash",
+ "egui",
+ "emath",
+]
+
+[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1313,12 +1324,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrite-fieldbus-iot"
+version = "0.1.0"
+dependencies = [
+ "ferrite-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "ferrite-fieldbus-modbus"
+version = "0.1.0"
+dependencies = [
+ "ferrite-core",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "ferrite-gui"
 version = "0.1.0"
 dependencies = [
  "eframe",
  "egui",
+ "egui_plot",
  "ferrite-core",
+ "ferrite-fieldbus-modbus",
+ "ferrite-hal",
  "ferrite-ir",
  "ferrite-lang-fbd",
  "ferrite-lang-ld",
@@ -1326,9 +1359,21 @@ dependencies = [
  "ferrite-lang-st",
  "ferrite-project",
  "ferrite-runtime",
+ "ferrite-twin",
  "rfd",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "ferrite-hal"
+version = "0.1.0"
+dependencies = [
+ "ferrite-core",
+ "serde",
+ "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]
@@ -1395,6 +1440,7 @@ dependencies = [
  "ferrite-lang-ld",
  "ferrite-lang-sfc",
  "ferrite-lang-st",
+ "quick-xml 0.37.5",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1408,6 +1454,18 @@ dependencies = [
  "ferrite-core",
  "ferrite-project",
  "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "ferrite-twin"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "ferrite-core",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -2895,6 +2953,16 @@ name = "quick-xml"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eff6510e86862b57b210fd8cbe8ed3f0d7d600b9c2863cd4549a2e033c66e956"
+dependencies = [
+ "memchr",
+ "serde",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.37.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
 dependencies = [
  "memchr",
  "serde",

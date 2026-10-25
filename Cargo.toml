@@ -7,8 +7,12 @@ members = [
     "crates/ferrite-lang-sfc",
     "crates/ferrite-lang-st",
     "crates/ferrite-lang-fbd",
+    "crates/ferrite-fieldbus-modbus",
+    "crates/ferrite-fieldbus-iot",
+    "crates/ferrite-hal",
     "crates/ferrite-project",
     "crates/ferrite-runtime",
+    "crates/ferrite-twin",
     "crates/ferrite-gui",
     "crates/ferrite-cli",
 ]
@@ -27,8 +31,12 @@ ferrite-lang-ld = { path = "crates/ferrite-lang-ld" }
 ferrite-lang-sfc = { path = "crates/ferrite-lang-sfc" }
 ferrite-lang-st = { path = "crates/ferrite-lang-st" }
 ferrite-lang-fbd = { path = "crates/ferrite-lang-fbd" }
+ferrite-fieldbus-modbus = { path = "crates/ferrite-fieldbus-modbus" }
+ferrite-fieldbus-iot = { path = "crates/ferrite-fieldbus-iot" }
+ferrite-hal = { path = "crates/ferrite-hal" }
 ferrite-project = { path = "crates/ferrite-project" }
 ferrite-runtime = { path = "crates/ferrite-runtime" }
+ferrite-twin = { path = "crates/ferrite-twin" }
 ferrite-gui = { path = "crates/ferrite-gui" }
 
 serde = { version = "1.0", features = ["derive"] }
@@ -42,8 +50,17 @@ ratatui = "0.29"
 crossterm = "0.28"
 eframe = "0.31"
 egui = "0.31"
+egui_plot = "0.31"
 rfd = "0.15"
+quick-xml = { version = "0.37", features = ["serialize"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
+dbg_macro = "deny"
+todo = "warn"
+unimplemented = "warn"
+redundant_clone = "warn"
