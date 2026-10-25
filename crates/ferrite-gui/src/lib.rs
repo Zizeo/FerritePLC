@@ -12,9 +12,10 @@ pub mod trend_plotter;
 
 use std::path::{Path, PathBuf};
 
-pub use app::{FerriteStudioApp, UiTheme, WorkspaceTab};
+pub use app::{FerriteStudioApp, Message, UiTheme, WorkspaceTab};
 use ferrite_project::{MANIFEST_FILE_NAME, Project, ProjectError};
 pub use i18n::UiLanguage;
+pub use theme::StudioTheme;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -23,7 +24,7 @@ pub enum GuiError {
     Project(#[from] ProjectError),
 
     #[error("Native GUI window error: {0}")]
-    Eframe(String),
+    Iced(String),
 }
 
 /// Resolves or scaffolds an initial `Project` for FerritePLC Studio.
@@ -53,82 +54,31 @@ pub fn run_gui(initial_path: Option<PathBuf>) -> Result<(), GuiError> {
     run_gui_with_lang(initial_path, UiLanguage::En)
 }
 
-static SYSTEM_FONTS: std::sync::OnceLock<Option<egui::FontDefinitions>> = std::sync::OnceLock::new();
-
-/// Configures OS fallback fonts (`Segoe UI`, `Segoe UI Symbol`, `Segoe UI Emoji`, `Consolas` on Windows)
-/// so Unicode symbols and box-drawing glyphs never render as missing-glyph squares (`□`).
-pub fn configure_system_fonts(ctx: &egui::Context) {
-    let font_id = egui::Id::new("ferrite_fonts_configured");
-    let already_configured = ctx.data(|d| d.get_temp::<bool>(font_id).unwrap_or(false));
-    if already_configured {
-        return;
-    }
-
-    let defs = SYSTEM_FONTS.get_or_init(|| {
-        let mut fonts = egui::FontDefinitions::default();
-        let candidate_fonts = [
-            ("segoeui", r"C:\Windows\Fonts\segoeui.ttf"),
-            ("seguisym", r"C:\Windows\Fonts\seguisym.ttf"),
-            ("seguiemj", r"C:\Windows\Fonts\seguiemj.ttf"),
-            ("consola", r"C:\Windows\Fonts\consola.ttf"),
-        ];
-
-        let mut loaded_any = false;
-        for (name, path) in candidate_fonts {
-            if let Ok(bytes) = std::fs::read(path) {
-                fonts.font_data.insert(
-                    name.to_string(),
-                    std::sync::Arc::new(egui::FontData::from_owned(bytes)),
-                );
-                if let Some(prop) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-                    prop.push(name.to_string());
-                }
-                if let Some(mono) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-                    mono.push(name.to_string());
-                }
-                loaded_any = true;
-            }
-        }
-
-        if loaded_any {
-            Some(fonts)
-        } else {
-            None
-        }
-    });
-
-    if let Some(ref fonts) = *defs {
-        ctx.set_fonts(fonts.clone());
-    }
-    ctx.data_mut(|d| d.insert_temp(font_id, true));
-}
-
 /// Launches the native FerritePLC Studio desktop IDE & PLC Simulator window with a specific initial UI language (`En` or `Fr`).
 pub fn run_gui_with_lang(initial_path: Option<PathBuf>, lang: UiLanguage) -> Result<(), GuiError> {
     let project = resolve_or_scaffold_project(initial_path.as_deref())?;
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(format!("FerritePLC Studio — {}", project.manifest.name))
-            .with_inner_size([1440.0, 880.0])
-            .with_min_inner_size([1024.0, 680.0]),
-        ..Default::default()
-    };
+    let app = FerriteStudioApp::with_language(project, lang);
 
-    eframe::run_native(
-        "FerritePLC Studio",
-        options,
-        Box::new(move |cc| {
-            configure_system_fonts(&cc.egui_ctx);
-            Ok(Box::new(FerriteStudioApp::with_language(project, lang)))
-        }),
+    iced::application(
+        FerriteStudioApp::title,
+        FerriteStudioApp::update,
+        FerriteStudioApp::view,
     )
-    .map_err(|e| GuiError::Eframe(e.to_string()))
+    .subscription(FerriteStudioApp::subscription)
+    .theme(FerriteStudioApp::theme)
+    .window(iced::window::Settings {
+        size: iced::Size::new(1440.0, 880.0),
+        min_size: Some(iced::Size::new(1024.0, 680.0)),
+        ..Default::default()
+    })
+    .run_with(move || (app, iced::Task::none()))
+    .map_err(|e| GuiError::Iced(e.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor_st::highlight_st_source;
+    use ferrite_lang_st::parse_st_statements;
     use std::env;
     use std::fs;
 
@@ -164,10 +114,9 @@ mod tests {
         assert_eq!(app.scenario_logs.len(), 1);
         assert!(app.scenario_logs[0].starts_with("[SUCCÈS]"));
 
-        let job = highlight_st_source(
-            "PROGRAM test\n (* comment *)\n IF %IX0.0 AND X1.state THEN %MW10 := 42; END_IF;\nEND_PROGRAM",
-        );
-        assert!(!job.sections.is_empty());
+        let st_src = "PROGRAM test\n (* comment *)\n IF %IX0.0 AND X1.state THEN %MW10 := 42; END_IF;\nEND_PROGRAM";
+        let parse_res = parse_st_statements(st_src, "test");
+        assert!(parse_res.is_ok());
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
@@ -182,8 +131,9 @@ mod tests {
         let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
         let mut app = FerriteStudioApp::new(proj);
         assert_eq!(app.ui_theme, UiTheme::Dark);
+        assert!(app.ui_theme.is_dark());
         app.ui_theme = UiTheme::Light;
-        assert!(!app.ui_theme.visuals().dark_mode);
+        assert!(!app.ui_theme.is_dark());
 
         assert!(!app.can_undo() && !app.can_redo());
         let original_name = app.project.manifest.name.clone();
@@ -333,15 +283,15 @@ mod tests {
                 binding: Some(VariableBinding {
                     variable_id: "Pump_Running".to_string(),
                     access_mode: AccessMode::ReadWrite,
-                    active_color: egui::Color32::GREEN.to_array(),
-                    inactive_color: egui::Color32::DARK_GRAY.to_array(),
+                    active_color: [0, 255, 0, 255],
+                    inactive_color: [50, 50, 50, 255],
                     blink: Some(BlinkConfig {
                         enabled: true,
                         trigger_state: true,
                         interval_ms: 500,
                     }),
                 }),
-                base_color: egui::Color32::LIGHT_GRAY.to_array(),
+                base_color: [200, 200, 200, 255],
             };
             ws.elements.push(elem);
         }
@@ -461,8 +411,8 @@ mod tests {
         }
 
         // Verify theme tokens
-        let card = theme::StudioTheme::card_frame();
-        assert_eq!(card.fill, theme::StudioTheme::BG_ELEVATED);
+        let card = theme::StudioTheme::card_style(&iced::Theme::Dark);
+        assert_eq!(card.background, Some(iced::Background::Color(theme::StudioTheme::BG_ELEVATED)));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())

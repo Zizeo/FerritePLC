@@ -16,9 +16,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-eframe.workspace = true
-egui.workspace = true
-egui_plot.workspace = true
+iced.workspace = true
 rfd.workspace = true
 ferrite-core.workspace = true
 ferrite-ir.workspace = true

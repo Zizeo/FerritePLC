@@ -1,166 +1,288 @@
-use egui::{vec2, Color32, CornerRadius, FontId, Frame, Margin, Pos2, Response, RichText, Stroke, Ui};
+use iced::border::Radius;
+use iced::widget::{button, container, pick_list, text_input, toggler};
+use iced::{Background, Border, Color, Theme};
 
-/// Industrial obsidian design tokens for FerritePLC Studio.
+/// Industrial obsidian design tokens and style generators for FerritePLC Studio.
+#[derive(Debug, Clone, Copy)]
 pub struct StudioTheme;
 
 impl StudioTheme {
     // Backgrounds
-    pub const BG_OBSIDIAN: Color32 = Color32::from_rgb(9, 12, 16);     // Deep canvas / editor
-    pub const BG_PANEL: Color32 = Color32::from_rgb(13, 17, 23);       // Dock / sidebar background
-    pub const BG_ELEVATED: Color32 = Color32::from_rgb(22, 27, 34);    // Card / header background
-    pub const BG_SURFACE: Color32 = Color32::from_rgb(30, 36, 46);     // Interactive surface
-    pub const BG_HOVER: Color32 = Color32::from_rgb(40, 48, 62);       // Hovered surface
-    pub const BG_ACTIVE: Color32 = Color32::from_rgb(14, 116, 144);    // Selected / pressed
+    pub const BG_BASE: Color = Color::from_rgb(0.043, 0.051, 0.067);      // #0B0D11 Deep graphite
+    pub const BG_PANEL: Color = Color::from_rgb(0.071, 0.086, 0.114);    // #12161D Sidebar / Dock
+    pub const BG_ELEVATED: Color = Color::from_rgb(0.102, 0.122, 0.161); // #1A1F29 Card
+    pub const BG_SURFACE: Color = Color::from_rgb(0.141, 0.169, 0.224);  // #242B39 Interactive surface
+    pub const BG_HOVER: Color = Color::from_rgb(0.180, 0.216, 0.282);    // #2E3748 Hover
+    pub const BG_ACTIVE: Color = Color::from_rgb(0.055, 0.455, 0.565);   // #0E7490 Active cyan-blue
 
     // Borders & Strokes
-    pub const BORDER_SUBTLE: Color32 = Color32::from_rgb(38, 46, 58);
-    pub const BORDER_CARD: Color32 = Color32::from_rgb(48, 56, 70);
-    pub const BORDER_ACTIVE: Color32 = Color32::from_rgb(56, 189, 248);
+    pub const BORDER_HAIRLINE: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.07);
+    pub const BORDER_CARD: Color = Color::from_rgba(1.0, 1.0, 1.0, 0.10);
+    pub const BORDER_ACTIVE: Color = Color::from_rgb(0.220, 0.741, 0.973); // #38BDF8 Sky cyan
 
     // Accent Colors
-    pub const ACCENT_CYAN: Color32 = Color32::from_rgb(56, 189, 248);   // High-tech electric cyan
-    pub const ACCENT_EMERALD: Color32 = Color32::from_rgb(16, 185, 129);// Run / Normal / Good
-    pub const ACCENT_AMBER: Color32 = Color32::from_rgb(245, 158, 11);  // Warning / Paused / Modified
-    pub const ACCENT_ROSE: Color32 = Color32::from_rgb(244, 63, 94);    // Alarm / Error / Stop
-    pub const ACCENT_PURPLE: Color32 = Color32::from_rgb(168, 85, 247);// Structured Text (ST)
+    pub const ACCENT_INDIGO: Color = Color::from_rgb(0.388, 0.400, 0.945); // #6366F1 Linear blue
+    pub const ACCENT_CYAN: Color = Color::from_rgb(0.220, 0.741, 0.973);   // #38BDF8 Sky cyan
+    pub const ACCENT_EMERALD: Color = Color::from_rgb(0.063, 0.725, 0.506);// #10B981 Run / Normal
+    pub const ACCENT_AMBER: Color = Color::from_rgb(0.961, 0.620, 0.043);  // #F59E0B Warning / Paused
+    pub const ACCENT_ROSE: Color = Color::from_rgb(0.957, 0.247, 0.369);   // #F43F5E Alarm / Error
+    pub const ACCENT_PURPLE: Color = Color::from_rgb(0.659, 0.333, 0.969); // #A855F7 Structured Text
 
-    // Typography Colors
-    pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(240, 246, 252);
-    pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(180, 192, 206);
-    pub const TEXT_MUTED: Color32 = Color32::from_rgb(125, 138, 155);
+    // Typography
+    pub const TEXT_PRIMARY: Color = Color::from_rgb(0.953, 0.957, 0.965);   // #F3F4F6
+    pub const TEXT_SECONDARY: Color = Color::from_rgb(0.612, 0.639, 0.686); // #9CA3AF
+    pub const TEXT_MUTED: Color = Color::from_rgb(0.420, 0.447, 0.502);     // #6B7280
 
-    /// Standard card container frame.
-    pub fn card_frame() -> Frame {
-        Frame::NONE
-            .fill(Self::BG_ELEVATED)
-            .stroke(Stroke::new(1.0_f32, Self::BORDER_CARD))
-            .corner_radius(CornerRadius::same(6))
-            .inner_margin(Margin::same(8))
-    }
-
-    /// Renders a modern industrial pill badge (e.g. `[LD]`, `[RUNNING]`, `[v0.1.0]`).
-    pub fn badge(ui: &mut Ui, text: &str, bg_color: Color32, text_color: Color32) -> Response {
-        let (rect, response) = ui.allocate_exact_size(vec2(text.len() as f32 * 7.5 + 14.0, 18.0), egui::Sense::hover());
-        let painter = ui.painter();
-        painter.rect_filled(rect, 4.0, bg_color);
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            text,
-            FontId::monospace(10.5),
-            text_color,
-        );
-        response
-    }
-
-    /// Renders a telemetry capsule with a pulsing status dot.
-    pub fn telemetry_pill(
-        ui: &mut Ui,
-        is_running: bool,
-        scan_count: u64,
-        time_ms: u64,
-        duration_us: u64,
-    ) {
-        let dot_color = if is_running { Self::ACCENT_EMERALD } else { Self::ACCENT_AMBER };
-        let border_color = if is_running {
-            Color32::from_rgb(20, 80, 50)
-        } else {
-            Color32::from_rgb(80, 60, 20)
-        };
-
-        Frame::NONE
-            .fill(Color32::from_rgb(16, 21, 29))
-            .stroke(Stroke::new(1.0_f32, border_color))
-            .corner_radius(CornerRadius::same(5))
-            .inner_margin(Margin::symmetric(8, 4))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    // Pulsing Dot
-                    let (dot_rect, _) = ui.allocate_exact_size(vec2(10.0, 10.0), egui::Sense::hover());
-                    ui.painter().circle_filled(dot_rect.center(), 4.0, dot_color);
-                    if is_running {
-                        ui.painter().circle_stroke(
-                            dot_rect.center(),
-                            5.5,
-                            Stroke::new(1.0_f32, dot_color.gamma_multiply(0.5)),
-                        );
-                    }
-
-                    // Status Text
-                    let status_txt = if is_running { "RUN" } else { "PAUSED" };
-                    ui.colored_label(dot_color, RichText::new(status_txt).strong().size(11.0));
-
-                    ui.colored_label(Self::BORDER_CARD, "|");
-
-                    // Metrics in crisp monospace
-                    ui.monospace(
-                        RichText::new(format!("#{scan_count}  {time_ms}ms  {duration_us}µs"))
-                            .color(Self::TEXT_SECONDARY)
-                            .size(11.0),
-                    );
-                });
-            });
-    }
-
-    /// Renders a sleek elevated document tab with language badge and active underline.
-    pub fn document_tab(
-        ui: &mut Ui,
-        title: &str,
-        badge_txt: &str,
-        badge_color: Color32,
-        is_active: bool,
-        is_modified: bool,
-    ) -> Response {
-        let bg_fill = if is_active {
-            Self::BG_SURFACE
-        } else {
-            Self::BG_PANEL
-        };
-        let border_stroke = if is_active {
-            Stroke::new(1.0_f32, Self::ACCENT_CYAN)
-        } else {
-            Stroke::new(1.0_f32, Self::BORDER_SUBTLE)
-        };
-
-        let response = Frame::NONE
-            .fill(bg_fill)
-            .stroke(border_stroke)
-            .corner_radius(CornerRadius::same(5))
-            .inner_margin(Margin::symmetric(10, 5))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.colored_label(
-                        badge_color,
-                        RichText::new(badge_txt).monospace().size(10.0).strong(),
-                    );
-                    let title_color = if is_active {
-                        Self::TEXT_PRIMARY
-                    } else {
-                        Self::TEXT_SECONDARY
-                    };
-                    ui.label(RichText::new(title).color(title_color).size(12.0));
-
-                    if is_modified {
-                        ui.colored_label(Self::ACCENT_AMBER, "●");
-                    }
-                });
-            })
-            .response;
-
-        let interactive = ui.interact(response.rect, response.id, egui::Sense::click());
-
-        // Highlight line at bottom of active tab
-        if is_active {
-            let line_y = response.rect.max.y - 1.0;
-            ui.painter().line_segment(
-                [
-                    Pos2::new(response.rect.min.x + 4.0, line_y),
-                    Pos2::new(response.rect.max.x - 4.0, line_y),
-                ],
-                Stroke::new(2.0_f32, Self::ACCENT_CYAN),
-            );
+    // Container Styles
+    pub fn header_container_style(_theme: &Theme) -> container::Style {
+        container::Style {
+            background: Some(Background::Color(Self::BG_PANEL)),
+            border: Border {
+                color: Self::BORDER_HAIRLINE,
+                width: 1.0,
+                radius: Radius::default(),
+            },
+            ..Default::default()
         }
+    }
 
-        interactive
+    pub fn sidebar_container_style(_theme: &Theme) -> container::Style {
+        container::Style {
+            background: Some(Background::Color(Self::BG_PANEL)),
+            border: Border {
+                color: Self::BORDER_HAIRLINE,
+                width: 1.0,
+                radius: Radius::default(),
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn card_style(_theme: &Theme) -> container::Style {
+        container::Style {
+            background: Some(Background::Color(Self::BG_ELEVATED)),
+            border: Border {
+                color: Self::BORDER_CARD,
+                width: 1.0,
+                radius: Radius::from(10.0),
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn canvas_container_style(_theme: &Theme) -> container::Style {
+        container::Style {
+            background: Some(Background::Color(Self::BG_BASE)),
+            border: Border {
+                color: Self::BORDER_CARD,
+                width: 1.0,
+                radius: Radius::from(8.0),
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn modal_card_style(_theme: &Theme) -> container::Style {
+        container::Style {
+            background: Some(Background::Color(Self::BG_ELEVATED)),
+            border: Border {
+                color: Self::ACCENT_INDIGO,
+                width: 1.5,
+                radius: Radius::from(12.0),
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn subtle_badge_style(bg: Color) -> impl Fn(&Theme) -> container::Style {
+        move |_theme: &Theme| container::Style {
+            background: Some(Background::Color(bg)),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: Radius::from(9999.0),
+            },
+            ..Default::default()
+        }
+    }
+
+    // Button Styles
+    pub fn primary_button(_theme: &Theme, status: button::Status) -> button::Style {
+        let bg = match status {
+            button::Status::Hovered => Color::from_rgb(0.310, 0.275, 0.898),
+            button::Status::Pressed => Color::from_rgb(0.263, 0.220, 0.792),
+            button::Status::Disabled => Color::from_rgba(0.388, 0.400, 0.945, 0.3),
+            button::Status::Active => Self::ACCENT_INDIGO,
+        };
+        button::Style {
+            background: Some(Background::Color(bg)),
+            text_color: Self::TEXT_PRIMARY,
+            border: Border {
+                radius: Radius::from(6.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn secondary_button(_theme: &Theme, status: button::Status) -> button::Style {
+        let bg = match status {
+            button::Status::Hovered => Self::BG_HOVER,
+            button::Status::Pressed => Self::BG_PANEL,
+            button::Status::Disabled => Color::from_rgba(0.141, 0.169, 0.224, 0.3),
+            button::Status::Active => Self::BG_SURFACE,
+        };
+        button::Style {
+            background: Some(Background::Color(bg)),
+            text_color: Self::TEXT_PRIMARY,
+            border: Border {
+                color: Self::BORDER_CARD,
+                width: 1.0,
+                radius: Radius::from(6.0),
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn ghost_button(_theme: &Theme, status: button::Status) -> button::Style {
+        let bg = match status {
+            button::Status::Hovered => Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+            button::Status::Pressed => Color::from_rgba(1.0, 1.0, 1.0, 0.04),
+            _ => Color::TRANSPARENT,
+        };
+        button::Style {
+            background: Some(Background::Color(bg)),
+            text_color: Self::TEXT_SECONDARY,
+            border: Border {
+                radius: Radius::from(6.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn danger_button(_theme: &Theme, status: button::Status) -> button::Style {
+        let bg = match status {
+            button::Status::Hovered => Color::from_rgb(0.882, 0.114, 0.282),
+            button::Status::Pressed => Color::from_rgb(0.745, 0.071, 0.235),
+            button::Status::Disabled => Color::from_rgba(0.957, 0.247, 0.369, 0.3),
+            button::Status::Active => Self::ACCENT_ROSE,
+        };
+        button::Style {
+            background: Some(Background::Color(bg)),
+            text_color: Self::TEXT_PRIMARY,
+            border: Border {
+                radius: Radius::from(6.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn success_button(_theme: &Theme, status: button::Status) -> button::Style {
+        let bg = match status {
+            button::Status::Hovered => Color::from_rgb(0.020, 0.588, 0.412),
+            button::Status::Pressed => Color::from_rgb(0.016, 0.471, 0.341),
+            button::Status::Disabled => Color::from_rgba(0.063, 0.725, 0.506, 0.3),
+            button::Status::Active => Self::ACCENT_EMERALD,
+        };
+        button::Style {
+            background: Some(Background::Color(bg)),
+            text_color: Self::TEXT_PRIMARY,
+            border: Border {
+                radius: Radius::from(6.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn tab_button(is_active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+        move |_theme: &Theme, status: button::Status| {
+            let (bg, border_col, txt_col) = if is_active {
+                (Self::BG_SURFACE, Self::ACCENT_CYAN, Self::TEXT_PRIMARY)
+            } else {
+                match status {
+                    button::Status::Hovered => (Self::BG_HOVER, Color::TRANSPARENT, Self::TEXT_PRIMARY),
+                    _ => (Color::TRANSPARENT, Color::TRANSPARENT, Self::TEXT_SECONDARY),
+                }
+            };
+            button::Style {
+                background: Some(Background::Color(bg)),
+                text_color: txt_col,
+                border: Border {
+                    color: border_col,
+                    width: if is_active { 1.5 } else { 0.0 },
+                    radius: Radius::from(6.0),
+                },
+                ..Default::default()
+            }
+        }
+    }
+
+    // Input Styles
+    pub fn styled_input(_theme: &Theme, status: text_input::Status) -> text_input::Style {
+        let border_color = match status {
+            text_input::Status::Focused => Self::ACCENT_INDIGO,
+            text_input::Status::Hovered => Self::ACCENT_CYAN,
+            text_input::Status::Disabled => Color::from_rgba(1.0, 1.0, 1.0, 0.04),
+            text_input::Status::Active => Self::BORDER_CARD,
+        };
+        text_input::Style {
+            background: Background::Color(Self::BG_BASE),
+            border: Border {
+                color: border_color,
+                width: 1.0,
+                radius: Radius::from(6.0),
+            },
+            icon: Self::TEXT_SECONDARY,
+            placeholder: Self::TEXT_MUTED,
+            value: Self::TEXT_PRIMARY,
+            selection: Color::from_rgba(0.388, 0.400, 0.945, 0.3),
+        }
+    }
+
+    // Pick List Styles
+    pub fn styled_pick_list(_theme: &Theme, status: pick_list::Status) -> pick_list::Style {
+        let border_color = match status {
+            pick_list::Status::Hovered | pick_list::Status::Opened => Self::ACCENT_CYAN,
+            _ => Self::BORDER_CARD,
+        };
+        pick_list::Style {
+            text_color: Self::TEXT_PRIMARY,
+            placeholder_color: Self::TEXT_MUTED,
+            handle_color: Self::TEXT_SECONDARY,
+            background: Background::Color(Self::BG_BASE),
+            border: Border {
+                color: border_color,
+                width: 1.0,
+                radius: Radius::from(6.0),
+            },
+        }
+    }
+
+    // Toggler Styles
+    pub fn styled_toggler(_theme: &Theme, status: toggler::Status) -> toggler::Style {
+        let (bg, fg) = match status {
+            toggler::Status::Active { is_toggled: true }
+            | toggler::Status::Hovered { is_toggled: true } => {
+                (Self::ACCENT_EMERALD, Color::WHITE)
+            }
+            toggler::Status::Active { is_toggled: false }
+            | toggler::Status::Hovered { is_toggled: false } => {
+                (Self::BG_SURFACE, Self::TEXT_MUTED)
+            }
+            toggler::Status::Disabled => {
+                (Color::from_rgba(0.141, 0.169, 0.224, 0.3), Self::TEXT_MUTED)
+            }
+        };
+        toggler::Style {
+            background: bg,
+            background_border_width: 0.0,
+            background_border_color: Color::TRANSPARENT,
+            foreground: fg,
+            foreground_border_width: 0.0,
+            foreground_border_color: Color::TRANSPARENT,
+        }
     }
 }

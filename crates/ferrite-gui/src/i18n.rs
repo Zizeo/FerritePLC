@@ -9,6 +9,8 @@ pub enum UiLanguage {
 }
 
 impl UiLanguage {
+    pub const ALL: [UiLanguage; 2] = [UiLanguage::En, UiLanguage::Fr];
+
     pub fn code(self) -> &'static str {
         match self {
             Self::En => "EN",
@@ -29,5 +31,11 @@ impl UiLanguage {
             Self::En => en,
             Self::Fr => fr,
         }
+    }
+}
+
+impl std::fmt::Display for UiLanguage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.display_name())
     }
 }

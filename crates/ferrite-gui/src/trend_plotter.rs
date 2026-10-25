@@ -1,25 +1,26 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-use egui::{Color32, Ui};
-use egui_plot::{Corner, Legend, Line, Plot, PlotPoints};
+use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
+use iced::{Color, Point, Rectangle, Renderer, Size, Theme};
+
 use ferrite_core::IecValue;
 use ferrite_runtime::PlcRuntime;
 
-use crate::i18n::UiLanguage;
+use crate::theme::StudioTheme;
 
 const MAX_POINTS_PER_CHANNEL: usize = 2000;
 
 #[derive(Debug, Clone)]
 pub struct TrendChannel {
     pub name: String,
-    pub color: Color32,
+    pub color: Color,
     pub enabled: bool,
     pub points: VecDeque<[f64; 2]>,
 }
 
 impl TrendChannel {
-    pub fn new(name: String, color: Color32) -> Self {
+    pub fn new(name: String, color: Color) -> Self {
         Self {
             name,
             color,
@@ -57,19 +58,19 @@ impl Default for TrendPlotter {
         let mut channels = HashMap::new();
         channels.insert(
             "SP".to_string(),
-            TrendChannel::new("SP (Setpoint)".to_string(), Color32::from_rgb(255, 215, 0)),
+            TrendChannel::new("SP (Setpoint)".to_string(), Color::from_rgb(1.0, 0.843, 0.0)),
         );
         channels.insert(
             "PV".to_string(),
-            TrendChannel::new("PV (Process Var)".to_string(), Color32::from_rgb(72, 202, 228)),
+            TrendChannel::new("PV (Process Var)".to_string(), Color::from_rgb(0.282, 0.792, 0.894)),
         );
         channels.insert(
             "OUT".to_string(),
-            TrendChannel::new("OUT (Control)".to_string(), Color32::from_rgb(46, 213, 115)),
+            TrendChannel::new("OUT (Control)".to_string(), Color::from_rgb(0.180, 0.835, 0.451)),
         );
         channels.insert(
             "ERR".to_string(),
-            TrendChannel::new("ERR (Error)".to_string(), Color32::from_rgb(255, 107, 107)),
+            TrendChannel::new("ERR (Error)".to_string(), Color::from_rgb(1.0, 0.420, 0.420)),
         );
 
         Self {
@@ -133,107 +134,138 @@ impl TrendPlotter {
             ch.clear();
         }
     }
+}
 
-    pub fn render(&mut self, ui: &mut Ui, rt_opt: Option<&PlcRuntime>, lang: UiLanguage) {
-        ui.horizontal_wrapped(|ui| {
-            ui.strong(lang.tr("Trend Oscilloscope", "Oscilloscope Temps Réel"));
-            ui.separator();
+pub struct TrendCanvas<'a> {
+    pub channels: &'a HashMap<String, TrendChannel>,
+    pub time_window_s: f64,
+    pub start_time: Instant,
+}
 
-            let pause_txt = if self.paused {
-                lang.tr("▶ Resume", "▶ Reprendre")
-            } else {
-                lang.tr("⏸ Pause", "⏸ Pause")
-            };
-            if ui.button(pause_txt).clicked() {
-                self.paused = !self.paused;
-            }
-            if ui.button(lang.tr("× Clear", "× Effacer")).clicked() {
-                self.clear_all();
-            }
+impl<'a, Message> canvas::Program<Message> for TrendCanvas<'a> {
+    type State = ();
 
-            ui.separator();
-            ui.label(lang.tr("Window (s):", "Fenêtre (s) :"));
-            ui.add(
-                egui::DragValue::new(&mut self.time_window_s)
-                    .range(5.0..=300.0)
-                    .speed(1.0),
-            );
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let width = bounds.width;
+        let height = bounds.height;
 
-            ui.separator();
-            // Channel checkboxes
-            let mut keys: Vec<String> = self.channels.keys().cloned().collect();
-            keys.sort();
-            for k in keys {
-                if let Some(ch) = self.channels.get_mut(&k) {
-                    ui.colored_label(ch.color, "■");
-                    ui.checkbox(&mut ch.enabled, &ch.name);
-                }
-            }
-
-            // Add custom tag channel
-            if let Some(rt) = rt_opt {
-                ui.separator();
-                ui.label(lang.tr("Add Tag:", "Ajouter Variable :"));
-                egui::ComboBox::from_id_salt("trend_add_tag_combo")
-                    .selected_text(if self.new_channel_tag.is_empty() {
-                        lang.tr("Select Tag...", "Sélectionner...")
-                    } else {
-                        &self.new_channel_tag
-                    })
-                    .show_ui(ui, |ui| {
-                        for tag in rt.tags.tags() {
-                            if !self.channels.contains_key(&tag.name)
-                                && ui
-                                    .selectable_value(
-                                        &mut self.new_channel_tag,
-                                        tag.name.clone(),
-                                        &tag.name,
-                                    )
-                                    .clicked()
-                            {
-                                let color = match self.channels.len() % 4 {
-                                    0 => Color32::from_rgb(198, 120, 221),
-                                    1 => Color32::from_rgb(229, 192, 123),
-                                    2 => Color32::from_rgb(97, 175, 239),
-                                    _ => Color32::from_rgb(152, 195, 121),
-                                };
-                                self.channels
-                                    .insert(tag.name.clone(), TrendChannel::new(tag.name.clone(), color));
-                                self.new_channel_tag.clear();
-                            }
-                        }
-                    });
-            }
-        });
-
-        ui.add_space(6.0);
+        // 1. Draw canvas dark background
+        frame.fill_rectangle(
+            Point::ORIGIN,
+            Size::new(width, height),
+            StudioTheme::BG_BASE,
+        );
 
         let now_s = self.start_time.elapsed().as_secs_f64();
         let min_x = (now_s - self.time_window_s).max(0.0);
         let max_x = (now_s + 0.5).max(self.time_window_s);
+        let dx = (max_x - min_x).max(1.0);
 
-        let plot = Plot::new("live_trend_plot")
-            .legend(Legend::default().position(Corner::RightTop))
-            .show_x(true)
-            .show_y(true)
-            .allow_zoom(true)
-            .allow_drag(true)
-            .include_x(min_x)
-            .include_x(max_x)
-            .height(180.0);
-
-        plot.show(ui, |plot_ui| {
-            for ch in self.channels.values() {
-                if !ch.enabled || ch.points.is_empty() {
-                    continue;
-                }
-                let pts: PlotPoints = ch.points.iter().copied().collect();
-                let line = Line::new(pts)
-                    .color(ch.color)
-                    .name(&ch.name)
-                    .width(1.8_f32);
-                plot_ui.line(line);
+        // Find Y range
+        let mut min_y = 0.0_f64;
+        let mut max_y = 100.0_f64;
+        for ch in self.channels.values() {
+            if !ch.enabled {
+                continue;
             }
-        });
+            for &[_, y] in &ch.points {
+                if y < min_y { min_y = y; }
+                if y > max_y { max_y = y; }
+            }
+        }
+        let dy = (max_y - min_y).max(1.0);
+
+        // Margins for axes
+        let pad_left = 48.0_f32;
+        let pad_bottom = 24.0_f32;
+        let pad_top = 10.0_f32;
+        let pad_right = 16.0_f32;
+
+        let plot_w = (width - pad_left - pad_right).max(10.0);
+        let plot_h = (height - pad_top - pad_bottom).max(10.0);
+
+        // 2. Draw Grid Lines
+        let grid_stroke = Stroke::default()
+            .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.05))
+            .with_width(1.0);
+
+        for step in 0..=4 {
+            let frac = step as f32 / 4.0;
+            let y_pos = pad_top + plot_h * (1.0 - frac);
+            let p1 = Point::new(pad_left, y_pos);
+            let p2 = Point::new(pad_left + plot_w, y_pos);
+            frame.stroke(&Path::line(p1, p2), grid_stroke);
+
+            let val_label = min_y + (dy * frac as f64);
+            frame.fill_text(canvas::Text {
+                content: format!("{val_label:.1}"),
+                position: Point::new(4.0, y_pos - 6.0),
+                color: StudioTheme::TEXT_MUTED,
+                size: iced::Pixels(10.0),
+                ..Default::default()
+            });
+        }
+
+        // Time axis labels
+        for step in 0..=4 {
+            let frac = step as f32 / 4.0;
+            let x_pos = pad_left + plot_w * frac;
+            let p1 = Point::new(x_pos, pad_top);
+            let p2 = Point::new(x_pos, pad_top + plot_h);
+            frame.stroke(&Path::line(p1, p2), grid_stroke);
+
+            let t_label = min_x + (dx * frac as f64);
+            frame.fill_text(canvas::Text {
+                content: format!("{t_label:.0}s"),
+                position: Point::new(x_pos - 10.0, pad_top + plot_h + 6.0),
+                color: StudioTheme::TEXT_MUTED,
+                size: iced::Pixels(10.0),
+                ..Default::default()
+            });
+        }
+
+        // 3. Draw Channel Data Lines
+        for ch in self.channels.values() {
+            if !ch.enabled || ch.points.len() < 2 {
+                continue;
+            }
+
+            let path = Path::new(|builder| {
+                let mut started = false;
+                for &[t, val] in &ch.points {
+                    if t < min_x - 1.0 {
+                        continue;
+                    }
+                    let norm_x = ((t - min_x) / dx) as f32;
+                    let norm_y = ((val - min_y) / dy) as f32;
+
+                    let px = pad_left + norm_x * plot_w;
+                    let py = pad_top + plot_h * (1.0 - norm_y.clamp(0.0, 1.0));
+
+                    if !started {
+                        builder.move_to(Point::new(px, py));
+                        started = true;
+                    } else {
+                        builder.line_to(Point::new(px, py));
+                    }
+                }
+            });
+
+            let line_stroke = Stroke::default()
+                .with_color(ch.color)
+                .with_width(2.0);
+
+            frame.stroke(&path, line_stroke);
+        }
+
+        vec![frame.into_geometry()]
     }
 }
