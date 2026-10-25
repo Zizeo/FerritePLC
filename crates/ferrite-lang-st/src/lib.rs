@@ -618,9 +618,27 @@ impl<'a> Parser<'a> {
                 }
             }
             Some(Token::StringLiteral(s)) => Ok(IrExpr::Literal(IecValue::String(s.clone()))),
-            Some(Token::Ident(s)) | Some(Token::DirectAddress(s)) => {
-                Ok(IrExpr::Symbol(s.clone()))
+            Some(Token::Ident(s)) => {
+                if self.peek() == Some(&Token::LParen) {
+                    self.next();
+                    let mut args = Vec::new();
+                    if self.peek() != Some(&Token::RParen) {
+                        args.push(self.parse_expr()?);
+                        while self.peek() == Some(&Token::Comma) {
+                            self.next();
+                            args.push(self.parse_expr()?);
+                        }
+                    }
+                    self.expect(&Token::RParen)?;
+                    Ok(IrExpr::Call {
+                        function_name: s.clone(),
+                        args,
+                    })
+                } else {
+                    Ok(IrExpr::Symbol(s.clone()))
+                }
             }
+            Some(Token::DirectAddress(s)) => Ok(IrExpr::Symbol(s.clone())),
             Some(Token::LParen) => {
                 let expr = self.parse_expr()?;
                 self.expect(&Token::RParen)?;
@@ -795,6 +813,37 @@ mod tests {
         assert_eq!(ctx.read_symbol("Tank_Level")?, IecValue::Int(50));
         assert!(ctx.read_bool("Dose_Done")?);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_st_iec_math_functions() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::default();
+        tags.register_tag(TagEntry::new("Val_In", IecType::Real, None, IecValue::Real(16.0), ""))?;
+        tags.register_tag(TagEntry::new("Val_Out", IecType::Real, None, IecValue::Real(0.0), ""))?;
+        tags.register_tag(TagEntry::new("Val_Clamped", IecType::Real, None, IecValue::Real(0.0), ""))?;
+        tags.register_tag(TagEntry::new("Val_Max", IecType::Real, None, IecValue::Real(0.0), ""))?;
+
+        let st_src = r#"
+        PROGRAM math_test
+            Val_Out := SQRT(Val_In) + ABS(-5.0);
+            Val_Clamped := LIMIT(0.0, Val_Out, 7.0);
+            Val_Max := MAX(Val_Out, 100.0);
+        END_PROGRAM
+        "#;
+
+        let prog = StProgram::parse("math_test", st_src)?;
+        let mut compiled = prog.compile(&tags)?;
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+        compiled.execute(&mut ctx)?;
+
+        // SQRT(16.0) + ABS(-5.0) = 4.0 + 5.0 = 9.0
+        assert_eq!(ctx.read_symbol("Val_Out")?, IecValue::Real(9.0));
+        // LIMIT(0.0, 9.0, 7.0) = 7.0
+        assert_eq!(ctx.read_symbol("Val_Clamped")?, IecValue::Real(7.0));
+        // MAX(9.0, 100.0) = 100.0
+        assert_eq!(ctx.read_symbol("Val_Max")?, IecValue::Real(100.0));
         Ok(())
     }
 }

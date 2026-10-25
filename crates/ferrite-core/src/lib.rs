@@ -1,4 +1,5 @@
 pub mod address;
+pub mod alarm;
 pub mod context;
 pub mod error;
 pub mod fb;
@@ -7,6 +8,9 @@ pub mod tag_table;
 pub mod types;
 
 pub use address::{AccessWidth, DirectAddress, MemoryArea};
+pub use alarm::{
+    ActiveAlarm, AlarmCondition, AlarmDefinition, AlarmEventRecord, AlarmSeverity, AlarmState,
+};
 pub use context::{ExecutablePou, LanguageKind, PouId, ScanContext};
 pub use error::{CoreError, RuntimeError};
 pub use fb::{FbInstance, StandardFbKind};

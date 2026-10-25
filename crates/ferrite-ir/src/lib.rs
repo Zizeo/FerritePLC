@@ -80,6 +80,10 @@ pub enum IrExpr {
         left: Box<IrExpr>,
         right: Box<IrExpr>,
     },
+    Call {
+        function_name: String,
+        args: Vec<IrExpr>,
+    },
 }
 
 impl IrExpr {
@@ -117,6 +121,13 @@ impl IrExpr {
                 let rv = right.evaluate(ctx, pou_name)?;
                 eval_binary_op(*op, &lv, &rv, pou_name)
             }
+            Self::Call { function_name, args } => {
+                let mut evaluated_args = Vec::with_capacity(args.len());
+                for a in args {
+                    evaluated_args.push(a.evaluate(ctx, pou_name)?);
+                }
+                eval_math_function(function_name, &evaluated_args, pou_name)
+            }
         }
     }
 
@@ -127,6 +138,26 @@ impl IrExpr {
                 pou: pou_name.to_string(),
                 source,
             }),
+            Self::Call { function_name, args } => {
+                let upper = function_name.to_ascii_uppercase();
+                match upper.as_str() {
+                    "ABS" | "MIN" | "MAX" => {
+                        if let Some(first) = args.first() {
+                            first.infer_type(tags, pou_name)
+                        } else {
+                            Ok(IecType::Real)
+                        }
+                    }
+                    "LIMIT" => {
+                        if args.len() >= 2 {
+                            args[1].infer_type(tags, pou_name)
+                        } else {
+                            Ok(IecType::Real)
+                        }
+                    }
+                    _ => Ok(IecType::Real),
+                }
+            }
             Self::Unary { op, expr } => {
                 let ty = expr.infer_type(tags, pou_name)?;
                 match op {
@@ -231,7 +262,166 @@ impl IrExpr {
                 left.referenced_symbols(out);
                 right.referenced_symbols(out);
             }
+            Self::Call { args, .. } => {
+                for a in args {
+                    a.referenced_symbols(out);
+                }
+            }
         }
+    }
+}
+
+fn eval_math_function(
+    func: &str,
+    args: &[IecValue],
+    pou_name: &str,
+) -> Result<IecValue, RuntimeError> {
+    let name = func.to_ascii_uppercase();
+    match name.as_str() {
+        "ABS" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "ABS requires 1 argument".to_string(),
+            })?;
+            match v {
+                IecValue::Int(i) => Ok(IecValue::Int(i.abs())),
+                IecValue::Dint(d) => Ok(IecValue::Dint(d.abs())),
+                IecValue::Real(r) => Ok(IecValue::Real(r.abs())),
+                _ => Ok(IecValue::Real(v.as_real()?.abs())),
+            }
+        }
+        "SQRT" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "SQRT requires 1 argument".to_string(),
+            })?;
+            let r = v.as_real()?;
+            if r < 0.0 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: format!("SQRT domain error: negative value {r}"),
+                });
+            }
+            Ok(IecValue::Real(r.sqrt()))
+        }
+        "SIN" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "SIN requires 1 argument".to_string(),
+            })?;
+            Ok(IecValue::Real(v.as_real()?.sin()))
+        }
+        "COS" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "COS requires 1 argument".to_string(),
+            })?;
+            Ok(IecValue::Real(v.as_real()?.cos()))
+        }
+        "TAN" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "TAN requires 1 argument".to_string(),
+            })?;
+            Ok(IecValue::Real(v.as_real()?.tan()))
+        }
+        "LN" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "LN requires 1 argument".to_string(),
+            })?;
+            let r = v.as_real()?;
+            if r <= 0.0 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: format!("LN domain error: non-positive value {r}"),
+                });
+            }
+            Ok(IecValue::Real(r.ln()))
+        }
+        "EXP" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "EXP requires 1 argument".to_string(),
+            })?;
+            Ok(IecValue::Real(v.as_real()?.exp()))
+        }
+        "EXPT" => {
+            if args.len() < 2 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: "EXPT requires 2 arguments (base, exponent)".to_string(),
+                });
+            }
+            let base = args[0].as_real()?;
+            let exp = args[1].as_real()?;
+            Ok(IecValue::Real(base.powf(exp)))
+        }
+        "MIN" => {
+            if args.len() < 2 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: "MIN requires at least 2 arguments".to_string(),
+                });
+            }
+            let mut min_val = args[0].clone();
+            for item in &args[1..] {
+                let a = min_val.as_real()?;
+                let b = item.as_real()?;
+                if b < a {
+                    min_val = item.clone();
+                }
+            }
+            Ok(min_val)
+        }
+        "MAX" => {
+            if args.len() < 2 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: "MAX requires at least 2 arguments".to_string(),
+                });
+            }
+            let mut max_val = args[0].clone();
+            for item in &args[1..] {
+                let a = max_val.as_real()?;
+                let b = item.as_real()?;
+                if b > a {
+                    max_val = item.clone();
+                }
+            }
+            Ok(max_val)
+        }
+        "LIMIT" => {
+            if args.len() < 3 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: "LIMIT requires 3 arguments (min, val, max)".to_string(),
+                });
+            }
+            let min = args[0].as_real()?;
+            let val = args[1].as_real()?;
+            let max = args[2].as_real()?;
+            let clamped = val.clamp(min, max);
+            Ok(IecValue::Real(clamped))
+        }
+        "TRUNC" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "TRUNC requires 1 argument".to_string(),
+            })?;
+            Ok(IecValue::Real(v.as_real()?.trunc()))
+        }
+        "ROUND" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "ROUND requires 1 argument".to_string(),
+            })?;
+            Ok(IecValue::Real(v.as_real()?.round()))
+        }
+        other => Err(RuntimeError::ExecutionError {
+            pou: pou_name.to_string(),
+            message: format!("Unknown standard function '{other}'"),
+        }),
     }
 }
 

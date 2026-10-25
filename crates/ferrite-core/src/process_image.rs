@@ -296,6 +296,37 @@ impl ProcessImage {
         }
         Ok(())
     }
+
+    /// Returns a copy of the %M internal marker byte buffer for retentive persistence.
+    pub fn export_markers(&self) -> Vec<u8> {
+        self.markers.clone()
+    }
+
+    /// Restores the %M internal marker byte buffer from a retentive snapshot.
+    pub fn import_markers(&mut self, src: &[u8]) {
+        let len = self.markers.len().min(src.len());
+        self.markers[..len].copy_from_slice(&src[..len]);
+    }
+
+    /// Convenience helper to write a 16-bit word into %MW<word_idx>.
+    pub fn write_marker_word(&mut self, word_idx: usize, val: u16) -> Result<(), CoreError> {
+        let offset = word_idx * 2;
+        if offset + 2 > self.markers.len() {
+            return Err(CoreError::AddressOutOfBounds(format!("%MW{word_idx}")));
+        }
+        self.markers[offset..offset + 2].copy_from_slice(&val.to_le_bytes());
+        Ok(())
+    }
+
+    /// Convenience helper to read a 16-bit word from %MW<word_idx>.
+    pub fn read_marker_word(&self, word_idx: usize) -> Result<u16, CoreError> {
+        let offset = word_idx * 2;
+        if offset + 2 > self.markers.len() {
+            return Err(CoreError::AddressOutOfBounds(format!("%MW{word_idx}")));
+        }
+        let bytes: [u8; 2] = [self.markers[offset], self.markers[offset + 1]];
+        Ok(u16::from_le_bytes(bytes))
+    }
 }
 
 pub type MemoryMap = ProcessImage;

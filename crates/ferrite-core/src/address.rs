@@ -39,6 +39,46 @@ pub struct DirectAddress {
 }
 
 impl DirectAddress {
+    /// Creates a bit-addressed direct address (%IX0.0, %QX1.2, %MX10.7).
+    pub const fn bit(area: MemoryArea, index: usize, bit: u8) -> Self {
+        Self {
+            area,
+            width: AccessWidth::Bit,
+            index,
+            bit,
+        }
+    }
+
+    /// Creates a byte-addressed direct address (%IB0, %QB1, %MB10).
+    pub const fn byte(area: MemoryArea, index: usize) -> Self {
+        Self {
+            area,
+            width: AccessWidth::Byte,
+            index,
+            bit: 0,
+        }
+    }
+
+    /// Creates a 16-bit word-addressed direct address (%IW0, %QW1, %MW10).
+    pub const fn word(area: MemoryArea, index: usize) -> Self {
+        Self {
+            area,
+            width: AccessWidth::Word,
+            index,
+            bit: 0,
+        }
+    }
+
+    /// Creates a 32-bit double-word-addressed direct address (%ID0, %QD1, %MD10).
+    pub const fn dword(area: MemoryArea, index: usize) -> Self {
+        Self {
+            area,
+            width: AccessWidth::DWord,
+            index,
+            bit: 0,
+        }
+    }
+
     /// Returns the starting byte offset in the area's byte buffer.
     pub fn byte_offset(self) -> usize {
         match self.width {

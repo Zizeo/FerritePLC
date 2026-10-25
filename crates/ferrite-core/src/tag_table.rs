@@ -27,6 +27,8 @@ pub struct TagEntry {
     #[serde(default)]
     pub read_only_outside_sfc: bool,
     #[serde(default)]
+    pub retain: bool,
+    #[serde(default)]
     pub comment: String,
 }
 
@@ -46,8 +48,14 @@ impl TagEntry {
             initial_value,
             forced: None,
             read_only_outside_sfc: false,
+            retain: false,
             comment: comment.into(),
         }
+    }
+
+    pub fn with_retain(mut self, retain: bool) -> Self {
+        self.retain = retain;
+        self
     }
 
     pub fn current_value(&self) -> &IecValue {
@@ -229,6 +237,25 @@ impl TagTable {
         self.tags.get(id.0)
     }
 
+    pub fn get_tag_mut(&mut self, name: &str) -> Option<&mut TagEntry> {
+        let id = self.tag_id(name)?;
+        self.tags.get_mut(id.0)
+    }
+
+    pub fn get_tag_value(&self, name: &str) -> Option<&IecValue> {
+        self.get_tag(name).map(|t| t.current_value())
+    }
+
+    pub fn set_tag_value(&mut self, name: &str, val: IecValue) -> Result<(), CoreError> {
+        let id = self
+            .tag_id(name)
+            .ok_or_else(|| CoreError::UnknownSymbol(name.to_string()))?;
+        let tag = &mut self.tags[id.0];
+        let coerced = val.coerce_to(tag.data_type)?;
+        tag.value = Some(coerced);
+        Ok(())
+    }
+
     pub fn get_fb_by_id(&self, id: FbId) -> Option<&FbInstance> {
         self.fbs.get(id.0)
     }
@@ -308,5 +335,28 @@ impl TagTable {
 
     pub fn create_fb(&mut self, name: impl Into<String>, kind: StandardFbKind) -> FbId {
         self.register_fb(FbInstance::new(name, kind))
+    }
+
+    pub fn export_retain_values(&self) -> HashMap<String, IecValue> {
+        let mut map = HashMap::new();
+        for tag in &self.tags {
+            if tag.retain {
+                map.insert(tag.name.clone(), tag.current_value().clone());
+            }
+        }
+        map
+    }
+
+    pub fn import_retain_values(&mut self, map: &HashMap<String, IecValue>) {
+        for (name, val) in map {
+            if let Some(id) = self.tag_id(name) {
+                let tag = &mut self.tags[id.0];
+                if tag.retain
+                    && let Ok(coerced) = val.coerce_to(tag.data_type)
+                {
+                    tag.value = Some(coerced);
+                }
+            }
+        }
     }
 }
