@@ -442,6 +442,7 @@ mod tests {
             let s2_name = &batch_sfc.steps[rows[1][1]].name;
             assert!(s1_name.contains("Fill") || s1_name.contains("Dose"));
             assert!(s2_name.contains("Fill") || s2_name.contains("Dose"));
+            let _element = canvas_sfc::render_sfc_editor(batch_sfc, app.runtime.as_ref(), app.ui_lang);
         }
 
         // 2. Test interactive ToggleForceTag for purely symbolic booleans

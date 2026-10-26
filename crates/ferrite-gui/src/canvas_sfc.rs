@@ -1,16 +1,33 @@
 use std::collections::HashSet;
 
 use iced::border::Radius;
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
-use iced::{Alignment, Background, Border, Element, Length, Theme};
+use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input, Space};
+use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use ferrite_core::IecValue;
-use ferrite_lang_sfc::{ActionQualifier, SfcProgram, SfcTransition, StepKind};
+use ferrite_lang_sfc::{ActionQualifier, ConvergenceKind, SfcProgram, SfcTransition, StepKind};
 use ferrite_runtime::PlcRuntime;
 
 use crate::app::Message;
 use crate::i18n::UiLanguage;
 use crate::theme::StudioTheme;
+
+// Exact color palette matching IEC 60848 industrial Grafcet schematic & target egui design
+const COLOR_ACTIVE_STEP: Color = Color::from_rgb(46.0 / 255.0, 213.0 / 255.0, 115.0 / 255.0); // #2ED573 emerald
+const COLOR_INACTIVE_STEP: Color = Color::from_rgb(120.0 / 255.0, 135.0 / 255.0, 160.0 / 255.0); // #7887A0 slate
+const COLOR_STEP_DROP: Color = Color::from_rgb(72.0 / 255.0, 202.0 / 255.0, 228.0 / 255.0); // #48CAE4 cyan
+const COLOR_TRANSITION: Color = Color::from_rgb(1.0, 184.0 / 255.0, 77.0 / 255.0); // #FFB84D amber
+const COLOR_OR_BRANCH: Color = Color::from_rgb(198.0 / 255.0, 120.0 / 255.0, 221.0 / 255.0); // #C678DD purple
+const COLOR_CANVAS_BG: Color = Color::from_rgb(16.0 / 255.0, 20.0 / 255.0, 26.0 / 255.0); // #10141A
+const COLOR_STEP_BG: Color = Color::from_rgb(26.0 / 255.0, 34.0 / 255.0, 46.0 / 255.0); // #1A222E
+const COLOR_TRANS_BG: Color = Color::from_rgb(22.0 / 255.0, 28.0 / 255.0, 38.0 / 255.0); // #161C26
+const COLOR_ACTION_BG: Color = Color::from_rgb(30.0 / 255.0, 38.0 / 255.0, 52.0 / 255.0); // #1E2634
+const COLOR_INPUT_BG: Color = Color::from_rgb(14.0 / 255.0, 20.0 / 255.0, 29.0 / 255.0); // #0E141D
+
+const COLUMN_STRIDE: f32 = 480.0;
+const STEP_BOX_WIDTH: f32 = 188.0;
+const STEP_BOX_HEIGHT: f32 = 68.0;
+const TRANSITION_CARD_WIDTH: f32 = 320.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SfcStepKindWrapper(pub StepKind);
@@ -169,419 +186,317 @@ pub fn compute_sfc_step_rows(program: &SfcProgram) -> Vec<Vec<usize>> {
     rows
 }
 
+// Styling helper for dark monospace inputs
+fn sfc_input_style(_theme: &Theme, _status: text_input::Status) -> text_input::Style {
+    text_input::Style {
+        background: Background::Color(COLOR_INPUT_BG),
+        border: Border {
+            color: Color::from_rgb(44.0 / 255.0, 56.0 / 255.0, 72.0 / 255.0),
+            width: 1.0,
+            radius: Radius::from(3.0),
+        },
+        placeholder: StudioTheme::TEXT_MUTED,
+        value: Color::from_rgb(226.0 / 255.0, 232.0 / 255.0, 240.0 / 255.0),
+        selection: StudioTheme::ACCENT_CYAN,
+        icon: StudioTheme::TEXT_SECONDARY,
+    }
+}
+
+// Subtle button for +Act
+fn sfc_subtle_button(_theme: &Theme, status: button::Status) -> button::Style {
+    let bg = match status {
+        button::Status::Hovered => Color::from_rgb(37.0 / 255.0, 49.0 / 255.0, 65.0 / 255.0),
+        button::Status::Pressed => Color::from_rgb(28.0 / 255.0, 38.0 / 255.0, 50.0 / 255.0),
+        _ => Color::from_rgb(32.0 / 255.0, 42.0 / 255.0, 56.0 / 255.0),
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: Color::from_rgb(200.0 / 255.0, 210.0 / 255.0, 225.0 / 255.0),
+        border: Border {
+            color: Color::from_rgb(50.0 / 255.0, 65.0 / 255.0, 85.0 / 255.0),
+            width: 1.0,
+            radius: Radius::from(3.0),
+        },
+        ..Default::default()
+    }
+}
+
+/// Renders a vertical line wire of fixed height and color
+fn vertical_wire<'a>(height: f32, color: Color) -> Element<'a, Message> {
+    container(Space::with_height(Length::Fixed(height)))
+        .width(Length::Fixed(2.0))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(color)),
+            ..Default::default()
+        })
+        .into()
+}
+
 /// Renders the authentic Grafcet step box per IEC 60848:
-/// - Initial step: Double square (square inside a square)
-/// - Normal step: Single square
-/// - Macro step: Square with double vertical side borders
-fn render_grafcet_step_box<'a>(
-    step_id: &str,
-    kind: StepKind,
+/// - Fixed dimensions: 188px x 68px
+/// - Initial step: Double border (nested inner stroke shrink 3px)
+/// - Normal step: Single 2.2px border
+/// - Top row: Green dot (if active), centered X<id> in bold white monospace, right +Act button & x delete
+/// - Bottom row: Text input for step name with dark background
+fn render_step_box<'a>(
+    program: &'a SfcProgram,
+    s_idx: usize,
     active: bool,
+    _elapsed_ms: u64,
+    pou_name: &str,
+    _lang: UiLanguage,
 ) -> Element<'a, Message> {
+    let step = &program.steps[s_idx];
+    let p_name = pou_name.to_string();
+
     let border_color = if active {
-        StudioTheme::ACCENT_EMERALD
+        COLOR_ACTIVE_STEP
     } else {
-        match kind {
-            StepKind::Initial => StudioTheme::ACCENT_CYAN,
-            _ => StudioTheme::BORDER_CARD,
-        }
+        COLOR_INACTIVE_STEP
     };
 
-    let bg_color = if active {
-        iced::Color::from_rgba(0.063, 0.725, 0.506, 0.22)
+    let active_dot: Element<'a, Message> = if active {
+        container(text("●").size(11).color(COLOR_ACTIVE_STEP))
+            .padding([0, 4])
+            .into()
     } else {
-        StudioTheme::BG_BASE
+        Space::with_width(Length::Fixed(12.0)).into()
     };
 
-    let text_color = if active {
-        StudioTheme::ACCENT_EMERALD
-    } else {
-        StudioTheme::TEXT_PRIMARY
-    };
+    let step_id_label = text(format!("X{}", step.id))
+        .size(13)
+        .font(iced::Font::MONOSPACE)
+        .color(Color::WHITE);
 
-    let step_label = text(step_id.to_string())
-        .size(17)
-        .color(text_color);
+    let add_act_btn = button(text("+Act").size(10.5))
+        .on_press(Message::SfcAddAction(p_name.clone(), s_idx))
+        .style(sfc_subtle_button)
+        .padding([2, 5]);
 
-    match kind {
-        StepKind::Initial => {
-            // IEC 60848 Initial Step: Authentic Double Square!
-            container(
-                container(step_label)
-                    .width(Length::Fixed(46.0))
-                    .height(Length::Fixed(46.0))
-                    .center_x(Length::Fixed(46.0))
-                    .center_y(Length::Fixed(46.0))
-                    .style(move |_theme: &Theme| container::Style {
-                        background: Some(Background::Color(bg_color)),
-                        border: Border {
-                            color: border_color,
-                            width: 1.5,
-                            radius: Radius::from(2.0),
-                        },
-                        ..Default::default()
-                    }),
-            )
-            .width(Length::Fixed(58.0))
-            .height(Length::Fixed(58.0))
-            .center_x(Length::Fixed(58.0))
-            .center_y(Length::Fixed(58.0))
-            .padding(4)
-            .style(move |_theme: &Theme| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
+    let remove_btn = button(text("x").size(10.5))
+        .on_press(Message::SfcRemoveStep(p_name.clone(), s_idx))
+        .style(StudioTheme::ghost_button)
+        .padding([1, 4]);
+
+    let top_bar = row![
+        active_dot,
+        Space::with_width(Length::Fill),
+        step_id_label,
+        Space::with_width(Length::Fill),
+        add_act_btn,
+        remove_btn,
+    ]
+    .spacing(2)
+    .align_y(Alignment::Center);
+
+    let name_input = text_input("Step Name", &step.name)
+        .on_input({
+            let p = p_name;
+            move |s| Message::SfcStepNameChanged(p.clone(), s_idx, s)
+        })
+        .font(iced::Font::MONOSPACE)
+        .size(11)
+        .padding([2, 5])
+        .style(sfc_input_style)
+        .width(Length::Fill);
+
+    let inner_content = column![top_bar, name_input]
+        .spacing(4)
+        .padding(if step.kind == StepKind::Initial { 3 } else { 6 });
+
+    let step_body: Element<'a, Message> = if step.kind == StepKind::Initial {
+        // IEC 60848 Initial Step: Authentic inner border inside the outer card!
+        container(inner_content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_| container::Style {
                 border: Border {
                     color: border_color,
-                    width: 2.0,
-                    radius: Radius::from(4.0),
+                    width: 1.2,
+                    radius: Radius::from(2.0),
                 },
                 ..Default::default()
             })
             .into()
-        }
-        StepKind::Normal => {
-            // IEC 60848 Normal Step: Single Square!
-            container(step_label)
-                .width(Length::Fixed(58.0))
-                .height(Length::Fixed(58.0))
-                .center_x(Length::Fixed(58.0))
-                .center_y(Length::Fixed(58.0))
-                .style(move |_theme: &Theme| container::Style {
-                    background: Some(Background::Color(bg_color)),
-                    border: Border {
-                        color: border_color,
-                        width: if active { 2.0 } else { 1.5 },
-                        radius: Radius::from(4.0),
-                    },
-                    ..Default::default()
-                })
-                .into()
-        }
-        StepKind::Macro => {
-            // IEC 60848 Macro Step: Double vertical side borders!
-            container(step_label)
-                .width(Length::Fixed(58.0))
-                .height(Length::Fixed(58.0))
-                .center_x(Length::Fixed(58.0))
-                .center_y(Length::Fixed(58.0))
-                .style(move |_theme: &Theme| container::Style {
-                    background: Some(Background::Color(bg_color)),
-                    border: Border {
-                        color: border_color,
-                        width: 3.0,
-                        radius: Radius::from(4.0),
-                    },
-                    ..Default::default()
-                })
-                .into()
-        }
-    }
-}
-
-/// Renders the IEC 60848 Double Horizontal Line (`===`) for AND Divergence / Convergence.
-fn double_horizontal_bar<'a>(label: &str, is_active: bool) -> Element<'a, Message> {
-    let line_color = if is_active {
-        StudioTheme::ACCENT_EMERALD
     } else {
-        StudioTheme::ACCENT_CYAN
+        inner_content.into()
     };
 
-    let bar_line = move || {
-        container(iced::widget::Space::with_width(Length::Fill))
-            .height(Length::Fixed(2.5))
-            .style(move |_theme: &Theme| container::Style {
-                background: Some(Background::Color(line_color)),
-                ..Default::default()
-            })
-    };
-
-    container(
-        column![
-            bar_line(),
-            row![
-                iced::widget::Space::with_width(Length::Fill),
-                container(text(label.to_string()).size(10).color(line_color))
-                    .padding([2, 8])
-                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.220, 0.741, 0.973, 0.12))),
-                iced::widget::Space::with_width(Length::Fill),
-            ]
-            .align_y(Alignment::Center),
-            bar_line(),
-        ]
-        .spacing(2),
-    )
-    .padding([2, 16])
-    .width(Length::Fill)
-    .into()
+    container(step_body)
+        .width(Length::Fixed(STEP_BOX_WIDTH))
+        .height(Length::Fixed(STEP_BOX_HEIGHT))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(COLOR_STEP_BG)),
+            border: Border {
+                color: border_color,
+                width: 2.2,
+                radius: Radius::from(4.0),
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
-/// Renders the IEC 60848 Single Horizontal Line (`---`) for OR Divergence / Convergence.
-fn single_horizontal_bar<'a>(label: &str, is_active: bool) -> Element<'a, Message> {
-    let line_color = if is_active {
-        StudioTheme::ACCENT_EMERALD
-    } else {
-        StudioTheme::ACCENT_PURPLE
-    };
-
-    container(
-        column![
-            row![
-                iced::widget::Space::with_width(Length::Fill),
-                container(text(label.to_string()).size(10).color(line_color))
-                    .padding([2, 8])
-                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.75, 0.5, 0.9, 0.12))),
-                iced::widget::Space::with_width(Length::Fill),
-            ]
-            .align_y(Alignment::Center),
-            container(iced::widget::Space::with_width(Length::Fill))
-                .height(Length::Fixed(2.5))
-                .style(move |_theme: &Theme| container::Style {
-                    background: Some(Background::Color(line_color)),
-                    ..Default::default()
-                }),
-        ]
-        .spacing(2),
-    )
-    .padding([2, 16])
-    .width(Length::Fill)
-    .into()
-}
-
-/// Renders a single step and its attached actions.
-fn render_single_step_card<'a>(
+/// Renders the complete Step Node:
+/// [ T#0ms ]  [ Step Box ] === [ Action 1 ]
+///                             [ Action 2 ]
+fn render_step_node<'a>(
     program: &'a SfcProgram,
     s_idx: usize,
     runtime: Option<&'a PlcRuntime>,
-    _lang: UiLanguage,
+    pou_name: &str,
+    lang: UiLanguage,
 ) -> Element<'a, Message> {
     let step = &program.steps[s_idx];
-    let p_step = program.name.clone();
-
     let (active, elapsed_ms) = runtime
         .map(|rt| is_step_active(rt, &program.name, &step.id))
         .unwrap_or((false, 0));
 
-    // Active Indicator Badge
-    let active_indicator: Element<'a, Message> = if active {
-        container(
-            row![
-                container(iced::widget::Space::with_width(Length::Fixed(8.0)))
-                    .height(Length::Fixed(8.0))
-                    .style(|_theme: &Theme| container::Style {
-                        background: Some(Background::Color(StudioTheme::ACCENT_EMERALD)),
-                        border: Border {
-                            radius: Radius::from(4.0),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }),
-                text(format!("t = {elapsed_ms}ms"))
-                    .size(11)
-                    .color(StudioTheme::ACCENT_EMERALD),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .padding([2, 6])
-        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15)))
-        .into()
+    let border_color = if active {
+        COLOR_ACTIVE_STEP
     } else {
-        container(
-            text(format!("X{}.state = 0", step.id))
-                .size(10)
-                .color(StudioTheme::TEXT_MUTED),
-        )
-        .padding([2, 6])
-        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.03)))
-        .into()
+        COLOR_INACTIVE_STEP
     };
 
-    let step_box = render_grafcet_step_box(&step.id, step.kind, active);
-
-    let step_header_bar = row![
+    // 1. Elapsed duration on the left
+    let elapsed_elem: Element<'a, Message> = if active {
         container(
-            text(format!("X{}", step.id))
-                .size(11.5)
-                .color(if active { StudioTheme::ACCENT_EMERALD } else { StudioTheme::ACCENT_CYAN })
+            text(format!("T#{elapsed_ms}ms"))
+                .size(10.5)
+                .font(iced::Font::MONOSPACE)
+                .color(COLOR_ACTIVE_STEP),
         )
-        .padding([2, 5])
-        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.220, 0.741, 0.973, 0.12))),
-        active_indicator,
-        iced::widget::Space::with_width(Length::Fill),
-        button(text("+Act").size(10.5))
-            .on_press(Message::SfcAddAction(p_step.clone(), s_idx))
-            .style(StudioTheme::secondary_button)
-            .padding([2, 5]),
-        button(text("x").size(10.5))
-            .on_press(Message::SfcRemoveStep(p_step.clone(), s_idx))
-            .style(StudioTheme::ghost_button)
-            .padding([1, 4]),
-    ]
-    .spacing(4)
-    .align_y(Alignment::Center);
+        .width(Length::Fixed(60.0))
+        .align_x(iced::alignment::Horizontal::Right)
+        .padding([0, 6])
+        .into()
+    } else {
+        Space::with_width(Length::Fixed(60.0)).into()
+    };
 
-    let step_bottom_bar = row![
-        text_input("Name", &step.name)
-            .on_input({
-                let p = p_step.clone();
-                move |s| Message::SfcStepNameChanged(p.clone(), s_idx, s)
-            })
-            .width(110)
-            .padding([2, 5])
-            .style(StudioTheme::styled_input),
-        pick_list(
-            &ALL_STEP_KINDS[..],
-            Some(SfcStepKindWrapper(step.kind)),
-            {
-                let p = p_step.clone();
-                move |w| Message::SfcStepKindChanged(p.clone(), s_idx, w.0)
-            },
-        )
-        .width(72)
-        .style(StudioTheme::styled_pick_list),
-    ]
-    .spacing(4)
-    .align_y(Alignment::Center);
+    // 2. The Step Box
+    let step_box = render_step_box(program, s_idx, active, elapsed_ms, pou_name, lang);
 
-    let step_ident_col = column![
-        step_header_bar,
-        step_box,
-        step_bottom_bar,
-    ]
-    .spacing(5)
-    .align_x(Alignment::Center);
-
-    // Right-attached Actions (IEC 60848)
-    let step_to_actions_wire = container(iced::widget::Space::with_width(Length::Fixed(20.0)))
-        .height(Length::Fixed(2.5))
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(Background::Color(if active {
-                StudioTheme::ACCENT_EMERALD
-            } else {
-                StudioTheme::BORDER_CARD
-            })),
-            ..Default::default()
-        });
-
-    let mut actions_col = column![].spacing(6);
-    for (a_idx, act) in step.actions.iter().enumerate() {
-        let p_act = p_step.clone();
-        let action_box = container(
-            row![
-                // Left Qualifier Compartment
-                pick_list(
-                    &ALL_ACTION_QUALIFIERS[..],
-                    Some(SfcActionQualifierWrapper(act.qualifier)),
-                    {
-                        let p = p_act.clone();
-                        move |w| Message::SfcActionQualifierChanged(p.clone(), s_idx, a_idx, w.0)
-                    },
-                )
-                .width(55)
-                .style(StudioTheme::styled_pick_list),
-                // Vertical internal separator
-                container(iced::widget::Space::with_width(Length::Fixed(1.5)))
-                    .height(Length::Fixed(24.0))
-                    .style(|_theme: &Theme| container::Style {
-                        background: Some(Background::Color(StudioTheme::BORDER_CARD)),
-                        ..Default::default()
-                    }),
-                // Right Target Compartment
-                text_input("Target / Statement", &act.target)
-                    .on_input({
-                        let p = p_act.clone();
-                        move |s| Message::SfcActionTargetChanged(p.clone(), s_idx, a_idx, s)
-                    })
-                    .width(180)
-                    .padding([3, 6])
-                    .style(StudioTheme::styled_input),
-                button(text("X").size(11))
-                    .on_press(Message::SfcRemoveAction(p_act.clone(), s_idx, a_idx))
-                    .style(StudioTheme::ghost_button)
-                    .padding([2, 5]),
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center),
-        )
-        .padding(4)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
-            border: Border {
-                color: StudioTheme::BORDER_CARD,
-                width: 1.0,
-                radius: Radius::from(4.0),
-            },
-            ..Default::default()
-        });
-
-        actions_col = actions_col.push(action_box);
-    }
-
+    // 3. Right-attached Actions (IEC 60848)
     let (wire_elem, acts_elem): (Element<'a, Message>, Element<'a, Message>) = if step.actions.is_empty() {
         (
-            iced::widget::Space::with_width(Length::Fixed(0.0)).into(),
-            iced::widget::Space::with_width(Length::Fixed(0.0)).into(),
+            Space::with_width(Length::Fixed(20.0)).into(),
+            Space::with_width(Length::Fixed(0.0)).into(),
         )
     } else {
-        (
-            step_to_actions_wire.into(),
-            row![
-                actions_col,
-                button(text("+").size(11))
-                    .on_press(Message::SfcAddAction(p_step, s_idx))
-                    .style(StudioTheme::secondary_button)
-                    .padding([3, 7]),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .into(),
-        )
+        let wire = container(Space::with_width(Length::Fixed(18.0)))
+            .height(Length::Fixed(2.0))
+            .style(move |_| container::Style {
+                background: Some(Background::Color(border_color)),
+                ..Default::default()
+            });
+
+        let mut actions_col = column![].spacing(3);
+        for (a_idx, act) in step.actions.iter().enumerate() {
+            let p_act = pou_name.to_string();
+
+            let qual_picker = pick_list(
+                &ALL_ACTION_QUALIFIERS[..],
+                Some(SfcActionQualifierWrapper(act.qualifier)),
+                {
+                    let p = p_act.clone();
+                    move |w| Message::SfcActionQualifierChanged(p.clone(), s_idx, a_idx, w.0)
+                },
+            )
+            .width(44)
+            .style(StudioTheme::styled_pick_list);
+
+            let duration_input: Option<Element<'a, Message>> =
+                if matches!(act.qualifier, ActionQualifier::L | ActionQualifier::D) {
+                    let dur_str = act.duration.as_deref().unwrap_or("T#2s");
+                    let p = p_act.clone();
+                    Some(
+                        text_input("T#2s", dur_str)
+                            .on_input(move |d| Message::SfcActionDurationChanged(p.clone(), s_idx, a_idx, d))
+                            .font(iced::Font::MONOSPACE)
+                            .size(10.5)
+                            .padding([2, 4])
+                            .width(54)
+                            .style(sfc_input_style)
+                            .into(),
+                    )
+                } else {
+                    None
+                };
+
+            let target_input = text_input("Action Target / Statement", &act.target)
+                .on_input({
+                    let p = p_act.clone();
+                    move |t| Message::SfcActionTargetChanged(p.clone(), s_idx, a_idx, t)
+                })
+                .font(iced::Font::MONOSPACE)
+                .size(10.5)
+                .padding([2, 5])
+                .width(185)
+                .style(sfc_input_style);
+
+            let del_btn = button(text("x").size(10.5))
+                .on_press(Message::SfcRemoveAction(p_act, s_idx, a_idx))
+                .style(StudioTheme::ghost_button)
+                .padding([1, 4]);
+
+            let mut act_row = row![qual_picker].spacing(4).align_y(Alignment::Center);
+            if let Some(dur) = duration_input {
+                act_row = act_row.push(dur);
+            }
+            act_row = act_row.push(target_input);
+            act_row = act_row.push(del_btn);
+
+            let pill = container(act_row)
+                .padding([2, 4])
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(COLOR_ACTION_BG)),
+                    border: Border {
+                        color: border_color,
+                        width: 1.0,
+                        radius: Radius::from(4.0),
+                    },
+                    ..Default::default()
+                });
+
+            actions_col = actions_col.push(pill);
+        }
+
+        (wire.into(), actions_col.into())
     };
 
-    container(
-        row![
-            step_ident_col,
-            wire_elem,
-            acts_elem,
-        ]
+    row![elapsed_elem, step_box, wire_elem, acts_elem]
         .spacing(0)
-        .align_y(Alignment::Center),
-    )
-    .padding([8, 12])
-    .style(StudioTheme::card_style)
-    .into()
+        .align_y(Alignment::Center)
+        .into()
 }
 
-/// Renders a single Grafcet Transition with its crossbar, receptivity, and live evaluation pill.
-fn render_transition_row<'a>(
+/// Renders the authentic Grafcet Transition per IEC 60848:
+/// - Amber horizontal crossbar (40px x 4px) centered on the sequence axis
+/// - Connected on the right via horizontal wire to the Transition Card
+/// - Transition Card with amber border, transition header, receptivity condition input & live evaluation
+fn render_transition_node<'a>(
     program: &'a SfcProgram,
     t_idx: usize,
     runtime: Option<&'a PlcRuntime>,
-    lang: UiLanguage,
+    pou_name: &str,
+    _lang: UiLanguage,
+    column_width: f32,
 ) -> Element<'a, Message> {
     let trans = &program.transitions[t_idx];
-    let p_trans = program.name.clone();
+    let p_name = pou_name.to_string();
 
     let is_receptive = runtime.and_then(|rt| evaluate_receptivity(rt, &program.name, &trans.receptivity));
-    let from_str = trans.from_steps.join(", ");
-    let to_str = trans.to_steps.join(", ");
+    let tr_col = if is_receptive == Some(true) {
+        COLOR_ACTIVE_STEP
+    } else {
+        COLOR_TRANSITION
+    };
 
-    // Vertical directed link entering crossbar
-    let pre_wire = container(iced::widget::Space::with_height(Length::Fixed(14.0)))
-        .width(Length::Fixed(2.5))
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(StudioTheme::ACCENT_CYAN)),
-            ..Default::default()
-        });
-
-    // The iconic Grafcet Transition Crossbar!
-    let crossbar = container(iced::widget::Space::with_width(Length::Fixed(56.0)))
+    let crossbar = container(Space::with_width(Length::Fixed(40.0)))
         .height(Length::Fixed(4.0))
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(Background::Color(if is_receptive == Some(true) {
-                StudioTheme::ACCENT_EMERALD
-            } else {
-                StudioTheme::ACCENT_CYAN
-            })),
+        .style(move |_| container::Style {
+            background: Some(Background::Color(tr_col)),
             border: Border {
                 radius: Radius::from(1.0),
                 ..Default::default()
@@ -589,100 +504,142 @@ fn render_transition_row<'a>(
             ..Default::default()
         });
 
-    let trans_row = row![
-        // Left side: Transition ID + Source Steps + Delete
-        row![
-            container(text(&trans.id).size(12).color(StudioTheme::ACCENT_AMBER))
-                .padding([3, 8])
-                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.961, 0.620, 0.043, 0.15))),
-            text(lang.tr("From:", "De :")).size(11).color(StudioTheme::TEXT_MUTED),
-            text_input("0", &from_str)
-                .on_input({
-                    let p = p_trans.clone();
-                    move |s| Message::SfcTransitionFromChanged(p.clone(), t_idx, s)
-                })
-                .width(65)
-                .padding([3, 6])
-                .style(StudioTheme::styled_input),
-            button(text("X").size(11))
-                .on_press(Message::SfcRemoveTransition(p_trans.clone(), t_idx))
-                .style(StudioTheme::ghost_button)
-                .padding([2, 5]),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center),
+    let wire_to_card = container(Space::with_width(Length::Fixed(12.0)))
+        .height(Length::Fixed(2.0))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(tr_col)),
+            ..Default::default()
+        });
 
-        // Transition Crossbar
-        container(crossbar).padding([0, 10]),
+    let eval_badge: Element<'a, Message> = match is_receptive {
+        Some(true) => container(text("TRUE").size(9.5).color(COLOR_ACTIVE_STEP))
+            .padding([1, 5])
+            .style(StudioTheme::subtle_badge_style(Color::from_rgba(0.18, 0.835, 0.45, 0.2)))
+            .into(),
+        Some(false) => container(text("FALSE").size(9.5).color(StudioTheme::TEXT_MUTED))
+            .padding([1, 5])
+            .style(StudioTheme::subtle_badge_style(Color::from_rgba(1.0, 1.0, 1.0, 0.05)))
+            .into(),
+        None => container(text("EVAL").size(9.5).color(COLOR_STEP_DROP))
+            .padding([1, 5])
+            .style(StudioTheme::subtle_badge_style(Color::from_rgba(0.28, 0.79, 0.89, 0.15)))
+            .into(),
+    };
 
-        // Right side: Horizontal line to Receptivity Condition & Target
-        row![
-            text(lang.tr("Receptivity:", "Réceptivité :")).size(11).color(StudioTheme::TEXT_MUTED),
-            text_input("Condition (e.g. Start_PB)", &trans.receptivity)
-                .on_input({
-                    let p = p_trans.clone();
-                    move |s| Message::SfcTransitionReceptivityChanged(p.clone(), t_idx, s)
-                })
-                .width(200)
-                .padding([3, 6])
-                .style(StudioTheme::styled_input),
-            // Live Evaluation Badge
-            if let Some(true) = is_receptive {
-                container(text("TRUE").size(10).color(StudioTheme::ACCENT_EMERALD))
-                    .padding([2, 6])
-                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.063, 0.725, 0.506, 0.2)))
-            } else if let Some(false) = is_receptive {
-                container(text("FALSE").size(10).color(StudioTheme::TEXT_MUTED))
-                    .padding([2, 6])
-                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.05)))
-            } else {
-                container(text("EVAL").size(10).color(StudioTheme::ACCENT_CYAN))
-                    .padding([2, 6])
-                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.220, 0.741, 0.973, 0.1)))
-            },
-            text("==>").size(12).color(StudioTheme::ACCENT_CYAN),
-            text(lang.tr("To:", "Vers :")).size(11).color(StudioTheme::TEXT_MUTED),
-            text_input("1, 2", &to_str)
-                .on_input({
-                    let p = p_trans;
-                    move |s| Message::SfcTransitionToChanged(p.clone(), t_idx, s)
-                })
-                .width(65)
-                .padding([3, 6])
-                .style(StudioTheme::styled_input),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
+    let from_steps_str = trans.from_steps.join(",");
+    let to_steps_str = trans.to_steps.join(",");
+    let header_text = format!("{}  (X{} -> X{})", trans.id, from_steps_str, to_steps_str);
+
+    let card_top = row![
+        text(header_text)
+            .size(10.5)
+            .font(iced::Font::MONOSPACE)
+            .color(tr_col),
+        Space::with_width(Length::Fill),
+        eval_badge,
+        button(text("x").size(10.5))
+            .on_press(Message::SfcRemoveTransition(p_name.clone(), t_idx))
+            .style(StudioTheme::ghost_button)
+            .padding([1, 4]),
     ]
-    .spacing(0)
+    .spacing(4)
     .align_y(Alignment::Center);
 
-    container(
-        column![
-            container(pre_wire).padding([0, 36]),
-            container(trans_row)
-                .padding([6, 12])
-                .style(StudioTheme::canvas_container_style)
-                .width(Length::Fill),
-            container(
-                column![
-                    container(iced::widget::Space::with_height(Length::Fixed(12.0)))
-                        .width(Length::Fixed(2.5))
-                        .style(|_theme: &Theme| container::Style {
-                            background: Some(Background::Color(StudioTheme::BORDER_CARD)),
-                            ..Default::default()
-                        }),
-                    text("v").size(12).color(StudioTheme::BORDER_CARD),
-                ]
-                .align_x(Alignment::Center),
-            )
-            .padding([0, 36]),
-        ]
-        .spacing(2),
-    )
-    .padding([2, 8])
-    .width(Length::Fill)
+    let receptivity_input = text_input("Receptivity (e.g. Start_PB)", &trans.receptivity)
+        .on_input({
+            let p = p_name;
+            move |r| Message::SfcTransitionReceptivityChanged(p.clone(), t_idx, r)
+        })
+        .font(iced::Font::MONOSPACE)
+        .size(10.5)
+        .padding([2, 5])
+        .style(sfc_input_style)
+        .width(Length::Fill);
+
+    let card_content = column![card_top, receptivity_input].spacing(3);
+
+    let transition_card = container(card_content)
+        .width(Length::Fixed(TRANSITION_CARD_WIDTH))
+        .padding([3, 8])
+        .style(move |_| container::Style {
+            background: Some(Background::Color(COLOR_TRANS_BG)),
+            border: Border {
+                color: tr_col,
+                width: 1.2,
+                radius: Radius::from(4.0),
+            },
+            ..Default::default()
+        });
+
+    // Compute left padding so crossbar is centered at column_width * 0.5
+    let left_pad = (column_width * 0.5 - 20.0).max(0.0);
+
+    row![
+        Space::with_width(Length::Fixed(left_pad)),
+        crossbar,
+        wire_to_card,
+        transition_card,
+        Space::with_width(Length::Fill),
+    ]
+    .spacing(0)
+    .align_y(Alignment::Center)
     .into()
+}
+
+/// Renders the IEC 60848 Double Horizontal Line (`===`) for AND Divergence / Convergence.
+fn and_double_bar<'a>(label: &str, span_width: f32) -> Element<'a, Message> {
+    let line = move || {
+        container(Space::with_width(Length::Fixed(span_width)))
+            .height(Length::Fixed(2.2))
+            .style(|_| container::Style {
+                background: Some(Background::Color(COLOR_STEP_DROP)),
+                ..Default::default()
+            })
+    };
+
+    row![
+        container(text(label.to_string()).size(10.5).font(iced::Font::MONOSPACE).color(COLOR_STEP_DROP))
+            .padding([0, 8]),
+        column![
+            line(),
+            Space::with_height(Length::Fixed(3.5)),
+            line(),
+        ]
+        .spacing(0),
+    ]
+    .spacing(0)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Renders the IEC 60848 Single Horizontal Line (`---`) for OR Divergence / Convergence.
+fn or_single_bar<'a>(label: &str, span_width: f32) -> Element<'a, Message> {
+    row![
+        container(text(label.to_string()).size(10.5).font(iced::Font::MONOSPACE).color(COLOR_OR_BRANCH))
+            .padding([0, 8]),
+        container(Space::with_width(Length::Fixed(span_width)))
+            .height(Length::Fixed(2.2))
+            .style(|_| container::Style {
+                background: Some(Background::Color(COLOR_OR_BRANCH)),
+                ..Default::default()
+            }),
+    ]
+    .spacing(0)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Renders drop wires for `cols` parallel branches
+fn render_drop_wires<'a>(cols: usize, height: f32, color: Color) -> Element<'a, Message> {
+    let mut r = row![].spacing(0);
+    for _ in 0..cols {
+        r = r.push(
+            container(vertical_wire(height, color))
+                .width(Length::Fixed(COLUMN_STRIDE))
+                .align_x(Alignment::Center),
+        );
+    }
+    r.into()
 }
 
 pub fn render_sfc_editor<'a>(
@@ -699,58 +656,60 @@ pub fn render_sfc_editor<'a>(
             lang.tr("Sequential Function Chart (Grafcet IEC 60848)", "Grafcet (CEI 60848)"),
             program.name
         ))
-        .size(18),
-        iced::widget::Space::with_width(Length::Fill),
+        .size(17)
+        .font(iced::Font::MONOSPACE),
+        Space::with_width(Length::Fill),
         button(text(lang.tr("+ Add Step", "+ Étape")).size(11))
             .on_press(Message::SfcAddStep(pou_name.clone()))
             .style(StudioTheme::primary_button)
-            .padding([5, 10]),
+            .padding([4, 9]),
         button(text(lang.tr("+ Add Transition", "+ Transition")).size(11))
             .on_press(Message::SfcAddTransition(pou_name.clone()))
             .style(StudioTheme::secondary_button)
-            .padding([5, 10]),
+            .padding([4, 9]),
         button(text(lang.tr("+ AND Div (==)", "+ Div ET (==)")).size(11))
             .on_press(Message::SfcAddAndDivergence(pou_name.clone()))
             .style(StudioTheme::secondary_button)
-            .padding([5, 10]),
+            .padding([4, 9]),
         button(text(lang.tr("+ AND Conv (==)", "+ Conv ET (==)")).size(11))
             .on_press(Message::SfcAddAndConvergence(pou_name.clone()))
             .style(StudioTheme::secondary_button)
-            .padding([5, 10]),
+            .padding([4, 9]),
         button(text(lang.tr("+ OR Div (--)", "+ Div OU (--)")).size(11))
             .on_press(Message::SfcAddOrDivergence(pou_name.clone()))
             .style(StudioTheme::secondary_button)
-            .padding([5, 10]),
+            .padding([4, 9]),
         button(text(lang.tr("+ OR Conv (--)", "+ Conv OU (--)")).size(11))
             .on_press(Message::SfcAddOrConvergence(pou_name.clone()))
             .style(StudioTheme::secondary_button)
-            .padding([5, 10]),
+            .padding([4, 9]),
         button(text(lang.tr("Clear POU", "Vider")).size(11))
-            .on_press(Message::ConfirmClearPou(pou_name))
+            .on_press(Message::ConfirmClearPou(pou_name.clone()))
             .style(StudioTheme::danger_button)
-            .padding([5, 10]),
+            .padding([4, 9]),
     ]
-    .spacing(8)
+    .spacing(6)
     .align_y(Alignment::Center);
 
     let tip = text(lang.tr(
-        "Standard IEC 60848 Grafcet: Initial steps have double squares. Actions are attached on the right. Transitions are horizontal crossbars on the sequence link. AND/OR divergences & convergences render parallel branches.",
-        "Grafcet standard CEI 60848 : Double carré pour étapes initiales. Actions reliées à droite. Transitions en barres horizontales. Divergences/convergences ET/OU en branches parallèles.",
+        "Standard IEC 60848 Grafcet: Double border indicates initial step. Actions attached horizontally on the right. Amber tick transitions connect sequence links. Parallel AND/OR branches align automatically.",
+        "Grafcet standard CEI 60848 : Double encadrement pour étape initiale. Actions reliées à droite. Transitions ambre sur liaison orientée. Branches parallèles ET/OU synchronisées.",
     ))
-    .size(12)
+    .size(11.5)
     .color(StudioTheme::TEXT_MUTED);
-
-    let mut sequence_column = column![header, tip].spacing(16);
 
     // 2. Compute 2D Step Rows (Grouping AND/OR parallel branches)
     let step_rows = compute_sfc_step_rows(program);
-    let mut grafcet_flow = column![].spacing(6);
+    let max_cols = step_rows.iter().map(|r| r.len()).max().unwrap_or(1).max(2);
+    let total_canvas_width = (max_cols as f32) * COLUMN_STRIDE;
 
+    let mut grafcet_flow = column![].spacing(0).align_x(Alignment::Center);
     let mut rendered_transitions: HashSet<usize> = HashSet::new();
 
     for (r_idx, row_indices) in step_rows.iter().enumerate() {
-        // A. Pre-row: Check if any transition converges into ALL steps in this row (AND Divergence leading into this row)
-        // If this row has multiple steps coming from an AND Divergence transition:
+        let cols = row_indices.len();
+
+        // A. Pre-row: Check if incoming transition diverges into steps in this row (AND Divergence)
         let first_step_id = &program.steps[row_indices[0]].id;
         let and_div_trans: Option<(usize, &SfcTransition)> = program
             .transitions
@@ -762,25 +721,48 @@ pub fn render_sfc_editor<'a>(
             && !rendered_transitions.contains(&t_idx)
         {
             rendered_transitions.insert(t_idx);
-            grafcet_flow = grafcet_flow.push(render_transition_row(program, t_idx, runtime, lang));
-            grafcet_flow = grafcet_flow.push(double_horizontal_bar("AND DIVERGENCE (ET) [===]", false));
+            // 1. Central incoming wire
+            grafcet_flow = grafcet_flow.push(vertical_wire(16.0, COLOR_INACTIVE_STEP));
+            // 2. Transition node
+            let tr_node = render_transition_node(program, t_idx, runtime, &pou_name, lang, total_canvas_width);
+            grafcet_flow = grafcet_flow.push(container(tr_node).width(Length::Fixed(total_canvas_width)));
+            // 3. Central wire down to double bar
+            grafcet_flow = grafcet_flow.push(vertical_wire(14.0, COLOR_INACTIVE_STEP));
+            // 4. AND Divergence double horizontal bar spanning across the branch columns
+            let span = ((cols.saturating_sub(1)) as f32) * COLUMN_STRIDE;
+            let bar = and_double_bar("[AND Div ==]", span);
+            grafcet_flow = grafcet_flow.push(container(bar).padding([0, 10]));
+            // 5. Drop wires into each column
+            grafcet_flow = grafcet_flow.push(render_drop_wires(cols, 16.0, COLOR_STEP_DROP));
         }
 
         // B. Render Steps in this Row: Side-by-side if multiple branches!
-        if row_indices.len() == 1 {
+        if cols == 1 {
             let s_idx = row_indices[0];
-            let card = render_single_step_card(program, s_idx, runtime, lang);
-            grafcet_flow = grafcet_flow.push(card);
+            let step_node = render_step_node(program, s_idx, runtime, &pou_name, lang);
+            grafcet_flow = grafcet_flow.push(
+                container(step_node)
+                    .width(Length::Fixed(total_canvas_width))
+                    .align_x(Alignment::Center),
+            );
         } else {
-            let mut branch_row = row![].spacing(16).align_y(Alignment::Start);
+            let mut branch_row = row![].spacing(0).align_y(Alignment::Start);
             for &s_idx in row_indices {
-                let card = render_single_step_card(program, s_idx, runtime, lang);
-                branch_row = branch_row.push(container(card).width(Length::FillPortion(1)));
+                let step_node = render_step_node(program, s_idx, runtime, &pou_name, lang);
+                branch_row = branch_row.push(
+                    container(step_node)
+                        .width(Length::Fixed(COLUMN_STRIDE))
+                        .align_x(Alignment::Center),
+                );
             }
-            grafcet_flow = grafcet_flow.push(branch_row);
+            grafcet_flow = grafcet_flow.push(
+                container(branch_row)
+                    .width(Length::Fixed(total_canvas_width))
+                    .align_x(Alignment::Center),
+            );
         }
 
-        // C. Post-row: Check for AND Convergence (transition with from_steps containing all steps in this row)
+        // C. Post-row: Check for AND Convergence (transition with multiple from_steps containing all steps in this row)
         let and_conv_trans: Option<(usize, &SfcTransition)> = program
             .transitions
             .iter()
@@ -792,11 +774,24 @@ pub fn render_sfc_editor<'a>(
                         .all(|&si| t.from_steps.contains(&program.steps[si].id) || t.from_steps.contains(&program.steps[si].name))
             });
 
-        if let Some((t_idx, _tr)) = and_conv_trans {
+        if let Some((t_idx, tr)) = and_conv_trans {
             if !rendered_transitions.contains(&t_idx) {
                 rendered_transitions.insert(t_idx);
-                grafcet_flow = grafcet_flow.push(double_horizontal_bar("AND CONVERGENCE (ET) [===]", false));
-                grafcet_flow = grafcet_flow.push(render_transition_row(program, t_idx, runtime, lang));
+                // 1. Drop wires from each branch step into double bar
+                grafcet_flow = grafcet_flow.push(render_drop_wires(cols, 16.0, COLOR_INACTIVE_STEP));
+                // 2. AND Convergence double horizontal bar
+                let span = ((cols.saturating_sub(1)) as f32) * COLUMN_STRIDE;
+                let conv_bar = if tr.convergence == ConvergenceKind::Or {
+                    or_single_bar("[OR Conv --]", span)
+                } else {
+                    and_double_bar("[AND Conv ==]", span)
+                };
+                grafcet_flow = grafcet_flow.push(container(conv_bar).padding([0, 10]));
+                // 3. Central wire down to transition
+                grafcet_flow = grafcet_flow.push(vertical_wire(14.0, COLOR_INACTIVE_STEP));
+                // 4. Centered transition node
+                let tr_node = render_transition_node(program, t_idx, runtime, &pou_name, lang, total_canvas_width);
+                grafcet_flow = grafcet_flow.push(container(tr_node).width(Length::Fixed(total_canvas_width)));
             }
             continue;
         }
@@ -815,43 +810,72 @@ pub fn render_sfc_editor<'a>(
             })
             .collect();
 
-        if outgoing.len() > 1 && row_indices.len() == 1 {
+        if outgoing.len() > 1 && cols == 1 {
             // OR Divergence!
-            grafcet_flow = grafcet_flow.push(single_horizontal_bar("OR DIVERGENCE (OU) [---]", false));
-            let mut or_div_row = row![].spacing(12).align_y(Alignment::Center);
+            let or_cols = outgoing.len();
+            // 1. Central wire from step down to single purple bar
+            grafcet_flow = grafcet_flow.push(vertical_wire(16.0, COLOR_INACTIVE_STEP));
+            // 2. OR Divergence single horizontal bar
+            let span = ((or_cols.saturating_sub(1)) as f32) * COLUMN_STRIDE;
+            let or_bar = or_single_bar("[OR Div --]", span);
+            grafcet_flow = grafcet_flow.push(container(or_bar).padding([0, 10]));
+            // 3. Drop wires into each alternate transition column
+            grafcet_flow = grafcet_flow.push(render_drop_wires(or_cols, 14.0, COLOR_OR_BRANCH));
+            // 4. Row of alternate transition columns
+            let mut or_div_row = row![].spacing(0).align_y(Alignment::Center);
             for (ti, _) in &outgoing {
                 rendered_transitions.insert(*ti);
+                let tr_node = render_transition_node(program, *ti, runtime, &pou_name, lang, COLUMN_STRIDE);
                 or_div_row = or_div_row.push(
-                    container(render_transition_row(program, *ti, runtime, lang))
-                        .width(Length::FillPortion(1)),
+                    container(tr_node)
+                        .width(Length::Fixed(COLUMN_STRIDE))
+                        .align_x(Alignment::Center),
                 );
             }
-            grafcet_flow = grafcet_flow.push(or_div_row);
+            grafcet_flow = grafcet_flow.push(
+                container(or_div_row)
+                    .width(Length::Fixed(total_canvas_width))
+                    .align_x(Alignment::Center),
+            );
+            // 5. Drop wires exiting transitions towards next row
+            grafcet_flow = grafcet_flow.push(render_drop_wires(or_cols, 16.0, COLOR_INACTIVE_STEP));
         } else {
-            for (ti, _) in outgoing {
+            for (ti, tr) in outgoing {
                 rendered_transitions.insert(ti);
-                grafcet_flow = grafcet_flow.push(render_transition_row(program, ti, runtime, lang));
-            }
-        }
+                // 1. Wire down from step
+                grafcet_flow = grafcet_flow.push(vertical_wire(16.0, COLOR_INACTIVE_STEP));
+                // 2. Centered transition node
+                let tr_node = render_transition_node(program, ti, runtime, &pou_name, lang, total_canvas_width);
+                grafcet_flow = grafcet_flow.push(container(tr_node).width(Length::Fixed(total_canvas_width)));
 
-        // E. Check if next row is an OR Convergence target (multiple transitions targeted next row)
-        if r_idx + 1 < step_rows.len() {
-            let next_step_ids: Vec<&String> = step_rows[r_idx + 1]
-                .iter()
-                .map(|&si| &program.steps[si].id)
-                .collect();
-            let incoming_count = program
-                .transitions
-                .iter()
-                .filter(|t| t.to_steps.iter().any(|target| next_step_ids.contains(&target)))
-                .count();
-            if incoming_count > 1 && row_indices.len() > 1 {
-                grafcet_flow = grafcet_flow.push(single_horizontal_bar("OR CONVERGENCE (OU) [---]", false));
+                // Check if this transition is a Loopback (targets a step in a previous row, e.g. X0)
+                let is_loopback = tr.to_steps.iter().any(|target| {
+                    step_rows[..r_idx].iter().any(|prev_row| {
+                        prev_row.iter().any(|&psi| &program.steps[psi].id == target || &program.steps[psi].name == target)
+                    })
+                });
+
+                if is_loopback {
+                    let loop_targets = tr.to_steps.join(", ");
+                    grafcet_flow = grafcet_flow.push(vertical_wire(10.0, COLOR_ACTIVE_STEP));
+                    let loop_badge = container(
+                        text(format!("▲ Loopback to X{loop_targets}"))
+                            .size(10.5)
+                            .font(iced::Font::MONOSPACE)
+                            .color(COLOR_ACTIVE_STEP),
+                    )
+                    .padding([2, 8])
+                    .style(StudioTheme::subtle_badge_style(Color::from_rgba(0.18, 0.835, 0.45, 0.15)));
+                    grafcet_flow = grafcet_flow.push(loop_badge);
+                } else if tr.to_steps.len() <= 1 {
+                    // Normal directed link into next step
+                    grafcet_flow = grafcet_flow.push(vertical_wire(16.0, COLOR_INACTIVE_STEP));
+                }
             }
         }
     }
 
-    // 3. Render any remaining transitions (e.g. unlinked or loopbacks)
+    // 3. Render any remaining transitions (e.g. unlinked or free transitions)
     let remaining: Vec<(usize, &SfcTransition)> = program
         .transitions
         .iter()
@@ -860,20 +884,46 @@ pub fn render_sfc_editor<'a>(
         .collect();
 
     if !remaining.is_empty() {
-        let unlinked_header = text(lang.tr("Loopback & Free Transitions", "Transitions de Bouclage & Libres")).size(13);
-        let mut unlinked_col = column![unlinked_header].spacing(8);
+        let unlinked_header = text(lang.tr("Free / Unlinked Transitions", "Transitions Libres")).size(12).color(COLOR_TRANSITION);
+        let mut unlinked_col = column![unlinked_header].spacing(6).align_x(Alignment::Center);
 
         for (ti, _) in remaining {
-            unlinked_col = unlinked_col.push(render_transition_row(program, ti, runtime, lang));
+            let tr_node = render_transition_node(program, ti, runtime, &pou_name, lang, total_canvas_width);
+            unlinked_col = unlinked_col.push(tr_node);
         }
 
-        grafcet_flow = grafcet_flow.push(container(unlinked_col).padding(10));
+        grafcet_flow = grafcet_flow.push(
+            container(unlinked_col)
+                .padding(12)
+                .style(StudioTheme::card_style),
+        );
     }
 
-    sequence_column = sequence_column.push(grafcet_flow);
+    let canvas_container = container(grafcet_flow)
+        .padding(24)
+        .width(Length::Fixed(total_canvas_width.max(960.0)))
+        .style(|_| container::Style {
+            background: Some(Background::Color(COLOR_CANVAS_BG)),
+            border: Border {
+                color: StudioTheme::BORDER_CARD,
+                width: 1.0,
+                radius: Radius::from(6.0),
+            },
+            ..Default::default()
+        });
 
-    scrollable(sequence_column.padding(20))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    let main_scroll = scrollable(
+        column![
+            header,
+            tip,
+            scrollable(canvas_container).direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::new()
+            )),
+        ]
+        .spacing(14),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    main_scroll.into()
 }

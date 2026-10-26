@@ -169,6 +169,7 @@ pub enum Message {
     SfcAddAction(String, usize),
     SfcRemoveAction(String, usize, usize),
     SfcActionQualifierChanged(String, usize, usize, ActionQualifier),
+    SfcActionDurationChanged(String, usize, usize, String),
     SfcActionTargetChanged(String, usize, usize, String),
     SfcAddTransition(String),
     SfcRemoveTransition(String, usize),
@@ -1277,6 +1278,9 @@ impl FerriteStudioApp {
                     && let Some(step) = sfc.steps.get_mut(s_idx)
                         && let Some(act) = step.actions.get_mut(a_idx) {
                             act.qualifier = q;
+                            if matches!(q, ActionQualifier::L | ActionQualifier::D) && act.duration.is_none() {
+                                act.duration = Some("T#2s".to_string());
+                            }
                             self.track_history();
                             self.modified = true;
                         }
@@ -1287,6 +1291,16 @@ impl FerriteStudioApp {
                     && let Some(step) = sfc.steps.get_mut(s_idx)
                         && let Some(act) = step.actions.get_mut(a_idx) {
                             act.target = t;
+                            self.track_history();
+                            self.modified = true;
+                        }
+                Task::none()
+            }
+            Message::SfcActionDurationChanged(pou_name, s_idx, a_idx, d) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(step) = sfc.steps.get_mut(s_idx)
+                        && let Some(act) = step.actions.get_mut(a_idx) {
+                            act.duration = Some(d);
                             self.track_history();
                             self.modified = true;
                         }
