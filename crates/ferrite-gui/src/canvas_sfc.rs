@@ -24,10 +24,24 @@ const COLOR_TRANS_BG: Color = Color::from_rgb(22.0 / 255.0, 28.0 / 255.0, 38.0 /
 const COLOR_ACTION_BG: Color = Color::from_rgb(30.0 / 255.0, 38.0 / 255.0, 52.0 / 255.0); // #1E2634
 const COLOR_INPUT_BG: Color = Color::from_rgb(14.0 / 255.0, 20.0 / 255.0, 29.0 / 255.0); // #0E141D
 
-const COLUMN_STRIDE: f32 = 480.0;
-const STEP_BOX_WIDTH: f32 = 188.0;
-const STEP_BOX_HEIGHT: f32 = 68.0;
-const TRANSITION_CARD_WIDTH: f32 = 320.0;
+pub const COLUMN_STRIDE: f32 = 560.0;
+pub const STEP_BOX_WIDTH: f32 = 188.0;
+pub const STEP_BOX_HEIGHT: f32 = 68.0;
+pub const TRANSITION_CARD_WIDTH: f32 = 320.0;
+
+/// Returns the exact horizontal center `X` coordinate for a step or transition column
+/// on the SFC schematic canvas, given the column index `col_idx`, the total branch columns `cols`,
+/// the central sequence spine `base_spine_x`, and the column stride `col_stride`.
+pub fn step_center_x(col_idx: usize, cols: usize, base_spine_x: f32, col_stride: f32) -> f32 {
+    let row_start_x = base_spine_x - ((cols.saturating_sub(1)) as f32) * col_stride * 0.5;
+    row_start_x + (col_idx as f32) * col_stride
+}
+
+/// Returns the left margin required to center a step box of width `STEP_BOX_WIDTH`
+/// precisely at horizontal coordinate `target_center_x`.
+pub fn step_box_left_margin(target_center_x: f32) -> f32 {
+    (target_center_x - STEP_BOX_WIDTH * 0.5).max(0.0)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SfcStepKindWrapper(pub StepKind);
@@ -337,15 +351,16 @@ fn render_step_box<'a>(
         .into()
 }
 
-/// Renders the complete Step Node:
-/// [ T#0ms ]  [ Step Box ] === [ Action 1 ]
-///                             [ Action 2 ]
+/// Renders the complete Step Node with rigid column-axis anchoring:
+/// [ Left Margin / Duration ]  [ Step Box ] === [ Action 1 ]
+///                                              [ Action 2 ]
 fn render_step_node<'a>(
     program: &'a SfcProgram,
     s_idx: usize,
     runtime: Option<&'a PlcRuntime>,
     pou_name: &str,
     lang: UiLanguage,
+    left_margin: f32,
 ) -> Element<'a, Message> {
     let step = &program.steps[s_idx];
     let (active, elapsed_ms) = runtime
@@ -358,29 +373,31 @@ fn render_step_node<'a>(
         COLOR_INACTIVE_STEP
     };
 
-    // 1. Elapsed duration on the left
-    let elapsed_elem: Element<'a, Message> = if active {
+    // 1. Elapsed duration on the left, right-aligned within the fixed left margin container
+    let elapsed_widget: Element<'a, Message> = if active {
         container(
             text(format!("T#{elapsed_ms}ms"))
                 .size(10.5)
                 .font(iced::Font::MONOSPACE)
                 .color(COLOR_ACTIVE_STEP),
         )
-        .width(Length::Fixed(60.0))
-        .align_x(iced::alignment::Horizontal::Right)
-        .padding([0, 6])
+        .padding([0, 8])
         .into()
     } else {
-        Space::with_width(Length::Fixed(60.0)).into()
+        Space::with_width(Length::Fixed(0.0)).into()
     };
 
-    // 2. The Step Box
+    let left_container = container(elapsed_widget)
+        .width(Length::Fixed(left_margin))
+        .align_x(iced::alignment::Horizontal::Right);
+
+    // 2. The Step Box (fixed STEP_BOX_WIDTH x STEP_BOX_HEIGHT)
     let step_box = render_step_box(program, s_idx, active, elapsed_ms, pou_name, lang);
 
     // 3. Right-attached Actions (IEC 60848)
     let (wire_elem, acts_elem): (Element<'a, Message>, Element<'a, Message>) = if step.actions.is_empty() {
         (
-            Space::with_width(Length::Fixed(20.0)).into(),
+            Space::with_width(Length::Fixed(0.0)).into(),
             Space::with_width(Length::Fixed(0.0)).into(),
         )
     } else {
@@ -465,14 +482,20 @@ fn render_step_node<'a>(
         (wire.into(), actions_col.into())
     };
 
-    row![elapsed_elem, step_box, wire_elem, acts_elem]
-        .spacing(0)
-        .align_y(Alignment::Center)
-        .into()
+    row![
+        left_container,
+        step_box,
+        wire_elem,
+        acts_elem,
+        Space::with_width(Length::Fill),
+    ]
+    .spacing(0)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 /// Renders the authentic Grafcet Transition per IEC 60848:
-/// - Amber horizontal crossbar (40px x 4px) centered on the sequence axis
+/// - Amber horizontal crossbar (40px x 4px) centered on target_axis_x
 /// - Connected on the right via horizontal wire to the Transition Card
 /// - Transition Card with amber border, transition header, receptivity condition input & live evaluation
 fn render_transition_node<'a>(
@@ -481,7 +504,7 @@ fn render_transition_node<'a>(
     runtime: Option<&'a PlcRuntime>,
     pou_name: &str,
     _lang: UiLanguage,
-    column_width: f32,
+    target_axis_x: f32,
 ) -> Element<'a, Message> {
     let trans = &program.transitions[t_idx];
     let p_name = pou_name.to_string();
@@ -571,8 +594,7 @@ fn render_transition_node<'a>(
             ..Default::default()
         });
 
-    // Compute left padding so crossbar is centered at column_width * 0.5
-    let left_pad = (column_width * 0.5 - 20.0).max(0.0);
+    let left_pad = (target_axis_x - 20.0).max(0.0);
 
     row![
         Space::with_width(Length::Fixed(left_pad)),
@@ -587,10 +609,16 @@ fn render_transition_node<'a>(
 }
 
 /// Renders the IEC 60848 Double Horizontal Line (`===`) for AND Divergence / Convergence.
-fn and_double_bar<'a>(label: &str, span_width: f32) -> Element<'a, Message> {
+fn and_double_bar<'a>(label: &str, left_x: f32, right_x: f32) -> Element<'a, Message> {
+    let bar_start_x = (left_x - 15.0).max(0.0);
+    let span_width = (right_x - left_x + 30.0).max(40.0);
+    let label_width = 110.0;
+    let label_left = (bar_start_x - label_width - 8.0).max(0.0);
+    let gap_before_bar = (bar_start_x - (label_left + label_width)).max(0.0);
+
     let line = move || {
         container(Space::with_width(Length::Fixed(span_width)))
-            .height(Length::Fixed(2.2))
+            .height(Length::Fixed(2.5))
             .style(|_| container::Style {
                 background: Some(Background::Color(COLOR_STEP_DROP)),
                 ..Default::default()
@@ -598,14 +626,23 @@ fn and_double_bar<'a>(label: &str, span_width: f32) -> Element<'a, Message> {
     };
 
     row![
-        container(text(label.to_string()).size(10.5).font(iced::Font::MONOSPACE).color(COLOR_STEP_DROP))
-            .padding([0, 8]),
+        Space::with_width(Length::Fixed(label_left)),
+        container(
+            text(label.to_string())
+                .size(10.5)
+                .font(iced::Font::MONOSPACE)
+                .color(COLOR_STEP_DROP),
+        )
+        .width(Length::Fixed(label_width))
+        .align_x(iced::alignment::Horizontal::Right),
+        Space::with_width(Length::Fixed(gap_before_bar)),
         column![
             line(),
             Space::with_height(Length::Fixed(3.5)),
             line(),
         ]
         .spacing(0),
+        Space::with_width(Length::Fill),
     ]
     .spacing(0)
     .align_y(Alignment::Center)
@@ -613,16 +650,31 @@ fn and_double_bar<'a>(label: &str, span_width: f32) -> Element<'a, Message> {
 }
 
 /// Renders the IEC 60848 Single Horizontal Line (`---`) for OR Divergence / Convergence.
-fn or_single_bar<'a>(label: &str, span_width: f32) -> Element<'a, Message> {
+fn or_single_bar<'a>(label: &str, left_x: f32, right_x: f32) -> Element<'a, Message> {
+    let bar_start_x = (left_x - 15.0).max(0.0);
+    let span_width = (right_x - left_x + 30.0).max(40.0);
+    let label_width = 110.0;
+    let label_left = (bar_start_x - label_width - 8.0).max(0.0);
+    let gap_before_bar = (bar_start_x - (label_left + label_width)).max(0.0);
+
     row![
-        container(text(label.to_string()).size(10.5).font(iced::Font::MONOSPACE).color(COLOR_OR_BRANCH))
-            .padding([0, 8]),
+        Space::with_width(Length::Fixed(label_left)),
+        container(
+            text(label.to_string())
+                .size(10.5)
+                .font(iced::Font::MONOSPACE)
+                .color(COLOR_OR_BRANCH),
+        )
+        .width(Length::Fixed(label_width))
+        .align_x(iced::alignment::Horizontal::Right),
+        Space::with_width(Length::Fixed(gap_before_bar)),
         container(Space::with_width(Length::Fixed(span_width)))
-            .height(Length::Fixed(2.2))
+            .height(Length::Fixed(2.5))
             .style(|_| container::Style {
                 background: Some(Background::Color(COLOR_OR_BRANCH)),
                 ..Default::default()
             }),
+        Space::with_width(Length::Fill),
     ]
     .spacing(0)
     .align_y(Alignment::Center)
@@ -640,6 +692,13 @@ fn render_drop_wires<'a>(cols: usize, height: f32, color: Color) -> Element<'a, 
         );
     }
     r.into()
+}
+
+fn central_vertical_wire<'a>(height: f32, color: Color, total_width: f32) -> Element<'a, Message> {
+    container(vertical_wire(height, color))
+        .width(Length::Fixed(total_width))
+        .align_x(Alignment::Center)
+        .into()
 }
 
 pub fn render_sfc_editor<'a>(
@@ -701,9 +760,10 @@ pub fn render_sfc_editor<'a>(
     // 2. Compute 2D Step Rows (Grouping AND/OR parallel branches)
     let step_rows = compute_sfc_step_rows(program);
     let max_cols = step_rows.iter().map(|r| r.len()).max().unwrap_or(1).max(2);
-    let total_canvas_width = (max_cols as f32) * COLUMN_STRIDE;
+    let total_canvas_width = ((max_cols as f32) * COLUMN_STRIDE).max(960.0);
+    let base_spine_x = total_canvas_width * 0.5;
 
-    let mut grafcet_flow = column![].spacing(0).align_x(Alignment::Center);
+    let mut grafcet_flow = column![].spacing(0).align_x(Alignment::Start);
     let mut rendered_transitions: HashSet<usize> = HashSet::new();
 
     for (r_idx, row_indices) in step_rows.iter().enumerate() {
@@ -722,37 +782,44 @@ pub fn render_sfc_editor<'a>(
         {
             rendered_transitions.insert(t_idx);
             // 1. Central incoming wire
-            grafcet_flow = grafcet_flow.push(vertical_wire(16.0, COLOR_INACTIVE_STEP));
+            grafcet_flow = grafcet_flow.push(central_vertical_wire(16.0, COLOR_INACTIVE_STEP, total_canvas_width));
             // 2. Transition node
-            let tr_node = render_transition_node(program, t_idx, runtime, &pou_name, lang, total_canvas_width);
+            let tr_node = render_transition_node(program, t_idx, runtime, &pou_name, lang, base_spine_x);
             grafcet_flow = grafcet_flow.push(container(tr_node).width(Length::Fixed(total_canvas_width)));
             // 3. Central wire down to double bar
-            grafcet_flow = grafcet_flow.push(vertical_wire(14.0, COLOR_INACTIVE_STEP));
+            grafcet_flow = grafcet_flow.push(central_vertical_wire(14.0, COLOR_INACTIVE_STEP, total_canvas_width));
             // 4. AND Divergence double horizontal bar spanning across the branch columns
-            let span = ((cols.saturating_sub(1)) as f32) * COLUMN_STRIDE;
-            let bar = and_double_bar("[AND Div ==]", span);
-            grafcet_flow = grafcet_flow.push(container(bar).padding([0, 10]));
+            let left_x = step_center_x(0, cols, base_spine_x, COLUMN_STRIDE);
+            let right_x = step_center_x(cols - 1, cols, base_spine_x, COLUMN_STRIDE);
+            let bar = and_double_bar("[AND Div ==]", left_x, right_x);
+            grafcet_flow = grafcet_flow.push(container(bar).width(Length::Fixed(total_canvas_width)));
             // 5. Drop wires into each column
-            grafcet_flow = grafcet_flow.push(render_drop_wires(cols, 16.0, COLOR_STEP_DROP));
+            let wires_container = container(render_drop_wires(cols, 16.0, COLOR_STEP_DROP))
+                .width(Length::Fixed(total_canvas_width))
+                .align_x(Alignment::Center);
+            grafcet_flow = grafcet_flow.push(wires_container);
         }
 
         // B. Render Steps in this Row: Side-by-side if multiple branches!
         if cols == 1 {
             let s_idx = row_indices[0];
-            let step_node = render_step_node(program, s_idx, runtime, &pou_name, lang);
+            let left_margin = step_box_left_margin(base_spine_x);
+            let step_node = render_step_node(program, s_idx, runtime, &pou_name, lang, left_margin);
             grafcet_flow = grafcet_flow.push(
                 container(step_node)
                     .width(Length::Fixed(total_canvas_width))
-                    .align_x(Alignment::Center),
+                    .align_x(Alignment::Start),
             );
         } else {
             let mut branch_row = row![].spacing(0).align_y(Alignment::Start);
+            let col_axis = COLUMN_STRIDE * 0.5;
+            let left_margin = step_box_left_margin(col_axis);
             for &s_idx in row_indices {
-                let step_node = render_step_node(program, s_idx, runtime, &pou_name, lang);
+                let step_node = render_step_node(program, s_idx, runtime, &pou_name, lang, left_margin);
                 branch_row = branch_row.push(
                     container(step_node)
                         .width(Length::Fixed(COLUMN_STRIDE))
-                        .align_x(Alignment::Center),
+                        .align_x(Alignment::Start),
                 );
             }
             grafcet_flow = grafcet_flow.push(
@@ -778,19 +845,23 @@ pub fn render_sfc_editor<'a>(
             if !rendered_transitions.contains(&t_idx) {
                 rendered_transitions.insert(t_idx);
                 // 1. Drop wires from each branch step into double bar
-                grafcet_flow = grafcet_flow.push(render_drop_wires(cols, 16.0, COLOR_INACTIVE_STEP));
+                let wires_container = container(render_drop_wires(cols, 16.0, COLOR_INACTIVE_STEP))
+                    .width(Length::Fixed(total_canvas_width))
+                    .align_x(Alignment::Center);
+                grafcet_flow = grafcet_flow.push(wires_container);
                 // 2. AND Convergence double horizontal bar
-                let span = ((cols.saturating_sub(1)) as f32) * COLUMN_STRIDE;
+                let left_x = step_center_x(0, cols, base_spine_x, COLUMN_STRIDE);
+                let right_x = step_center_x(cols - 1, cols, base_spine_x, COLUMN_STRIDE);
                 let conv_bar = if tr.convergence == ConvergenceKind::Or {
-                    or_single_bar("[OR Conv --]", span)
+                    or_single_bar("[OR Conv --]", left_x, right_x)
                 } else {
-                    and_double_bar("[AND Conv ==]", span)
+                    and_double_bar("[AND Conv ==]", left_x, right_x)
                 };
-                grafcet_flow = grafcet_flow.push(container(conv_bar).padding([0, 10]));
+                grafcet_flow = grafcet_flow.push(container(conv_bar).width(Length::Fixed(total_canvas_width)));
                 // 3. Central wire down to transition
-                grafcet_flow = grafcet_flow.push(vertical_wire(14.0, COLOR_INACTIVE_STEP));
+                grafcet_flow = grafcet_flow.push(central_vertical_wire(14.0, COLOR_INACTIVE_STEP, total_canvas_width));
                 // 4. Centered transition node
-                let tr_node = render_transition_node(program, t_idx, runtime, &pou_name, lang, total_canvas_width);
+                let tr_node = render_transition_node(program, t_idx, runtime, &pou_name, lang, base_spine_x);
                 grafcet_flow = grafcet_flow.push(container(tr_node).width(Length::Fixed(total_canvas_width)));
             }
             continue;
@@ -814,22 +885,26 @@ pub fn render_sfc_editor<'a>(
             // OR Divergence!
             let or_cols = outgoing.len();
             // 1. Central wire from step down to single purple bar
-            grafcet_flow = grafcet_flow.push(vertical_wire(16.0, COLOR_INACTIVE_STEP));
+            grafcet_flow = grafcet_flow.push(central_vertical_wire(16.0, COLOR_INACTIVE_STEP, total_canvas_width));
             // 2. OR Divergence single horizontal bar
-            let span = ((or_cols.saturating_sub(1)) as f32) * COLUMN_STRIDE;
-            let or_bar = or_single_bar("[OR Div --]", span);
-            grafcet_flow = grafcet_flow.push(container(or_bar).padding([0, 10]));
+            let left_x = step_center_x(0, or_cols, base_spine_x, COLUMN_STRIDE);
+            let right_x = step_center_x(or_cols - 1, or_cols, base_spine_x, COLUMN_STRIDE);
+            let or_bar = or_single_bar("[OR Div --]", left_x, right_x);
+            grafcet_flow = grafcet_flow.push(container(or_bar).width(Length::Fixed(total_canvas_width)));
             // 3. Drop wires into each alternate transition column
-            grafcet_flow = grafcet_flow.push(render_drop_wires(or_cols, 14.0, COLOR_OR_BRANCH));
+            let wires_container = container(render_drop_wires(or_cols, 14.0, COLOR_OR_BRANCH))
+                .width(Length::Fixed(total_canvas_width))
+                .align_x(Alignment::Center);
+            grafcet_flow = grafcet_flow.push(wires_container);
             // 4. Row of alternate transition columns
             let mut or_div_row = row![].spacing(0).align_y(Alignment::Center);
             for (ti, _) in &outgoing {
                 rendered_transitions.insert(*ti);
-                let tr_node = render_transition_node(program, *ti, runtime, &pou_name, lang, COLUMN_STRIDE);
+                let tr_node = render_transition_node(program, *ti, runtime, &pou_name, lang, COLUMN_STRIDE * 0.5);
                 or_div_row = or_div_row.push(
                     container(tr_node)
                         .width(Length::Fixed(COLUMN_STRIDE))
-                        .align_x(Alignment::Center),
+                        .align_x(Alignment::Start),
                 );
             }
             grafcet_flow = grafcet_flow.push(
@@ -838,14 +913,17 @@ pub fn render_sfc_editor<'a>(
                     .align_x(Alignment::Center),
             );
             // 5. Drop wires exiting transitions towards next row
-            grafcet_flow = grafcet_flow.push(render_drop_wires(or_cols, 16.0, COLOR_INACTIVE_STEP));
+            let wires_exit = container(render_drop_wires(or_cols, 16.0, COLOR_INACTIVE_STEP))
+                .width(Length::Fixed(total_canvas_width))
+                .align_x(Alignment::Center);
+            grafcet_flow = grafcet_flow.push(wires_exit);
         } else {
             for (ti, tr) in outgoing {
                 rendered_transitions.insert(ti);
                 // 1. Wire down from step
-                grafcet_flow = grafcet_flow.push(vertical_wire(16.0, COLOR_INACTIVE_STEP));
+                grafcet_flow = grafcet_flow.push(central_vertical_wire(16.0, COLOR_INACTIVE_STEP, total_canvas_width));
                 // 2. Centered transition node
-                let tr_node = render_transition_node(program, ti, runtime, &pou_name, lang, total_canvas_width);
+                let tr_node = render_transition_node(program, ti, runtime, &pou_name, lang, base_spine_x);
                 grafcet_flow = grafcet_flow.push(container(tr_node).width(Length::Fixed(total_canvas_width)));
 
                 // Check if this transition is a Loopback (targets a step in a previous row, e.g. X0)
@@ -857,7 +935,7 @@ pub fn render_sfc_editor<'a>(
 
                 if is_loopback {
                     let loop_targets = tr.to_steps.join(", ");
-                    grafcet_flow = grafcet_flow.push(vertical_wire(10.0, COLOR_ACTIVE_STEP));
+                    grafcet_flow = grafcet_flow.push(central_vertical_wire(10.0, COLOR_ACTIVE_STEP, total_canvas_width));
                     let loop_badge = container(
                         text(format!("▲ Loopback to X{loop_targets}"))
                             .size(10.5)
@@ -866,10 +944,14 @@ pub fn render_sfc_editor<'a>(
                     )
                     .padding([2, 8])
                     .style(StudioTheme::subtle_badge_style(Color::from_rgba(0.18, 0.835, 0.45, 0.15)));
-                    grafcet_flow = grafcet_flow.push(loop_badge);
+                    grafcet_flow = grafcet_flow.push(
+                        container(loop_badge)
+                            .width(Length::Fixed(total_canvas_width))
+                            .align_x(Alignment::Center),
+                    );
                 } else if tr.to_steps.len() <= 1 {
                     // Normal directed link into next step
-                    grafcet_flow = grafcet_flow.push(vertical_wire(16.0, COLOR_INACTIVE_STEP));
+                    grafcet_flow = grafcet_flow.push(central_vertical_wire(16.0, COLOR_INACTIVE_STEP, total_canvas_width));
                 }
             }
         }
@@ -888,7 +970,7 @@ pub fn render_sfc_editor<'a>(
         let mut unlinked_col = column![unlinked_header].spacing(6).align_x(Alignment::Center);
 
         for (ti, _) in remaining {
-            let tr_node = render_transition_node(program, ti, runtime, &pou_name, lang, total_canvas_width);
+            let tr_node = render_transition_node(program, ti, runtime, &pou_name, lang, base_spine_x);
             unlinked_col = unlinked_col.push(tr_node);
         }
 
@@ -926,4 +1008,104 @@ pub fn render_sfc_editor<'a>(
     .height(Length::Fill);
 
     main_scroll.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ferrite_lang_sfc::{ActionQualifier, SfcAction, SfcProgram, SfcStep, SfcTransition, StepKind};
+
+    #[test]
+    fn test_sfc_coordinate_grid_and_step_box_anchoring() {
+        let base_spine_x = 560.0_f32;
+        let col_stride = COLUMN_STRIDE;
+
+        // 1. Single-column row (cols = 1)
+        let cx_single = step_center_x(0, 1, base_spine_x, col_stride);
+        assert!((cx_single - base_spine_x).abs() < f32::EPSILON);
+
+        let left_margin_single = step_box_left_margin(cx_single);
+        let step_center_reconstructed = left_margin_single + STEP_BOX_WIDTH * 0.5;
+        assert!((step_center_reconstructed - base_spine_x).abs() < f32::EPSILON);
+
+        // 2. Parallel branches (cols = 2)
+        let cx_branch0 = step_center_x(0, 2, base_spine_x, col_stride);
+        let cx_branch1 = step_center_x(1, 2, base_spine_x, col_stride);
+
+        assert!((cx_branch0 - (base_spine_x - col_stride * 0.5)).abs() < f32::EPSILON);
+        assert!((cx_branch1 - (base_spine_x + col_stride * 0.5)).abs() < f32::EPSILON);
+
+        // Distance between branch centers must strictly equal COLUMN_STRIDE
+        let branch_dist = cx_branch1 - cx_branch0;
+        assert!((branch_dist - col_stride).abs() < f32::EPSILON);
+
+        // Midpoint of the two branches must strictly align with base_spine_x
+        let branch_midpoint = (cx_branch0 + cx_branch1) * 0.5;
+        assert!((branch_midpoint - base_spine_x).abs() < f32::EPSILON);
+
+        // Left margins within each column container of width COLUMN_STRIDE
+        let col_axis = col_stride * 0.5;
+        let left_margin_col = step_box_left_margin(col_axis);
+        assert!(((left_margin_col + STEP_BOX_WIDTH * 0.5) - col_axis).abs() < f32::EPSILON);
+
+        // 3. Verify step box left margin is deterministic and independent of actions
+        let mut program = SfcProgram {
+            name: "test_seq".to_string(),
+            comment: "Test sequence".to_string(),
+            steps: vec![
+                SfcStep {
+                    id: "0".to_string(),
+                    name: "Step_Init".to_string(),
+                    kind: StepKind::Initial,
+                    actions: vec![],
+                },
+                SfcStep {
+                    id: "1".to_string(),
+                    name: "Step_Busy".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![
+                        SfcAction {
+                            qualifier: ActionQualifier::N,
+                            target: "Motor_Run := TRUE".to_string(),
+                            duration: None,
+                        },
+                        SfcAction {
+                            qualifier: ActionQualifier::L,
+                            target: "Valve_Open".to_string(),
+                            duration: Some("T#5s".to_string()),
+                        },
+                    ],
+                },
+            ],
+            transitions: vec![SfcTransition {
+                id: "T0".to_string(),
+                from_steps: vec!["0".to_string()],
+                to_steps: vec!["1".to_string()],
+                receptivity: "Start_PB".to_string(),
+                convergence: ferrite_lang_sfc::ConvergenceKind::And,
+                divergence: ferrite_lang_sfc::DivergenceKind::And,
+            }],
+        };
+
+        // Render editor without panic
+        {
+            let _elem = render_sfc_editor(&program, None, UiLanguage::En);
+        }
+
+        // Adding more actions to step 1 does not change compute_sfc_step_rows or step centering
+        program.steps[1].actions.push(SfcAction {
+            qualifier: ActionQualifier::R,
+            target: "Alarm_Reset".to_string(),
+            duration: None,
+        });
+
+        let rows = compute_sfc_step_rows(&program);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], vec![0]);
+        assert_eq!(rows[1], vec![1]);
+
+        {
+            let _elem2 = render_sfc_editor(&program, None, UiLanguage::Fr);
+        }
+    }
 }
