@@ -77,6 +77,9 @@ pub enum Message {
     DockRightIo,
     DockBottomDock,
     WindowCloseRequested(iced::window::Id),
+    ConfirmCloseSaveAndExit,
+    ConfirmCloseDiscardAndExit,
+    ConfirmCloseCancel,
     WindowCreated(iced::window::Id),
     SetLanguage(UiLanguage),
     SetTheme(UiTheme),
@@ -628,12 +631,14 @@ impl FerriteStudioApp {
                 let (id, open_task) = iced::window::open(iced::window::Settings {
                     size: iced::Size::new(380.0, 800.0),
                     min_size: Some(iced::Size::new(260.0, 400.0)),
+                    exit_on_close_request: false,
                     ..Default::default()
                 });
                 self.detached_left_id = Some(id);
                 open_task.map(|_| Message::None)
             }
             Message::DockLeftExplorer => {
+                self.show_left_explorer = true;
                 self.detach_left_explorer = false;
                 if let Some(id) = self.detached_left_id.take() {
                     iced::window::close(id)
@@ -646,12 +651,14 @@ impl FerriteStudioApp {
                 let (id, open_task) = iced::window::open(iced::window::Settings {
                     size: iced::Size::new(460.0, 800.0),
                     min_size: Some(iced::Size::new(320.0, 400.0)),
+                    exit_on_close_request: false,
                     ..Default::default()
                 });
                 self.detached_right_id = Some(id);
                 open_task.map(|_| Message::None)
             }
             Message::DockRightIo => {
+                self.show_right_io = true;
                 self.detach_right_io = false;
                 if let Some(id) = self.detached_right_id.take() {
                     iced::window::close(id)
@@ -664,12 +671,14 @@ impl FerriteStudioApp {
                 let (id, open_task) = iced::window::open(iced::window::Settings {
                     size: iced::Size::new(1100.0, 420.0),
                     min_size: Some(iced::Size::new(600.0, 250.0)),
+                    exit_on_close_request: false,
                     ..Default::default()
                 });
                 self.detached_bottom_id = Some(id);
                 open_task.map(|_| Message::None)
             }
             Message::DockBottomDock => {
+                self.show_bottom_dock = true;
                 self.detach_bottom_dock = false;
                 if let Some(id) = self.detached_bottom_id.take() {
                     iced::window::close(id)
@@ -679,18 +688,21 @@ impl FerriteStudioApp {
             }
             Message::WindowCloseRequested(id) => {
                 if Some(id) == self.detached_left_id {
+                    self.show_left_explorer = true;
                     self.detach_left_explorer = false;
                     self.detached_left_id = None;
                     iced::window::close(id)
                 } else if Some(id) == self.detached_right_id {
+                    self.show_right_io = true;
                     self.detach_right_io = false;
                     self.detached_right_id = None;
                     iced::window::close(id)
                 } else if Some(id) == self.detached_bottom_id {
+                    self.show_bottom_dock = true;
                     self.detach_bottom_dock = false;
                     self.detached_bottom_id = None;
                     iced::window::close(id)
-                } else if Some(id) == self.main_window_id {
+                } else if Some(id) == self.main_window_id || self.main_window_id.is_none() {
                     if self.modified && !self.allowed_to_close {
                         self.show_close_confirm_modal = true;
                         Task::none()
@@ -700,6 +712,23 @@ impl FerriteStudioApp {
                 } else {
                     iced::window::close(id)
                 }
+            }
+            Message::ConfirmCloseSaveAndExit => {
+                let root = self.project.root_dir.clone();
+                let _ = self.project.save(&root);
+                self.modified = false;
+                self.allowed_to_close = true;
+                self.show_close_confirm_modal = false;
+                iced::exit()
+            }
+            Message::ConfirmCloseDiscardAndExit => {
+                self.allowed_to_close = true;
+                self.show_close_confirm_modal = false;
+                iced::exit()
+            }
+            Message::ConfirmCloseCancel => {
+                self.show_close_confirm_modal = false;
+                Task::none()
             }
             Message::WindowCreated(_id) => Task::none(),
             Message::SetLanguage(lang) => {
@@ -1622,6 +1651,55 @@ impl FerriteStudioApp {
                 ..Default::default()
             })
             .into();
+
+        if self.show_close_confirm_modal {
+            let modal_content = container(
+                column![
+                    text(self.ui_lang.tr("Unsaved Changes", "Modifications non enregistrées")).size(16),
+                    text(self.ui_lang.tr(
+                        "You have unsaved changes in your project. Do you want to save before closing?",
+                        "Vous avez des modifications non enregistrées. Voulez-vous enregistrer avant de quitter ?"
+                    ))
+                    .size(13)
+                    .color(StudioTheme::TEXT_SECONDARY),
+                    row![
+                        button(text(self.ui_lang.tr("Save & Exit", "Enregistrer & Quitter")).size(12))
+                            .on_press(Message::ConfirmCloseSaveAndExit)
+                            .style(StudioTheme::primary_button)
+                            .padding([6, 12]),
+                        button(text(self.ui_lang.tr("Discard", "Ignorer")).size(12))
+                            .on_press(Message::ConfirmCloseDiscardAndExit)
+                            .style(StudioTheme::danger_button)
+                            .padding([6, 12]),
+                        button(text(self.ui_lang.tr("Cancel", "Annuler")).size(12))
+                            .on_press(Message::ConfirmCloseCancel)
+                            .style(StudioTheme::secondary_button)
+                            .padding([6, 12]),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                ]
+                .spacing(16),
+            )
+            .padding(20)
+            .style(StudioTheme::modal_card_style)
+            .width(460);
+
+            return container(
+                container(modal_content)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.65))),
+                ..Default::default()
+            })
+            .into();
+        }
 
         if let Some(ref pou_name) = self.confirm_clear_modal {
             let p_name = pou_name.clone();

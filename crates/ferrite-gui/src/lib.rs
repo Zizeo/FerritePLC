@@ -62,6 +62,7 @@ pub fn run_gui_with_lang(initial_path: Option<PathBuf>, lang: UiLanguage) -> Res
     let (main_id, main_open_task) = iced::window::open(iced::window::Settings {
         size: iced::Size::new(1440.0, 880.0),
         min_size: Some(iced::Size::new(1024.0, 680.0)),
+        exit_on_close_request: false,
         ..Default::default()
     });
     app.main_window_id = Some(main_id);
@@ -98,6 +99,7 @@ mod tests {
         assert!(app.diagnostics.is_empty());
         assert!(app.runtime.is_some());
         assert!(!app.detach_left_explorer);
+        assert!(app.show_left_explorer);
         assert!(!app.detach_right_io);
         assert!(!app.detach_bottom_dock);
         app.detach_left_explorer = true;
@@ -486,6 +488,7 @@ mod tests {
 
         // 1. Verify Detach & Dock Lifecycle for Left Explorer
         assert!(!app.detach_left_explorer);
+        assert!(app.show_left_explorer);
         assert!(app.detached_left_id.is_none());
         let _ = app.update(Message::DetachLeftExplorer);
         assert!(app.detach_left_explorer);
@@ -494,6 +497,7 @@ mod tests {
         // Check window close request docks back
         let _ = app.update(Message::WindowCloseRequested(left_id));
         assert!(!app.detach_left_explorer);
+        assert!(app.show_left_explorer);
         assert!(app.detached_left_id.is_none());
 
         // 2. Verify Detach & Dock Lifecycle for Right I/O
