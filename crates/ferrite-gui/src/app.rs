@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 use iced::widget::{
     button, column, container, pick_list, row, scrollable, text, text_editor, text_input,
 };
-use iced::{Alignment, Background, Color, Element, Length, Task, Theme};
+use iced::border::Radius;
+use iced::{Alignment, Background, Border, Color, Element, Length, Task, Theme};
 
 use ferrite_core::{DirectAddress, FbInstance, IecType, IecValue, LanguageKind, MemoryArea, ProcessImage, RuntimeError, StandardFbKind, TagEntry};
 use ferrite_fieldbus_modbus::{ModbusRequest, ModbusResponse, ModbusTcpClient, ModbusTcpServer};
@@ -13,7 +14,7 @@ use ferrite_hal::{create_hardware_driver, GpioHalConfig, HardwareDriver};
 use ferrite_ir::ValidationDiagnostic;
 use ferrite_lang_fbd::{FbdBlock, FbdBlockKind, FbdInputSource};
 use ferrite_lang_ld::{CoilKind, ContactKind, LdCoil, LdElement, LdRung};
-use ferrite_lang_sfc::{ActionQualifier, SfcAction, SfcStep, SfcTransition, StepKind};
+use ferrite_lang_sfc::{ActionQualifier, ConvergenceKind, DivergenceKind, SfcAction, SfcStep, SfcTransition, StepKind};
 use ferrite_lang_st::parse_st_statements;
 use ferrite_project::{PouSource, Project};
 use ferrite_runtime::{PlcRuntime, ScanTelemetry};
@@ -69,6 +70,14 @@ pub enum Message {
     ToggleLeftExplorer,
     ToggleRightIo,
     ToggleBottomDock,
+    DetachLeftExplorer,
+    DetachRightIo,
+    DetachBottomDock,
+    DockLeftExplorer,
+    DockRightIo,
+    DockBottomDock,
+    WindowCloseRequested(iced::window::Id),
+    WindowCreated(iced::window::Id),
     SetLanguage(UiLanguage),
     SetTheme(UiTheme),
 
@@ -142,10 +151,12 @@ pub enum Message {
     LdRemoveRung(String, usize),
     LdRungCommentChanged(String, usize, String),
     LdAddContact(String, usize),
+    LdAddContactWithKind(String, usize, ContactKind),
     LdRemoveContact(String, usize, usize),
     LdContactSymbolChanged(String, usize, usize, String),
     LdContactKindChanged(String, usize, usize, ContactKind),
     LdAddCoil(String, usize),
+    LdAddCoilWithKind(String, usize, CoilKind),
     LdRemoveCoil(String, usize, usize),
     LdCoilSymbolChanged(String, usize, usize, String),
     LdCoilKindChanged(String, usize, usize, CoilKind),
@@ -164,6 +175,11 @@ pub enum Message {
     SfcTransitionReceptivityChanged(String, usize, String),
     SfcTransitionFromChanged(String, usize, String),
     SfcTransitionToChanged(String, usize, String),
+    SfcAddAndDivergence(String),
+    SfcAddAndConvergence(String),
+    SfcAddOrDivergence(String),
+    SfcAddOrConvergence(String),
+    ToggleForceTag(String),
 
     // Function Block Diagram (FBD)
     FbdAddBlock(String, FbdBlockKind),
@@ -199,6 +215,10 @@ pub struct FerriteStudioApp {
     pub detach_left_explorer: bool,
     pub detach_right_io: bool,
     pub detach_bottom_dock: bool,
+    pub main_window_id: Option<iced::window::Id>,
+    pub detached_left_id: Option<iced::window::Id>,
+    pub detached_right_id: Option<iced::window::Id>,
+    pub detached_bottom_id: Option<iced::window::Id>,
     pub show_close_confirm_modal: bool,
     pub allowed_to_close: bool,
     pub undo_stack: Vec<Project>,
@@ -303,6 +323,10 @@ impl FerriteStudioApp {
             detach_left_explorer: false,
             detach_right_io: false,
             detach_bottom_dock: false,
+            main_window_id: None,
+            detached_left_id: None,
+            detached_right_id: None,
+            detached_bottom_id: None,
             show_close_confirm_modal: false,
             allowed_to_close: false,
             undo_stack: Vec::new(),
@@ -328,11 +352,20 @@ impl FerriteStudioApp {
         }
     }
 
-    pub fn title(&self) -> String {
+    pub fn title(&self, window_id: iced::window::Id) -> String {
+        if Some(window_id) == self.detached_left_id {
+            return self.ui_lang.tr("FerritePLC — Project Explorer", "FerritePLC — Explorateur de Projet").to_string();
+        }
+        if Some(window_id) == self.detached_right_id {
+            return self.ui_lang.tr("FerritePLC — Virtual I/O Rack & Watch Table", "FerritePLC — Baie E/S Virtuelle & Forçage").to_string();
+        }
+        if Some(window_id) == self.detached_bottom_id {
+            return self.ui_lang.tr("FerritePLC — Diagnostics & Telemetry Dock", "FerritePLC — Panneau Diagnostics & Télémétrie").to_string();
+        }
         format!("FerritePLC Studio — {}", self.project.manifest.name)
     }
 
-    pub fn theme(&self) -> Theme {
+    pub fn theme(&self, _window_id: iced::window::Id) -> Theme {
         match self.ui_theme {
             UiTheme::Dark => Theme::Dark,
             UiTheme::Light => Theme::Light,
@@ -340,12 +373,14 @@ impl FerriteStudioApp {
     }
 
     pub fn subscription(&self) -> iced::Subscription<Message> {
-        if self.sim_running {
+        let close_sub = iced::window::close_requests().map(Message::WindowCloseRequested);
+        let tick_sub = if self.sim_running {
             let period = Duration::from_millis(self.project.manifest.scan_cycle_ms.max(5));
             iced::time::every(period).map(|_| Message::PlcTickTimer)
         } else {
             iced::Subscription::none()
-        }
+        };
+        iced::Subscription::batch([close_sub, tick_sub])
     }
 
     pub fn track_history(&mut self) {
@@ -587,6 +622,85 @@ impl FerriteStudioApp {
                 self.show_bottom_dock = !self.show_bottom_dock;
                 Task::none()
             }
+            Message::DetachLeftExplorer => {
+                self.detach_left_explorer = true;
+                let (id, open_task) = iced::window::open(iced::window::Settings {
+                    size: iced::Size::new(380.0, 800.0),
+                    min_size: Some(iced::Size::new(260.0, 400.0)),
+                    ..Default::default()
+                });
+                self.detached_left_id = Some(id);
+                open_task.map(|_| Message::None)
+            }
+            Message::DockLeftExplorer => {
+                self.detach_left_explorer = false;
+                if let Some(id) = self.detached_left_id.take() {
+                    iced::window::close(id)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::DetachRightIo => {
+                self.detach_right_io = true;
+                let (id, open_task) = iced::window::open(iced::window::Settings {
+                    size: iced::Size::new(460.0, 800.0),
+                    min_size: Some(iced::Size::new(320.0, 400.0)),
+                    ..Default::default()
+                });
+                self.detached_right_id = Some(id);
+                open_task.map(|_| Message::None)
+            }
+            Message::DockRightIo => {
+                self.detach_right_io = false;
+                if let Some(id) = self.detached_right_id.take() {
+                    iced::window::close(id)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::DetachBottomDock => {
+                self.detach_bottom_dock = true;
+                let (id, open_task) = iced::window::open(iced::window::Settings {
+                    size: iced::Size::new(1100.0, 420.0),
+                    min_size: Some(iced::Size::new(600.0, 250.0)),
+                    ..Default::default()
+                });
+                self.detached_bottom_id = Some(id);
+                open_task.map(|_| Message::None)
+            }
+            Message::DockBottomDock => {
+                self.detach_bottom_dock = false;
+                if let Some(id) = self.detached_bottom_id.take() {
+                    iced::window::close(id)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::WindowCloseRequested(id) => {
+                if Some(id) == self.detached_left_id {
+                    self.detach_left_explorer = false;
+                    self.detached_left_id = None;
+                    iced::window::close(id)
+                } else if Some(id) == self.detached_right_id {
+                    self.detach_right_io = false;
+                    self.detached_right_id = None;
+                    iced::window::close(id)
+                } else if Some(id) == self.detached_bottom_id {
+                    self.detach_bottom_dock = false;
+                    self.detached_bottom_id = None;
+                    iced::window::close(id)
+                } else if Some(id) == self.main_window_id {
+                    if self.modified && !self.allowed_to_close {
+                        self.show_close_confirm_modal = true;
+                        Task::none()
+                    } else {
+                        iced::exit()
+                    }
+                } else {
+                    iced::window::close(id)
+                }
+            }
+            Message::WindowCreated(_id) => Task::none(),
             Message::SetLanguage(lang) => {
                 self.ui_lang = lang;
                 Task::none()
@@ -992,6 +1106,24 @@ impl FerriteStudioApp {
                     }
                 Task::none()
             }
+            Message::LdAddContactWithKind(pou_name, r_idx, kind) => {
+                if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(rung) = ld.rungs.get_mut(r_idx) {
+                        let sym = match kind {
+                            ContactKind::NormallyOpen => "Sensor_1".to_string(),
+                            ContactKind::NormallyClosed => "High_Temp_Alarm".to_string(),
+                            ContactKind::RisingEdge => "Start_Button".to_string(),
+                            ContactKind::FallingEdge => "Stop_Button".to_string(),
+                        };
+                        rung.elements.push(LdElement::Contact {
+                            symbol: sym,
+                            kind,
+                        });
+                        self.track_history();
+                        self.modified = true;
+                    }
+                Task::none()
+            }
             Message::LdRemoveContact(pou_name, r_idx, e_idx) => {
                 if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
                     && let Some(rung) = ld.rungs.get_mut(r_idx)
@@ -1028,6 +1160,18 @@ impl FerriteStudioApp {
                         rung.coils.push(LdCoil {
                             symbol: "Output_1".to_string(),
                             kind: CoilKind::Normal,
+                        });
+                        self.track_history();
+                        self.modified = true;
+                    }
+                Task::none()
+            }
+            Message::LdAddCoilWithKind(pou_name, r_idx, kind) => {
+                if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(rung) = ld.rungs.get_mut(r_idx) {
+                        rung.coils.push(LdCoil {
+                            symbol: "Permissive_OK".to_string(),
+                            kind,
                         });
                         self.track_history();
                         self.modified = true;
@@ -1200,6 +1344,143 @@ impl FerriteStudioApp {
                     }
                 Task::none()
             }
+            Message::SfcAddAndDivergence(pou_name) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                    let src_id = sfc.steps.last().map(|s| s.id.clone()).unwrap_or_else(|| "0".to_string());
+                    let id_a = sfc.steps.len().to_string();
+                    let id_b = (sfc.steps.len() + 1).to_string();
+                    sfc.steps.push(SfcStep {
+                        id: id_a.clone(),
+                        name: format!("Branch_{id_a}"),
+                        kind: StepKind::Normal,
+                        actions: vec![],
+                    });
+                    sfc.steps.push(SfcStep {
+                        id: id_b.clone(),
+                        name: format!("Branch_{id_b}"),
+                        kind: StepKind::Normal,
+                        actions: vec![],
+                    });
+                    let next_t = sfc.transitions.len() + 1;
+                    sfc.transitions.push(SfcTransition {
+                        id: format!("T{next_t}_AndDiv"),
+                        from_steps: vec![src_id],
+                        to_steps: vec![id_a, id_b],
+                        receptivity: "TRUE".to_string(),
+                        convergence: ConvergenceKind::And,
+                        divergence: DivergenceKind::And,
+                    });
+                    self.track_history();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::SfcAddAndConvergence(pou_name) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name)
+                    && sfc.steps.len() >= 2 {
+                        let len = sfc.steps.len();
+                        let from_a = sfc.steps[len - 2].id.clone();
+                        let from_b = sfc.steps[len - 1].id.clone();
+                        let join_id = len.to_string();
+                        sfc.steps.push(SfcStep {
+                            id: join_id.clone(),
+                            name: format!("Step_Join_{join_id}"),
+                            kind: StepKind::Normal,
+                            actions: vec![],
+                        });
+                        let next_t = sfc.transitions.len() + 1;
+                        sfc.transitions.push(SfcTransition {
+                            id: format!("T{next_t}_AndConv"),
+                            from_steps: vec![from_a, from_b],
+                            to_steps: vec![join_id],
+                            receptivity: "TRUE".to_string(),
+                            convergence: ConvergenceKind::And,
+                            divergence: DivergenceKind::And,
+                        });
+                        self.track_history();
+                        self.modified = true;
+                    }
+                Task::none()
+            }
+            Message::SfcAddOrDivergence(pou_name) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                    let src_id = sfc.steps.last().map(|s| s.id.clone()).unwrap_or_else(|| "0".to_string());
+                    let id_a = sfc.steps.len().to_string();
+                    let id_b = (sfc.steps.len() + 1).to_string();
+                    sfc.steps.push(SfcStep {
+                        id: id_a.clone(),
+                        name: format!("Alt_{id_a}"),
+                        kind: StepKind::Normal,
+                        actions: vec![],
+                    });
+                    sfc.steps.push(SfcStep {
+                        id: id_b.clone(),
+                        name: format!("Alt_{id_b}"),
+                        kind: StepKind::Normal,
+                        actions: vec![],
+                    });
+                    let t1 = sfc.transitions.len() + 1;
+                    let t2 = t1 + 1;
+                    sfc.transitions.push(SfcTransition {
+                        id: format!("T{t1}_OrA"),
+                        from_steps: vec![src_id.clone()],
+                        to_steps: vec![id_a],
+                        receptivity: "TRUE".to_string(),
+                        convergence: ConvergenceKind::And,
+                        divergence: DivergenceKind::Or,
+                    });
+                    sfc.transitions.push(SfcTransition {
+                        id: format!("T{t2}_OrB"),
+                        from_steps: vec![src_id],
+                        to_steps: vec![id_b],
+                        receptivity: "FALSE".to_string(),
+                        convergence: ConvergenceKind::And,
+                        divergence: DivergenceKind::Or,
+                    });
+                    self.track_history();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::SfcAddOrConvergence(pou_name) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name)
+                    && sfc.steps.len() >= 2 {
+                        let len = sfc.steps.len();
+                        let from_a = sfc.steps[len - 2].id.clone();
+                        let from_b = sfc.steps[len - 1].id.clone();
+                        let join_id = len.to_string();
+                        sfc.steps.push(SfcStep {
+                            id: join_id.clone(),
+                            name: format!("Step_Merge_{join_id}"),
+                            kind: StepKind::Normal,
+                            actions: vec![],
+                        });
+                        let next_t = sfc.transitions.len() + 1;
+                        sfc.transitions.push(SfcTransition {
+                            id: format!("T{next_t}_OrConv"),
+                            from_steps: vec![from_a, from_b],
+                            to_steps: vec![join_id],
+                            receptivity: "TRUE".to_string(),
+                            convergence: ConvergenceKind::Or,
+                            divergence: DivergenceKind::And,
+                        });
+                        self.track_history();
+                        self.modified = true;
+                    }
+                Task::none()
+            }
+            Message::ToggleForceTag(tag_name) => {
+                if let Some(rt) = &mut self.runtime {
+                    let cur = rt.read_value(&tag_name).ok().and_then(|v| v.as_bool().ok()).unwrap_or(false);
+                    let next = IecValue::Bool(!cur);
+                    let _ = rt.force(&tag_name, next.clone());
+                    if let Ok(mut snap) = self.shared_io.write() {
+                        snap.values.insert(tag_name.clone(), next.clone());
+                        snap.request_write(&tag_name, next);
+                    }
+                }
+                Task::none()
+            }
             Message::FbdAddBlock(pou_name, kind) => {
                 if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name) {
                     let next = fbd.blocks.len() + 1;
@@ -1269,7 +1550,11 @@ impl FerriteStudioApp {
                         };
                         let next_val = IecValue::Bool(!cur_val);
                         if let Ok(mut lock) = self.shared_io.write() {
-                            lock.request_write(&binding.variable_id, next_val);
+                            lock.request_write(&binding.variable_id, next_val.clone());
+                            lock.values.insert(binding.variable_id.clone(), next_val.clone());
+                        }
+                        if let Some(rt) = &mut self.runtime {
+                            let _ = rt.force(&binding.variable_id, next_val);
                         }
                     }
                 Task::none()
@@ -1277,18 +1562,31 @@ impl FerriteStudioApp {
         }
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view<'a>(&'a self, window_id: iced::window::Id) -> Element<'a, Message> {
+        if Some(window_id) == self.detached_left_id {
+            return self.view_detached_left();
+        }
+        if Some(window_id) == self.detached_right_id {
+            return self.view_detached_right();
+        }
+        if Some(window_id) == self.detached_bottom_id {
+            return self.view_detached_bottom();
+        }
+        self.view_main()
+    }
+
+    pub fn view_main(&self) -> Element<'_, Message> {
         let header = self.view_header();
 
         let mut body_row = row![];
 
-        if self.show_left_explorer {
+        if self.show_left_explorer && !self.detach_left_explorer {
             body_row = body_row.push(self.view_left_explorer());
         }
 
         body_row = body_row.push(self.view_center_workspace());
 
-        if self.show_right_io {
+        if self.show_right_io && !self.detach_right_io {
             body_row = body_row.push(self.view_right_io());
         }
 
@@ -1298,7 +1596,7 @@ impl FerriteStudioApp {
 
         let mut root_col = column![header, main_area];
 
-        if self.show_bottom_dock {
+        if self.show_bottom_dock && !self.detach_bottom_dock {
             root_col = root_col.push(self.view_bottom_dock());
         }
 
@@ -1376,12 +1674,12 @@ impl FerriteStudioApp {
 
         let telemetry_pill = container(
             row![
-                text("●").size(12).color(status_dot_color),
+                container(iced::widget::Space::with_width(Length::Fixed(8.0))).height(Length::Fixed(8.0)).style(move |_theme: &Theme| container::Style { background: Some(Background::Color(status_dot_color)), border: Border { radius: Radius::from(4.0), ..Default::default() }, ..Default::default() }),
                 text(if self.sim_running { "RUN" } else { "PAUSED" })
                     .size(11)
                     .color(status_dot_color),
                 text("|").size(11).color(StudioTheme::BORDER_CARD),
-                text(format!("#{scan_count}  {time_ms}ms  {duration_us}µs"))
+                text(format!("#{scan_count}  {time_ms}ms  {duration_us}us"))
                     .size(11)
                     .color(StudioTheme::TEXT_SECONDARY),
             ]
@@ -1495,6 +1793,60 @@ impl FerriteStudioApp {
     }
 
     fn view_left_explorer(&self) -> Element<'_, Message> {
+        let header = row![
+            text(self.ui_lang.tr("EXPLORER", "EXPLORATEUR"))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED),
+            iced::widget::Space::with_width(Length::Fill),
+            button(text(self.ui_lang.tr("⧉ Detach", "⧉ Détacher")).size(10.5))
+                .on_press(Message::DetachLeftExplorer)
+                .style(StudioTheme::ghost_button)
+                .padding([1, 4]),
+        ]
+        .align_y(Alignment::Center);
+
+        container(
+            column![
+                header,
+                self.view_left_explorer_body(),
+            ]
+            .spacing(10)
+            .padding(14),
+        )
+        .width(260)
+        .height(Length::Fill)
+        .style(StudioTheme::sidebar_container_style)
+        .into()
+    }
+
+    fn view_detached_left(&self) -> Element<'_, Message> {
+        let header = row![
+            text(self.ui_lang.tr("Project Explorer", "Explorateur de Projet")).size(15),
+            iced::widget::Space::with_width(Length::Fill),
+            button(text(self.ui_lang.tr("⬇ Reattach", "⬇ Réattacher")).size(11))
+                .on_press(Message::DockLeftExplorer)
+                .style(StudioTheme::secondary_button)
+                .padding([4, 8]),
+        ]
+        .padding([8, 14])
+        .align_y(Alignment::Center);
+
+        let content = container(self.view_left_explorer_body())
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        container(column![header, content].spacing(0))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(StudioTheme::BG_BASE)),
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn view_left_explorer_body(&self) -> Element<'_, Message> {
         let filter_input = text_input(
             self.ui_lang.tr("Filter POUs...", "Filtrer POU..."),
             &self.pou_filter_text,
@@ -1563,7 +1915,9 @@ impl FerriteStudioApp {
         let is_sym_active = self.active_tab == WorkspaceTab::SymbolsAndConfig;
         let sym_btn = button(
             row![
-                text("⚙").size(12).color(StudioTheme::ACCENT_CYAN),
+                container(text("CFG").size(9).color(StudioTheme::ACCENT_CYAN))
+                    .padding([2, 5])
+                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.220, 0.741, 0.973, 0.12))),
                 text(self.ui_lang.tr("Symbols & Config", "Symboles & Config")).size(12),
             ]
             .spacing(8)
@@ -1577,7 +1931,9 @@ impl FerriteStudioApp {
         let is_twin_active = self.active_tab == WorkspaceTab::DigitalTwin;
         let twin_btn = button(
             row![
-                text("🌐").size(12).color(StudioTheme::ACCENT_EMERALD),
+                container(text("2D").size(9).color(StudioTheme::ACCENT_EMERALD))
+                    .padding([2, 5])
+                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15))),
                 text(self.ui_lang.tr("Digital Twin 2D", "Jumeau Numérique 2D")).size(12),
             ]
             .spacing(8)
@@ -1588,31 +1944,76 @@ impl FerriteStudioApp {
         .width(Length::Fill)
         .padding([6, 10]);
 
+        column![
+            filter_input,
+            scrollable(pou_list).height(Length::Fill),
+            text(self.ui_lang.tr("+ Add POU", "+ Ajouter POU"))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED),
+            add_pou_row,
+            iced::widget::Space::with_height(8),
+            sym_btn,
+            twin_btn,
+        ]
+        .spacing(8)
+        .into()
+    }
+
+    fn view_right_io(&self) -> Element<'_, Message> {
+        let header = row![
+            text(self.ui_lang.tr("PROCESS IMAGE & I/O", "IMAGE MÉMOIRE & E/S"))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED),
+            iced::widget::Space::with_width(Length::Fill),
+            button(text(self.ui_lang.tr("⧉ Detach", "⧉ Détacher")).size(10.5))
+                .on_press(Message::DetachRightIo)
+                .style(StudioTheme::ghost_button)
+                .padding([1, 4]),
+        ]
+        .align_y(Alignment::Center);
+
         container(
             column![
-                text(self.ui_lang.tr("EXPLORER", "EXPLORATEUR"))
-                    .size(11)
-                    .color(StudioTheme::TEXT_MUTED),
-                filter_input,
-                scrollable(pou_list).height(Length::Fill),
-                text(self.ui_lang.tr("+ Add POU", "+ Ajouter POU"))
-                    .size(11)
-                    .color(StudioTheme::TEXT_MUTED),
-                add_pou_row,
-                iced::widget::Space::with_height(8),
-                sym_btn,
-                twin_btn,
+                header,
+                self.view_right_io_body(),
             ]
             .spacing(10)
             .padding(14),
         )
-        .width(240)
+        .width(280)
         .height(Length::Fill)
         .style(StudioTheme::sidebar_container_style)
         .into()
     }
 
-    fn view_right_io(&self) -> Element<'_, Message> {
+    fn view_detached_right(&self) -> Element<'_, Message> {
+        let header = row![
+            text(self.ui_lang.tr("Virtual I/O Rack & Watch Table", "Baie E/S Virtuelle & Table de Forçage")).size(15),
+            iced::widget::Space::with_width(Length::Fill),
+            button(text(self.ui_lang.tr("⬇ Reattach", "⬇ Réattacher")).size(11))
+                .on_press(Message::DockRightIo)
+                .style(StudioTheme::secondary_button)
+                .padding([4, 8]),
+        ]
+        .padding([8, 14])
+        .align_y(Alignment::Center);
+
+        let content = container(self.view_right_io_body())
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        container(column![header, content].spacing(0))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(StudioTheme::BG_BASE)),
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn view_right_io_body(&self) -> Element<'_, Message> {
         let filter_input = text_input(
             self.ui_lang.tr("Filter tags...", "Filtrer variables..."),
             &self.io_filter_text,
@@ -1660,13 +2061,13 @@ impl FerriteStudioApp {
                     tag.current_value().clone()
                 };
 
-                let addr_str = tag.address.map(|a| a.to_string()).unwrap_or_else(|| "—".to_string());
+                let addr_str = tag.address.map(|a| a.to_string()).unwrap_or_else(|| "-".to_string());
                 let t_name = tag.name.clone();
 
-                let interactive_val: Element<'_, Message> = match (&val, tag.address) {
-                    (IecValue::Bool(b), Some(addr)) => {
+                let interactive_val: Element<'_, Message> = match &val {
+                    IecValue::Bool(b) => {
                         button(text(if *b { "TRUE" } else { "FALSE" }).size(11))
-                            .on_press(Message::ToggleForceBool(t_name, addr))
+                            .on_press(Message::ToggleForceTag(t_name))
                             .style(if *b { StudioTheme::success_button } else { StudioTheme::secondary_button })
                             .padding([2, 8])
                             .into()
@@ -1697,21 +2098,12 @@ impl FerriteStudioApp {
             }
         }
 
-        container(
-            column![
-                text(self.ui_lang.tr("PROCESS IMAGE & I/O", "IMAGE MÉMOIRE & E/S"))
-                    .size(11)
-                    .color(StudioTheme::TEXT_MUTED),
-                filter_input,
-                area_selectors,
-                scrollable(tags_list).height(Length::Fill),
-            ]
-            .spacing(10)
-            .padding(14),
-        )
-        .width(260)
-        .height(Length::Fill)
-        .style(StudioTheme::sidebar_container_style)
+        column![
+            filter_input,
+            area_selectors,
+            scrollable(tags_list).height(Length::Fill),
+        ]
+        .spacing(8)
         .into()
     }
 
@@ -1754,8 +2146,20 @@ impl FerriteStudioApp {
             .into()
     }
 
-    fn view_bottom_dock(&self) -> Element<'_, Message> {
-        let tabs = row![
+    fn view_bottom_dock_tabs(&self, is_detached: bool) -> Element<'_, Message> {
+        let detach_btn = if is_detached {
+            button(text(self.ui_lang.tr("⬇ Reattach", "⬇ Réattacher")).size(11))
+                .on_press(Message::DockBottomDock)
+                .style(StudioTheme::secondary_button)
+                .padding([4, 8])
+        } else {
+            button(text(self.ui_lang.tr("⧉ Detach", "⧉ Détacher")).size(10.5))
+                .on_press(Message::DetachBottomDock)
+                .style(StudioTheme::ghost_button)
+                .padding([2, 5])
+        };
+
+        row![
             button(text(self.ui_lang.tr("Diagnostics", "Diagnostics")).size(11))
                 .on_press(Message::SelectBottomTab(BottomDockTab::Diagnostics))
                 .style(StudioTheme::tab_button(self.bottom_dock_tab == BottomDockTab::Diagnostics))
@@ -1776,10 +2180,56 @@ impl FerriteStudioApp {
                 .on_press(Message::SelectBottomTab(BottomDockTab::Gpio))
                 .style(StudioTheme::tab_button(self.bottom_dock_tab == BottomDockTab::Gpio))
                 .padding([4, 10]),
+            iced::widget::Space::with_width(Length::Fill),
+            detach_btn,
         ]
-        .spacing(6);
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into()
+    }
 
-        let dock_content: Element<'_, Message> = match self.bottom_dock_tab {
+    fn view_bottom_dock(&self) -> Element<'_, Message> {
+        let tabs = self.view_bottom_dock_tabs(false);
+        container(
+            column![
+                tabs,
+                self.view_bottom_dock_content(),
+            ]
+            .spacing(10)
+            .padding([8, 16]),
+        )
+        .style(StudioTheme::header_container_style)
+        .width(Length::Fill)
+        .height(180)
+        .into()
+    }
+
+    fn view_detached_bottom(&self) -> Element<'_, Message> {
+        let tabs = self.view_bottom_dock_tabs(true);
+        let content = container(self.view_bottom_dock_content())
+            .padding([8, 16])
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        container(
+            column![
+                tabs,
+                content,
+            ]
+            .spacing(10)
+            .padding([8, 16]),
+        )
+        .style(move |_| container::Style {
+            background: Some(Background::Color(StudioTheme::BG_BASE)),
+            ..Default::default()
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn view_bottom_dock_content(&self) -> Element<'_, Message> {
+        match self.bottom_dock_tab {
             BottomDockTab::Diagnostics => {
                 let mut diag_list = column![].spacing(6);
                 if self.diagnostics.is_empty() && self.scenario_logs.is_empty() {
@@ -1844,9 +2294,9 @@ impl FerriteStudioApp {
             }
             BottomDockTab::Modbus => {
                 let status_str = if self.modbus_server.is_some() {
-                    format!("● RUNNING on port {}", self.modbus_port)
+                    format!("[RUNNING] on port {}", self.modbus_port)
                 } else {
-                    "○ STOPPED".to_string()
+                    "[STOPPED]".to_string()
                 };
 
                 let res_log = self.modbus_last_test_result.as_deref().unwrap_or("No tests executed yet.");
@@ -1900,19 +2350,6 @@ impl FerriteStudioApp {
                 .spacing(12)
                 .into()
             }
-        };
-
-        container(
-            column![
-                tabs,
-                dock_content,
-            ]
-            .spacing(10)
-            .padding([8, 16]),
-        )
-        .style(StudioTheme::header_container_style)
-        .width(Length::Fill)
-        .height(180)
-        .into()
+        }
     }
 }

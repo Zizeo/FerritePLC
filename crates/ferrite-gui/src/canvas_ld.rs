@@ -16,10 +16,10 @@ pub struct LdContactKindWrapper(pub ContactKind);
 impl std::fmt::Display for LdContactKindWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.0 {
-            ContactKind::NormallyOpen => write!(f, "NO [ ]"),
-            ContactKind::NormallyClosed => write!(f, "NC [/]"),
-            ContactKind::RisingEdge => write!(f, "P [P]"),
-            ContactKind::FallingEdge => write!(f, "N [N]"),
+            ContactKind::NormallyOpen => write!(f, "NO"),
+            ContactKind::NormallyClosed => write!(f, "NC"),
+            ContactKind::RisingEdge => write!(f, "P"),
+            ContactKind::FallingEdge => write!(f, "N"),
         }
     }
 }
@@ -37,9 +37,9 @@ pub struct LdCoilKindWrapper(pub CoilKind);
 impl std::fmt::Display for LdCoilKindWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.0 {
-            CoilKind::Normal => write!(f, "Coil ( )"),
-            CoilKind::Set => write!(f, "Set [S]"),
-            CoilKind::Reset => write!(f, "Reset [R]"),
+            CoilKind::Normal => write!(f, "( )"),
+            CoilKind::Set => write!(f, "[S]"),
+            CoilKind::Reset => write!(f, "[R]"),
         }
     }
 }
@@ -98,8 +98,8 @@ pub fn render_ld_editor<'a>(
     .align_y(Alignment::Center);
 
     let tip = text(lang.tr(
-        "Tip: Power rails highlight green when energized in real-time. Edit contacts and coils directly inline.",
-        "Astuce : Les rails s'allument en vert lorsqu'ils sont sous tension en direct. Modifiez directement les contacts et bobines.",
+        "Tip: Left power rail is energized in real-time. Contacts and coils use authentic 2-level industrial schematic cards with live power-flow glow.",
+        "Astuce : Le rail d'alimentation est sous tension en direct. Contacts et bobines utilisent un schéma industriel à deux niveaux avec flux de puissance actif.",
     ))
     .size(12)
     .color(StudioTheme::TEXT_MUTED);
@@ -110,7 +110,7 @@ pub fn render_ld_editor<'a>(
     for (r_idx, rung) in program.rungs.iter().enumerate() {
         let p_name = pou_name.clone();
 
-        // Rung Header: Rung ID + Comment + "+ Contact" + "+ Coil" + "Delete Rung"
+        // Rung Header: Rung ID + Comment + Quick buttons
         let rung_header = row![
             container(
                 text(&rung.id).size(12).color(StudioTheme::ACCENT_CYAN)
@@ -128,27 +128,39 @@ pub fn render_ld_editor<'a>(
             .width(Length::Fill)
             .padding([4, 8])
             .style(StudioTheme::styled_input),
-            button(text(lang.tr("+ Contact", "+ Contact")).size(11))
-                .on_press(Message::LdAddContact(p_name.clone(), r_idx))
+            button(text(lang.tr("+ NO --| |--", "+ NO --| |--")).size(11))
+                .on_press(Message::LdAddContactWithKind(p_name.clone(), r_idx, ContactKind::NormallyOpen))
                 .style(StudioTheme::secondary_button)
-                .padding([4, 8]),
-            button(text(lang.tr("+ Coil", "+ Bobine")).size(11))
-                .on_press(Message::LdAddCoil(p_name.clone(), r_idx))
+                .padding([4, 7]),
+            button(text(lang.tr("+ NC --|/|--", "+ NF --|/|--")).size(11))
+                .on_press(Message::LdAddContactWithKind(p_name.clone(), r_idx, ContactKind::NormallyClosed))
                 .style(StudioTheme::secondary_button)
-                .padding([4, 8]),
+                .padding([4, 7]),
+            button(text(lang.tr("+ Rising --|P|--", "+ Front M. --|P|--")).size(11))
+                .on_press(Message::LdAddContactWithKind(p_name.clone(), r_idx, ContactKind::RisingEdge))
+                .style(StudioTheme::secondary_button)
+                .padding([4, 7]),
+            button(text(lang.tr("+ Falling --|N|--", "+ Front D. --|N|--")).size(11))
+                .on_press(Message::LdAddContactWithKind(p_name.clone(), r_idx, ContactKind::FallingEdge))
+                .style(StudioTheme::secondary_button)
+                .padding([4, 7]),
+            button(text(lang.tr("+ Coil --( )--", "+ Bobine --( )--")).size(11))
+                .on_press(Message::LdAddCoilWithKind(p_name.clone(), r_idx, CoilKind::Normal))
+                .style(StudioTheme::secondary_button)
+                .padding([4, 7]),
             button(text(lang.tr("Delete Rung", "Suppr Réseau")).size(11))
                 .on_press(Message::LdRemoveRung(p_name.clone(), r_idx))
                 .style(StudioTheme::danger_button)
-                .padding([4, 8]),
+                .padding([4, 7]),
         ]
-        .spacing(10)
+        .spacing(8)
         .align_y(Alignment::Center);
 
-        // Power Flow & Circuit
+        // Power Rails & Circuit
         let left_rail = container(iced::widget::Space::with_width(Length::Fixed(4.0)))
-            .height(Length::Fixed(48.0))
+            .height(Length::Fixed(64.0))
             .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(StudioTheme::ACCENT_CYAN)),
+                background: Some(Background::Color(StudioTheme::ACCENT_EMERALD)),
                 border: Border {
                     radius: Radius::from(2.0),
                     ..Default::default()
@@ -157,9 +169,9 @@ pub fn render_ld_editor<'a>(
             });
 
         let right_rail = container(iced::widget::Space::with_width(Length::Fixed(4.0)))
-            .height(Length::Fixed(48.0))
+            .height(Length::Fixed(64.0))
             .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(StudioTheme::ACCENT_CYAN)),
+                background: Some(Background::Color(StudioTheme::BORDER_CARD)),
                 border: Border {
                     radius: Radius::from(2.0),
                     ..Default::default()
@@ -170,56 +182,70 @@ pub fn render_ld_editor<'a>(
         let mut power_flowing = true;
         let mut circuit_row = row![
             left_rail,
-            wire_segment(true, 16.0),
+            wire_segment(true, 18.0),
         ]
         .spacing(0)
         .align_y(Alignment::Center);
 
-        // Contacts in this rung
+        // Contacts and parallel branches in this rung
         for (e_idx, elem) in rung.elements.iter().enumerate() {
             let p_elem = p_name.clone();
-            if let LdElement::Contact { symbol, kind } = elem {
-                let contact_closed = runtime.is_some_and(|rt| {
-                    let energized = is_symbol_energized(rt, symbol);
-                    match kind {
-                        ContactKind::NormallyOpen => energized,
-                        ContactKind::NormallyClosed => !energized,
-                        ContactKind::RisingEdge | ContactKind::FallingEdge => energized,
-                    }
-                });
+            match elem {
+                LdElement::Contact { symbol, kind } => {
+                    let contact_closed = runtime.is_some_and(|rt| {
+                        let energized = is_symbol_energized(rt, symbol);
+                        match kind {
+                            ContactKind::NormallyOpen => energized,
+                            ContactKind::NormallyClosed => !energized,
+                            ContactKind::RisingEdge | ContactKind::FallingEdge => energized,
+                        }
+                    });
 
-                let is_active = power_flowing && contact_closed;
-                power_flowing = is_active;
+                    let is_active = power_flowing && contact_closed;
+                    power_flowing = is_active;
 
-                let border_color = if is_active {
-                    StudioTheme::ACCENT_EMERALD
-                } else {
-                    StudioTheme::BORDER_CARD
-                };
-                let bg_color = if is_active {
-                    iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15)
-                } else {
-                    StudioTheme::BG_BASE
-                };
+                    let border_color = if is_active {
+                        StudioTheme::ACCENT_EMERALD
+                    } else {
+                        StudioTheme::BORDER_CARD
+                    };
+                    let bg_color = if is_active {
+                        iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15)
+                    } else {
+                        StudioTheme::BG_BASE
+                    };
 
-                let contact_box = container(
-                    row![
-                        text(match kind {
-                            ContactKind::NormallyOpen => "[ ]",
-                            ContactKind::NormallyClosed => "[/]",
-                            ContactKind::RisingEdge => "[P]",
-                            ContactKind::FallingEdge => "[N]",
-                        })
-                        .size(13)
-                        .color(if is_active { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_MUTED }),
+                    let glyph_str = match kind {
+                        ContactKind::NormallyOpen => "--| |--",
+                        ContactKind::NormallyClosed => "--|/|--",
+                        ContactKind::RisingEdge => "--|P|--",
+                        ContactKind::FallingEdge => "--|N|--",
+                    };
+
+                    // 2-level stacked contact card
+                    let top_row = row![
                         text_input("Tag_Name", symbol)
                             .on_input({
                                 let p = p_elem.clone();
                                 move |s| Message::LdContactSymbolChanged(p.clone(), r_idx, e_idx, s)
                             })
-                            .width(110)
-                            .padding([3, 6])
+                            .width(120)
+                            .padding([2, 5])
                             .style(StudioTheme::styled_input),
+                        iced::widget::Space::with_width(Length::Fill),
+                        button(text("x").size(10.5))
+                            .on_press(Message::LdRemoveContact(p_elem.clone(), r_idx, e_idx))
+                            .style(StudioTheme::ghost_button)
+                            .padding([1, 4]),
+                    ]
+                    .align_y(Alignment::Center);
+
+                    let bottom_row = row![
+                        text(glyph_str)
+                            .size(13.5)
+                            .font(iced::Font::MONOSPACE)
+                            .color(if is_active { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_MUTED }),
+                        iced::widget::Space::with_width(Length::Fill),
                         pick_list(
                             &ALL_CONTACT_KINDS[..],
                             Some(LdContactKindWrapper(*kind)),
@@ -228,33 +254,74 @@ pub fn render_ld_editor<'a>(
                                 move |w| Message::LdContactKindChanged(p.clone(), r_idx, e_idx, w.0)
                             },
                         )
-                        .width(85)
+                        .width(55)
                         .style(StudioTheme::styled_pick_list),
-                        button(text("X").size(11))
-                            .on_press(Message::LdRemoveContact(p_elem.clone(), r_idx, e_idx))
-                            .style(StudioTheme::ghost_button)
-                            .padding([2, 5]),
                     ]
-                    .spacing(6)
-                    .align_y(Alignment::Center),
-                )
-                .padding(6)
-                .style(move |_theme: &Theme| container::Style {
-                    background: Some(Background::Color(bg_color)),
-                    border: Border {
-                        color: border_color,
-                        width: if is_active { 1.5 } else { 1.0 },
-                        radius: Radius::from(6.0),
-                    },
-                    ..Default::default()
-                });
+                    .align_y(Alignment::Center);
 
-                circuit_row = circuit_row.push(contact_box);
-                circuit_row = circuit_row.push(wire_segment(power_flowing, 16.0));
+                    let contact_card = container(
+                        column![top_row, bottom_row].spacing(4)
+                    )
+                    .width(170)
+                    .padding(6)
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(Background::Color(bg_color)),
+                        border: Border {
+                            color: border_color,
+                            width: if is_active { 1.5 } else { 1.0 },
+                            radius: Radius::from(5.0),
+                        },
+                        ..Default::default()
+                    });
+
+                    circuit_row = circuit_row.push(contact_card);
+                    circuit_row = circuit_row.push(wire_segment(power_flowing, 18.0));
+                }
+                LdElement::Branch { paths } => {
+                    let branch_closed = runtime.is_some_and(|rt| {
+                        paths.iter().any(|path| {
+                            path.iter().all(|sub_elem| match sub_elem {
+                                LdElement::Contact { symbol, kind } => {
+                                    let energized = is_symbol_energized(rt, symbol);
+                                    match kind {
+                                        ContactKind::NormallyOpen | ContactKind::RisingEdge => energized,
+                                        ContactKind::NormallyClosed | ContactKind::FallingEdge => !energized,
+                                    }
+                                }
+                                _ => true,
+                            })
+                        })
+                    });
+                    let is_active = power_flowing && branch_closed;
+                    power_flowing = is_active;
+                    let branch_box = container(
+                        text("[OR Branch]").size(12).color(if is_active { StudioTheme::ACCENT_EMERALD } else { StudioTheme::ACCENT_PURPLE }),
+                    )
+                    .padding([8, 12])
+                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.75, 0.5, 0.9, 0.12)));
+
+                    circuit_row = circuit_row.push(branch_box);
+                    circuit_row = circuit_row.push(wire_segment(power_flowing, 18.0));
+                }
+                LdElement::InlineFb { instance, .. } => {
+                    let fb_q = runtime.is_some_and(|rt| {
+                        rt.tags.get_fb(instance).map(|fb| fb.q).unwrap_or(false)
+                    });
+                    let is_active = power_flowing && fb_q;
+                    power_flowing = is_active;
+                    let fb_box = container(
+                        text(format!("[FB: {instance}]")).size(12).color(if is_active { StudioTheme::ACCENT_EMERALD } else { StudioTheme::ACCENT_CYAN }),
+                    )
+                    .padding([8, 12])
+                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.22, 0.74, 0.97, 0.12)));
+
+                    circuit_row = circuit_row.push(fb_box);
+                    circuit_row = circuit_row.push(wire_segment(power_flowing, 18.0));
+                }
             }
         }
 
-        // Spanning wire to right-aligned coils
+        // Spanning wire across to coils
         let span_color = if power_flowing {
             StudioTheme::ACCENT_EMERALD
         } else {
@@ -284,65 +351,77 @@ pub fn render_ld_editor<'a>(
                 StudioTheme::BG_BASE
             };
 
-            let coil_box = container(
-                row![
-                    text(match coil.kind {
-                        CoilKind::Normal => "( )",
-                        CoilKind::Set => "[S]",
-                        CoilKind::Reset => "[R]",
+            let glyph_str = match coil.kind {
+                CoilKind::Normal => "--( )--",
+                CoilKind::Set => "--[S]--",
+                CoilKind::Reset => "--[R]--",
+            };
+
+            // 2-level stacked coil card
+            let top_row = row![
+                text_input("Coil_Tag", &coil.symbol)
+                    .on_input({
+                        let p = p_coil.clone();
+                        move |s| Message::LdCoilSymbolChanged(p.clone(), r_idx, c_idx, s)
                     })
-                    .size(13)
+                    .width(120)
+                    .padding([2, 5])
+                    .style(StudioTheme::styled_input),
+                iced::widget::Space::with_width(Length::Fill),
+                button(text("x").size(10.5))
+                    .on_press(Message::LdRemoveCoil(p_coil.clone(), r_idx, c_idx))
+                    .style(StudioTheme::ghost_button)
+                    .padding([1, 4]),
+            ]
+            .align_y(Alignment::Center);
+
+            let bottom_row = row![
+                text(glyph_str)
+                    .size(13.5)
+                    .font(iced::Font::MONOSPACE)
                     .color(if is_coil_on { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_MUTED }),
-                    text_input("Coil_Tag", &coil.symbol)
-                        .on_input({
-                            let p = p_coil.clone();
-                            move |s| Message::LdCoilSymbolChanged(p.clone(), r_idx, c_idx, s)
-                        })
-                        .width(110)
-                        .padding([3, 6])
-                        .style(StudioTheme::styled_input),
-                    pick_list(
-                        &ALL_COIL_KINDS[..],
-                        Some(LdCoilKindWrapper(coil.kind)),
-                        {
-                            let p = p_coil.clone();
-                            move |w| Message::LdCoilKindChanged(p.clone(), r_idx, c_idx, w.0)
-                        },
-                    )
-                    .width(95)
-                    .style(StudioTheme::styled_pick_list),
-                    button(text("X").size(11))
-                        .on_press(Message::LdRemoveCoil(p_coil.clone(), r_idx, c_idx))
-                        .style(StudioTheme::ghost_button)
-                        .padding([2, 5]),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
+                iced::widget::Space::with_width(Length::Fill),
+                pick_list(
+                    &ALL_COIL_KINDS[..],
+                    Some(LdCoilKindWrapper(coil.kind)),
+                    {
+                        let p = p_coil.clone();
+                        move |w| Message::LdCoilKindChanged(p.clone(), r_idx, c_idx, w.0)
+                    },
+                )
+                .width(60)
+                .style(StudioTheme::styled_pick_list),
+            ]
+            .align_y(Alignment::Center);
+
+            let coil_card = container(
+                column![top_row, bottom_row].spacing(4)
             )
+            .width(170)
             .padding(6)
             .style(move |_theme: &Theme| container::Style {
                 background: Some(Background::Color(coil_bg)),
                 border: Border {
                     color: coil_border,
                     width: if is_coil_on { 1.5 } else { 1.0 },
-                    radius: Radius::from(6.0),
+                    radius: Radius::from(5.0),
                 },
                 ..Default::default()
             });
 
-            circuit_row = circuit_row.push(wire_segment(is_coil_on, 16.0));
-            circuit_row = circuit_row.push(coil_box);
+            circuit_row = circuit_row.push(wire_segment(is_coil_on, 18.0));
+            circuit_row = circuit_row.push(coil_card);
         }
 
-        // Right Rail
-        circuit_row = circuit_row.push(wire_segment(true, 16.0));
+        // Right Rail Return
+        circuit_row = circuit_row.push(wire_segment(true, 18.0));
         circuit_row = circuit_row.push(right_rail);
 
         let rung_card = container(
             column![
                 rung_header,
                 container(circuit_row)
-                    .padding([8, 12])
+                    .padding([10, 14])
                     .style(StudioTheme::canvas_container_style)
                     .width(Length::Fill),
             ]

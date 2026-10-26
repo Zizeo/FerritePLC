@@ -88,13 +88,30 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
             let is_bound_active = elem
                 .binding
                 .as_ref()
-                .and_then(|b| self.io_snapshot.get_bool(&b.variable_id))
+                .and_then(|b| {
+                    let var = &b.variable_id;
+                    self.io_snapshot.get_bool(var).or_else(|| match var.as_str() {
+                        "Valve_Fill" | "Fill_Valve" => self.io_snapshot.get_bool("Fill_Valve").or_else(|| self.io_snapshot.get_bool("Valve_Fill")),
+                        "Valve_Dose" | "Dosing_Valve" => self.io_snapshot.get_bool("Dosing_Valve").or_else(|| self.io_snapshot.get_bool("Valve_Dose")),
+                        "Mixer_Running" | "Agitator_Fast" => self.io_snapshot.get_bool("Agitator_Fast").or_else(|| self.io_snapshot.get_bool("Mixer_Running")),
+                        "Valve_Drain" | "Drain_Valve" => self.io_snapshot.get_bool("Drain_Valve").or_else(|| self.io_snapshot.get_bool("Valve_Drain")),
+                        "Pump_Running" | "Pump_Active" => self.io_snapshot.get_bool("Pump_Active").or_else(|| self.io_snapshot.get_bool("Pump_Running")),
+                        _ => None,
+                    })
+                })
                 .unwrap_or(false);
 
             let analog_val = elem
                 .binding
                 .as_ref()
-                .and_then(|b| self.io_snapshot.get_f32(&b.variable_id));
+                .and_then(|b| {
+                    let var = &b.variable_id;
+                    self.io_snapshot.get_f32(var).or_else(|| match var.as_str() {
+                        "Tank_Level" => self.io_snapshot.get_f32("Tank_Level"),
+                        "Tank_Temp" => self.io_snapshot.get_f32("Tank_Temp"),
+                        _ => None,
+                    })
+                });
 
             let elem_color = if is_bound_active {
                 StudioTheme::ACCENT_EMERALD
@@ -150,6 +167,10 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
                             &Path::circle(center, radius - 2.0),
                             Color::from_rgba(0.063, 0.725, 0.506, 0.3),
                         );
+                        let vane_stroke = Stroke::default().with_color(StudioTheme::ACCENT_EMERALD).with_width(1.5);
+                        let vane_len = radius * 0.7;
+                        frame.stroke(&Path::line(Point::new(center.x - vane_len, center.y), Point::new(center.x + vane_len, center.y)), vane_stroke);
+                        frame.stroke(&Path::line(Point::new(center.x, center.y - vane_len), Point::new(center.x, center.y + vane_len)), vane_stroke);
                     }
                     frame.fill_text(canvas::Text {
                         content: elem.label.clone(),

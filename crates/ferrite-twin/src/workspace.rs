@@ -96,7 +96,7 @@ impl DigitalTwinWorkspace {
                 flip_v: false,
                 z_index: 2,
                 binding: Some(VariableBinding::new_digital(
-                    "Valve_Fill",
+                    "Fill_Valve",
                     Color32::from_rgb(46, 204, 113),
                     Color32::from_rgb(108, 122, 137),
                 )),
@@ -114,7 +114,7 @@ impl DigitalTwinWorkspace {
                 flip_v: false,
                 z_index: 0,
                 binding: Some(VariableBinding::new_digital(
-                    "Valve_Fill",
+                    "Fill_Valve",
                     Color32::from_rgb(52, 152, 219),
                     Color32::from_rgb(70, 80, 95),
                 )),
@@ -132,7 +132,7 @@ impl DigitalTwinWorkspace {
                 flip_v: false,
                 z_index: 2,
                 binding: Some(VariableBinding::new_digital(
-                    "Valve_Dose",
+                    "Dosing_Valve",
                     Color32::from_rgb(46, 204, 113),
                     Color32::from_rgb(108, 122, 137),
                 )),
@@ -150,7 +150,7 @@ impl DigitalTwinWorkspace {
                 flip_v: false,
                 z_index: 3,
                 binding: Some(VariableBinding::new_digital(
-                    "Mixer_Running",
+                    "Agitator_Fast",
                     Color32::from_rgb(241, 196, 15),
                     Color32::from_rgb(80, 90, 105),
                 )),
@@ -168,7 +168,7 @@ impl DigitalTwinWorkspace {
                 flip_v: false,
                 z_index: 2,
                 binding: Some(VariableBinding::new_digital(
-                    "Valve_Drain",
+                    "Drain_Valve",
                     Color32::from_rgb(46, 204, 113),
                     Color32::from_rgb(108, 122, 137),
                 )),
@@ -186,7 +186,7 @@ impl DigitalTwinWorkspace {
                 flip_v: false,
                 z_index: 3,
                 binding: Some(VariableBinding::new_digital(
-                    "Pump_Running",
+                    "Pump_Active",
                     Color32::from_rgb(46, 204, 113),
                     Color32::from_rgb(100, 110, 125),
                 )),

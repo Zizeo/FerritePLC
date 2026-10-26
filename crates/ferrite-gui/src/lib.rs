@@ -57,21 +57,23 @@ pub fn run_gui(initial_path: Option<PathBuf>) -> Result<(), GuiError> {
 /// Launches the native FerritePLC Studio desktop IDE & PLC Simulator window with a specific initial UI language (`En` or `Fr`).
 pub fn run_gui_with_lang(initial_path: Option<PathBuf>, lang: UiLanguage) -> Result<(), GuiError> {
     let project = resolve_or_scaffold_project(initial_path.as_deref())?;
-    let app = FerriteStudioApp::with_language(project, lang);
+    let mut app = FerriteStudioApp::with_language(project, lang);
 
-    iced::application(
+    let (main_id, main_open_task) = iced::window::open(iced::window::Settings {
+        size: iced::Size::new(1440.0, 880.0),
+        min_size: Some(iced::Size::new(1024.0, 680.0)),
+        ..Default::default()
+    });
+    app.main_window_id = Some(main_id);
+
+    iced::daemon(
         FerriteStudioApp::title,
         FerriteStudioApp::update,
         FerriteStudioApp::view,
     )
     .subscription(FerriteStudioApp::subscription)
     .theme(FerriteStudioApp::theme)
-    .window(iced::window::Settings {
-        size: iced::Size::new(1440.0, 880.0),
-        min_size: Some(iced::Size::new(1024.0, 680.0)),
-        ..Default::default()
-    })
-    .run_with(move || (app, iced::Task::none()))
+    .run_with(move || (app, main_open_task.map(|_| Message::None)))
     .map_err(|e| GuiError::Iced(e.to_string()))
 }
 
@@ -79,6 +81,7 @@ pub fn run_gui_with_lang(initial_path: Option<PathBuf>, lang: UiLanguage) -> Res
 mod tests {
     use super::*;
     use ferrite_lang_st::parse_st_statements;
+    use ferrite_project::PouSource;
     use std::env;
     use std::fs;
 
@@ -417,4 +420,117 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
+
+    #[test]
+    fn test_sfc_step_rows_and_digital_twin_example_sync() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_gui_sfc_twin_sync_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        // 1. Verify batch_seq SFC rows group AND divergence parallel branches properly
+        if let Some(PouSource::Sfc(batch_sfc)) = app.project.pous.get("batch_seq") {
+            let rows = canvas_sfc::compute_sfc_step_rows(batch_sfc);
+            assert!(rows.len() >= 4);
+            // Row 0 has Step 0
+            assert_eq!(rows[0].len(), 1);
+            // Row 1 has Step 1 and Step 2 in parallel columns (AND Divergence)
+            assert_eq!(rows[1].len(), 2);
+            let s1_name = &batch_sfc.steps[rows[1][0]].name;
+            let s2_name = &batch_sfc.steps[rows[1][1]].name;
+            assert!(s1_name.contains("Fill") || s1_name.contains("Dose"));
+            assert!(s2_name.contains("Fill") || s2_name.contains("Dose"));
+        }
+
+        // 2. Test interactive ToggleForceTag for purely symbolic booleans
+        let _ = app.update(Message::ToggleForceTag("High_Temp_Alarm".to_string()));
+        if let Some(ref rt) = app.runtime {
+            let val = rt.read_value("High_Temp_Alarm")?.as_bool()?;
+            assert!(val);
+        }
+        // Toggle off
+        let _ = app.update(Message::ToggleForceTag("High_Temp_Alarm".to_string()));
+        if let Some(ref rt) = app.runtime {
+            let val = rt.read_value("High_Temp_Alarm")?.as_bool()?;
+            assert!(!val);
+        }
+
+        // 3. Test SFC Quick Topology builders via Messages
+        let original_step_count = if let Some(PouSource::Sfc(sfc)) = app.project.pous.get("batch_seq") {
+            sfc.steps.len()
+        } else {
+            0
+        };
+        let _ = app.update(Message::SfcAddAndDivergence("batch_seq".to_string()));
+        if let Some(PouSource::Sfc(sfc)) = app.project.pous.get("batch_seq") {
+            assert_eq!(sfc.steps.len(), original_step_count + 2);
+            let last_tr = sfc.transitions.last().ok_or("no transition found")?;
+            assert_eq!(last_tr.to_steps.len(), 2);
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_multi_window_detachment_and_schematic_canvas_rendering() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_gui_multi_window_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        // 1. Verify Detach & Dock Lifecycle for Left Explorer
+        assert!(!app.detach_left_explorer);
+        assert!(app.detached_left_id.is_none());
+        let _ = app.update(Message::DetachLeftExplorer);
+        assert!(app.detach_left_explorer);
+        assert!(app.detached_left_id.is_some());
+        let left_id = app.detached_left_id.ok_or("no detached_left_id")?;
+        // Check window close request docks back
+        let _ = app.update(Message::WindowCloseRequested(left_id));
+        assert!(!app.detach_left_explorer);
+        assert!(app.detached_left_id.is_none());
+
+        // 2. Verify Detach & Dock Lifecycle for Right I/O
+        assert!(!app.detach_right_io);
+        assert!(app.detached_right_id.is_none());
+        let _ = app.update(Message::DetachRightIo);
+        assert!(app.detach_right_io);
+        assert!(app.detached_right_id.is_some());
+        let _ = app.update(Message::DockRightIo);
+        assert!(!app.detach_right_io);
+        assert!(app.detached_right_id.is_none());
+
+        // 3. Verify Detach & Dock Lifecycle for Bottom Dock
+        assert!(!app.detach_bottom_dock);
+        assert!(app.detached_bottom_id.is_none());
+        let _ = app.update(Message::DetachBottomDock);
+        assert!(app.detach_bottom_dock);
+        assert!(app.detached_bottom_id.is_some());
+        let _ = app.update(Message::DockBottomDock);
+        assert!(!app.detach_bottom_dock);
+        assert!(app.detached_bottom_id.is_none());
+
+        // 4. Verify Ladder Quick Additions with ContactKind & CoilKind
+        use ferrite_lang_ld::{CoilKind, ContactKind};
+        let _ = app.update(Message::LdAddContactWithKind("main_safety".to_string(), 0, ContactKind::NormallyClosed));
+        let _ = app.update(Message::LdAddCoilWithKind("main_safety".to_string(), 0, CoilKind::Set));
+        if let Some(PouSource::Ld(ld)) = app.project.pous.get("main_safety") {
+            let last_contact = ld.rungs[0].elements.last().ok_or("no contact")?;
+            assert!(matches!(last_contact, ferrite_lang_ld::LdElement::Contact { kind: ContactKind::NormallyClosed, .. }));
+            let last_coil = ld.rungs[0].coils.last().ok_or("no coil")?;
+            assert_eq!(last_coil.kind, CoilKind::Set);
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }
+
+
+
+

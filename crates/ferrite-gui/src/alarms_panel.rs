@@ -44,7 +44,7 @@ pub fn render_alarms_panel<'a>(
         .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.957, 0.247, 0.369, 0.15)))
     } else {
         container(
-            text(lang.tr("✓ All Acknowledged", "✓ Tout Acquitté"))
+            text(lang.tr("[OK] All Acknowledged", "[OK] Tout Acquitté"))
                 .size(12)
                 .color(StudioTheme::ACCENT_EMERALD),
         )
@@ -57,7 +57,7 @@ pub fn render_alarms_panel<'a>(
         unack_badge,
         text(format!("({active_count} Active)")).size(12).color(StudioTheme::TEXT_SECONDARY),
         iced::widget::Space::with_width(Length::Fill),
-        button(text(lang.tr("✓ Acknowledge All", "✓ Tout Acquitter")).size(12))
+        button(text(lang.tr("Acknowledge All", "Tout Acquitter")).size(12))
             .on_press(Message::AcknowledgeAllAlarms)
             .style(StudioTheme::primary_button)
             .padding([6, 12]),
@@ -102,7 +102,7 @@ pub fn render_alarms_panel<'a>(
                 .padding([2, 8])
                 .into()
         } else {
-            text("—").size(12).color(StudioTheme::TEXT_MUTED).into()
+            text("-").size(12).color(StudioTheme::TEXT_MUTED).into()
         };
 
         let item_row = row![
