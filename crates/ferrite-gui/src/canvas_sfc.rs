@@ -36,7 +36,9 @@ pub const STEP_HEIGHT: f32 = 60.0;
 pub const TRANS_WIDTH: f32 = 80.0;
 pub const TRANS_HEIGHT: f32 = 20.0;
 pub const PORT_RADIUS: f32 = 4.5;
-pub const PORT_HIT_DIST: f32 = 12.0;
+pub const PORT_HIT_DIST: f32 = 18.0;
+pub const PORT_CLICK_RADIUS: f32 = 18.0;
+pub const PORT_DROP_RADIUS: f32 = 28.0;
 
 // Legacy constants kept for layout compatibility and unit tests
 pub const COLUMN_STRIDE: f32 = 560.0;
@@ -69,13 +71,17 @@ pub enum SfcElementKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SfcPortSource {
     StepOutput(String),
+    StepInput(String),
     TransitionOutput(String),
+    TransitionInput(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SfcPortTarget {
     StepInput(String),
+    StepOutput(String),
     TransitionInput(String),
+    TransitionOutput(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -304,10 +310,11 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
 
         match event {
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                // 1. Check if clicking an Output Port to begin dragging a wire
+                // 1. Check if clicking ANY Port to begin dragging a wire
+                // Step Ports (both Output and Input)
                 for step in &self.program.steps {
                     let out_p = self.step_out_port(step, state);
-                    if cursor_pos.distance(out_p) <= PORT_HIT_DIST {
+                    if cursor_pos.distance(out_p) <= PORT_CLICK_RADIUS {
                         state.drag = DragState::DraggingWire {
                             source: SfcPortSource::StepOutput(step.id.clone()),
                             start_pt: out_p,
@@ -315,13 +322,32 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         };
                         return (event::Status::Captured, None);
                     }
+                    let in_p = self.step_in_port(step, state);
+                    if cursor_pos.distance(in_p) <= PORT_CLICK_RADIUS {
+                        state.drag = DragState::DraggingWire {
+                            source: SfcPortSource::StepInput(step.id.clone()),
+                            start_pt: in_p,
+                            current_pt: cursor_pos,
+                        };
+                        return (event::Status::Captured, None);
+                    }
                 }
+                // Transition Ports (both Output and Input)
                 for tr in &self.program.transitions {
                     let out_p = self.trans_out_port(tr, state);
-                    if cursor_pos.distance(out_p) <= PORT_HIT_DIST {
+                    if cursor_pos.distance(out_p) <= PORT_CLICK_RADIUS {
                         state.drag = DragState::DraggingWire {
                             source: SfcPortSource::TransitionOutput(tr.id.clone()),
                             start_pt: out_p,
+                            current_pt: cursor_pos,
+                        };
+                        return (event::Status::Captured, None);
+                    }
+                    let in_p = self.trans_in_port(tr, state);
+                    if cursor_pos.distance(in_p) <= PORT_CLICK_RADIUS {
+                        state.drag = DragState::DraggingWire {
+                            source: SfcPortSource::TransitionInput(tr.id.clone()),
+                            start_pt: in_p,
                             current_pt: cursor_pos,
                         };
                         return (event::Status::Captured, None);
@@ -397,23 +423,82 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         *current_y = cursor_pos.y - *offset_y;
                         (event::Status::Captured, None)
                     }
-                    DragState::DraggingWire { current_pt, .. } => {
+                    DragState::DraggingWire { source, current_pt, .. } => {
                         *current_pt = cursor_pos;
-                        // Check hovering over compatible input ports
                         state.hover_port = None;
-                        for tr in &self.program.transitions {
-                            let in_p = self.trans_in_port(tr, state);
-                            if cursor_pos.distance(in_p) <= PORT_HIT_DIST {
-                                state.hover_port = Some(PortHover::TransitionInput(tr.id.clone(), in_p));
-                                break;
+
+                        // Check compatible targets based on source
+                        match source {
+                            SfcPortSource::StepOutput(_) => {
+                                for tr in &self.program.transitions {
+                                    let in_p = self.trans_in_port(tr, state);
+                                    let out_p = self.trans_out_port(tr, state);
+                                    let (tx, ty) = self.trans_pos(tr, state);
+                                    let inside_box = cursor_pos.x >= tx - 12.0
+                                        && cursor_pos.x <= tx + TRANS_WIDTH + 12.0
+                                        && cursor_pos.y >= ty - 12.0
+                                        && cursor_pos.y <= ty + TRANS_HEIGHT + 12.0;
+                                    if cursor_pos.distance(in_p) <= PORT_DROP_RADIUS
+                                        || cursor_pos.distance(out_p) <= PORT_DROP_RADIUS
+                                        || inside_box
+                                    {
+                                        state.hover_port = Some(PortHover::TransitionInput(tr.id.clone(), in_p));
+                                        break;
+                                    }
+                                }
                             }
-                        }
-                        if state.hover_port.is_none() {
-                            for step in &self.program.steps {
-                                let in_p = self.step_in_port(step, state);
-                                if cursor_pos.distance(in_p) <= PORT_HIT_DIST {
-                                    state.hover_port = Some(PortHover::StepInput(step.id.clone(), in_p));
-                                    break;
+                            SfcPortSource::StepInput(_) => {
+                                for tr in &self.program.transitions {
+                                    let in_p = self.trans_in_port(tr, state);
+                                    let out_p = self.trans_out_port(tr, state);
+                                    let (tx, ty) = self.trans_pos(tr, state);
+                                    let inside_box = cursor_pos.x >= tx - 12.0
+                                        && cursor_pos.x <= tx + TRANS_WIDTH + 12.0
+                                        && cursor_pos.y >= ty - 12.0
+                                        && cursor_pos.y <= ty + TRANS_HEIGHT + 12.0;
+                                    if cursor_pos.distance(out_p) <= PORT_DROP_RADIUS
+                                        || cursor_pos.distance(in_p) <= PORT_DROP_RADIUS
+                                        || inside_box
+                                    {
+                                        state.hover_port = Some(PortHover::TransitionOutput(tr.id.clone(), out_p));
+                                        break;
+                                    }
+                                }
+                            }
+                            SfcPortSource::TransitionOutput(_) => {
+                                for step in &self.program.steps {
+                                    let in_p = self.step_in_port(step, state);
+                                    let out_p = self.step_out_port(step, state);
+                                    let (sx, sy) = self.step_pos(step, state);
+                                    let inside_box = cursor_pos.x >= sx - 12.0
+                                        && cursor_pos.x <= sx + STEP_WIDTH + 12.0
+                                        && cursor_pos.y >= sy - 12.0
+                                        && cursor_pos.y <= sy + STEP_HEIGHT + 12.0;
+                                    if cursor_pos.distance(in_p) <= PORT_DROP_RADIUS
+                                        || cursor_pos.distance(out_p) <= PORT_DROP_RADIUS
+                                        || inside_box
+                                    {
+                                        state.hover_port = Some(PortHover::StepInput(step.id.clone(), in_p));
+                                        break;
+                                    }
+                                }
+                            }
+                            SfcPortSource::TransitionInput(_) => {
+                                for step in &self.program.steps {
+                                    let in_p = self.step_in_port(step, state);
+                                    let out_p = self.step_out_port(step, state);
+                                    let (sx, sy) = self.step_pos(step, state);
+                                    let inside_box = cursor_pos.x >= sx - 12.0
+                                        && cursor_pos.x <= sx + STEP_WIDTH + 12.0
+                                        && cursor_pos.y >= sy - 12.0
+                                        && cursor_pos.y <= sy + STEP_HEIGHT + 12.0;
+                                    if cursor_pos.distance(out_p) <= PORT_DROP_RADIUS
+                                        || cursor_pos.distance(in_p) <= PORT_DROP_RADIUS
+                                        || inside_box
+                                    {
+                                        state.hover_port = Some(PortHover::StepOutput(step.id.clone(), out_p));
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -424,12 +509,12 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         state.hover_port = None;
                         for step in &self.program.steps {
                             let in_p = self.step_in_port(step, state);
-                            if cursor_pos.distance(in_p) <= PORT_HIT_DIST {
+                            if cursor_pos.distance(in_p) <= PORT_CLICK_RADIUS {
                                 state.hover_port = Some(PortHover::StepInput(step.id.clone(), in_p));
                                 break;
                             }
                             let out_p = self.step_out_port(step, state);
-                            if cursor_pos.distance(out_p) <= PORT_HIT_DIST {
+                            if cursor_pos.distance(out_p) <= PORT_CLICK_RADIUS {
                                 state.hover_port = Some(PortHover::StepOutput(step.id.clone(), out_p));
                                 break;
                             }
@@ -437,12 +522,12 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         if state.hover_port.is_none() {
                             for tr in &self.program.transitions {
                                 let in_p = self.trans_in_port(tr, state);
-                                if cursor_pos.distance(in_p) <= PORT_HIT_DIST {
+                                if cursor_pos.distance(in_p) <= PORT_CLICK_RADIUS {
                                     state.hover_port = Some(PortHover::TransitionInput(tr.id.clone(), in_p));
                                     break;
                                 }
                                 let out_p = self.trans_out_port(tr, state);
-                                if cursor_pos.distance(out_p) <= PORT_HIT_DIST {
+                                if cursor_pos.distance(out_p) <= PORT_CLICK_RADIUS {
                                     state.hover_port = Some(PortHover::TransitionOutput(tr.id.clone(), out_p));
                                     break;
                                 }
@@ -472,12 +557,22 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         )
                     }
                     DragState::DraggingWire { source, .. } => {
-                        // Check if released over a valid target port
+                        state.hover_port = None;
+                        // Check if released over or near a valid target element/port
                         match source {
                             SfcPortSource::StepOutput(_) => {
                                 for tr in &self.program.transitions {
                                     let in_p = self.trans_in_port(tr, state);
-                                    if cursor_pos.distance(in_p) <= PORT_HIT_DIST {
+                                    let out_p = self.trans_out_port(tr, state);
+                                    let (tx, ty) = self.trans_pos(tr, state);
+                                    let inside_box = cursor_pos.x >= tx - 12.0
+                                        && cursor_pos.x <= tx + TRANS_WIDTH + 12.0
+                                        && cursor_pos.y >= ty - 12.0
+                                        && cursor_pos.y <= ty + TRANS_HEIGHT + 12.0;
+                                    if cursor_pos.distance(in_p) <= PORT_DROP_RADIUS
+                                        || cursor_pos.distance(out_p) <= PORT_DROP_RADIUS
+                                        || inside_box
+                                    {
                                         return (
                                             event::Status::Captured,
                                             Some(Message::SfcConnectPorts {
@@ -489,16 +584,73 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                     }
                                 }
                             }
+                            SfcPortSource::StepInput(_) => {
+                                for tr in &self.program.transitions {
+                                    let in_p = self.trans_in_port(tr, state);
+                                    let out_p = self.trans_out_port(tr, state);
+                                    let (tx, ty) = self.trans_pos(tr, state);
+                                    let inside_box = cursor_pos.x >= tx - 12.0
+                                        && cursor_pos.x <= tx + TRANS_WIDTH + 12.0
+                                        && cursor_pos.y >= ty - 12.0
+                                        && cursor_pos.y <= ty + TRANS_HEIGHT + 12.0;
+                                    if cursor_pos.distance(out_p) <= PORT_DROP_RADIUS
+                                        || cursor_pos.distance(in_p) <= PORT_DROP_RADIUS
+                                        || inside_box
+                                    {
+                                        return (
+                                            event::Status::Captured,
+                                            Some(Message::SfcConnectPorts {
+                                                pou_name: self.pou_name.to_string(),
+                                                source,
+                                                target: SfcPortTarget::TransitionOutput(tr.id.clone()),
+                                            }),
+                                        );
+                                    }
+                                }
+                            }
                             SfcPortSource::TransitionOutput(_) => {
                                 for step in &self.program.steps {
                                     let in_p = self.step_in_port(step, state);
-                                    if cursor_pos.distance(in_p) <= PORT_HIT_DIST {
+                                    let out_p = self.step_out_port(step, state);
+                                    let (sx, sy) = self.step_pos(step, state);
+                                    let inside_box = cursor_pos.x >= sx - 12.0
+                                        && cursor_pos.x <= sx + STEP_WIDTH + 12.0
+                                        && cursor_pos.y >= sy - 12.0
+                                        && cursor_pos.y <= sy + STEP_HEIGHT + 12.0;
+                                    if cursor_pos.distance(in_p) <= PORT_DROP_RADIUS
+                                        || cursor_pos.distance(out_p) <= PORT_DROP_RADIUS
+                                        || inside_box
+                                    {
                                         return (
                                             event::Status::Captured,
                                             Some(Message::SfcConnectPorts {
                                                 pou_name: self.pou_name.to_string(),
                                                 source,
                                                 target: SfcPortTarget::StepInput(step.id.clone()),
+                                            }),
+                                        );
+                                    }
+                                }
+                            }
+                            SfcPortSource::TransitionInput(_) => {
+                                for step in &self.program.steps {
+                                    let in_p = self.step_in_port(step, state);
+                                    let out_p = self.step_out_port(step, state);
+                                    let (sx, sy) = self.step_pos(step, state);
+                                    let inside_box = cursor_pos.x >= sx - 12.0
+                                        && cursor_pos.x <= sx + STEP_WIDTH + 12.0
+                                        && cursor_pos.y >= sy - 12.0
+                                        && cursor_pos.y <= sy + STEP_HEIGHT + 12.0;
+                                    if cursor_pos.distance(out_p) <= PORT_DROP_RADIUS
+                                        || cursor_pos.distance(in_p) <= PORT_DROP_RADIUS
+                                        || inside_box
+                                    {
+                                        return (
+                                            event::Status::Captured,
+                                            Some(Message::SfcConnectPorts {
+                                                pou_name: self.pou_name.to_string(),
+                                                source,
+                                                target: SfcPortTarget::StepOutput(step.id.clone()),
                                             }),
                                         );
                                     }
@@ -1116,9 +1268,15 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
 
         // 6. Active Wire Dragging Elastic Rubber-Band
         if let DragState::DraggingWire { start_pt, current_pt, .. } = state.drag {
+            let snap_pt = state.hover_port.as_ref().map(|h| match h {
+                PortHover::StepInput(_, p)
+                | PortHover::StepOutput(_, p)
+                | PortHover::TransitionInput(_, p)
+                | PortHover::TransitionOutput(_, p) => *p,
+            }).unwrap_or(current_pt);
             let wire_stroke = Stroke::default().with_color(COLOR_STEP_DROP).with_width(2.2);
-            frame.stroke(&Path::line(start_pt, current_pt), wire_stroke);
-            frame.fill(&Path::circle(current_pt, 5.0), COLOR_STEP_DROP);
+            frame.stroke(&Path::line(start_pt, snap_pt), wire_stroke);
+            frame.fill(&Path::circle(snap_pt, 5.0), COLOR_STEP_DROP);
         }
 
         vec![frame.into_geometry()]
@@ -1453,6 +1611,7 @@ pub fn render_sfc_editor<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::widget::canvas::Program;
     use ferrite_lang_sfc::{ActionQualifier, ConvergenceKind, DivergenceKind, SfcAction, SfcProgram, SfcStep, SfcTransition, StepKind};
 
     #[test]
@@ -1603,10 +1762,128 @@ mod tests {
             assert_eq!(sfc_after.transitions[0].from_steps, vec!["X1"]);
             assert_eq!(sfc_after.transitions[0].to_steps, vec!["X2"]);
         } else {
-            panic!("POU seq not found");
+            return Err("POU seq not found".into());
         }
 
-        // 3. Move Step X1 and verify grid snap
+        // 3. Reverse connections test: StepInput -> TransitionOutput and TransitionInput -> StepOutput
+        if let Some(PouSource::Sfc(sfc_mut)) = app.project.pous.get_mut("seq") {
+            sfc_mut.transitions[0].from_steps.clear();
+            sfc_mut.transitions[0].to_steps.clear();
+        }
+        let _ = app.update(Message::SfcConnectPorts {
+            pou_name: "seq".to_string(),
+            source: SfcPortSource::StepInput("X2".to_string()),
+            target: SfcPortTarget::TransitionOutput("T1".to_string()),
+        });
+        let _ = app.update(Message::SfcConnectPorts {
+            pou_name: "seq".to_string(),
+            source: SfcPortSource::TransitionInput("T1".to_string()),
+            target: SfcPortTarget::StepOutput("X1".to_string()),
+        });
+        if let Some(PouSource::Sfc(sfc_after)) = app.project.pous.get("seq") {
+            assert_eq!(sfc_after.transitions[0].from_steps, vec!["X1"]);
+            assert_eq!(sfc_after.transitions[0].to_steps, vec!["X2"]);
+        } else {
+            return Err("POU seq not found".into());
+        }
+
+        // 4. Test SfcCanvasProgram::update directly for top-port dragging and forgiving body hit testing
+        if let Some(PouSource::Sfc(sfc_ref)) = app.project.pous.get("seq") {
+            let canvas = SfcCanvasProgram {
+                pou_name: "seq",
+                program: sfc_ref,
+                runtime: None,
+                selected: None,
+                validation_report: None,
+            };
+            let mut state = SfcCanvasState::default();
+            let bounds = Rectangle::new(Point::ORIGIN, Size::new(2000.0, 2000.0));
+
+            // A. Clicking on top port of Step X1 must initiate DraggingWire(StepInput), NOT MovingElement
+            let step_in = canvas.step_in_port(&sfc_ref.steps[0], &state);
+            let (status, msg) = canvas.update(
+                &mut state,
+                canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(step_in),
+            );
+            assert_eq!(status, event::Status::Captured);
+            assert!(msg.is_none());
+            assert!(matches!(state.drag, DragState::DraggingWire { source: SfcPortSource::StepInput(ref id), .. } if id == "X1"));
+
+            // B. Releasing cursor anywhere inside Transition T1 body connects successfully
+            let (tx, ty) = canvas.trans_pos(&sfc_ref.transitions[0], &state);
+            let inside_trans_body = Point::new(tx + TRANS_WIDTH * 0.5, ty + TRANS_HEIGHT * 0.5);
+            let (status, msg) = canvas.update(
+                &mut state,
+                canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(inside_trans_body),
+            );
+            assert_eq!(status, event::Status::Captured);
+            assert!(matches!(
+                msg,
+                Some(Message::SfcConnectPorts {
+                    ref pou_name,
+                    source: SfcPortSource::StepInput(ref s),
+                    target: SfcPortTarget::TransitionOutput(ref t),
+                }) if pou_name == "seq" && s == "X1" && t == "T1"
+            ));
+
+            // C. Clicking on Step X1 bottom port and releasing inside Transition T1 body
+            let step_out = canvas.step_out_port(&sfc_ref.steps[0], &state);
+            let _ = canvas.update(
+                &mut state,
+                canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(step_out),
+            );
+            assert!(matches!(state.drag, DragState::DraggingWire { source: SfcPortSource::StepOutput(ref id), .. } if id == "X1"));
+            let (_, msg) = canvas.update(
+                &mut state,
+                canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(inside_trans_body),
+            );
+            assert!(matches!(
+                msg,
+                Some(Message::SfcConnectPorts {
+                    ref pou_name,
+                    source: SfcPortSource::StepOutput(ref s),
+                    target: SfcPortTarget::TransitionInput(ref t),
+                }) if pou_name == "seq" && s == "X1" && t == "T1"
+            ));
+
+            // D. Clicking on Transition T1 top port initiates DraggingWire(TransitionInput), NOT MovingElement
+            let trans_in = canvas.trans_in_port(&sfc_ref.transitions[0], &state);
+            let _ = canvas.update(
+                &mut state,
+                canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(trans_in),
+            );
+            assert!(matches!(state.drag, DragState::DraggingWire { source: SfcPortSource::TransitionInput(ref id), .. } if id == "T1"));
+
+            // E. Releasing cursor inside Step X1 body connects TransitionInput -> StepOutput
+            let (sx, sy) = canvas.step_pos(&sfc_ref.steps[0], &state);
+            let inside_step_body = Point::new(sx + STEP_WIDTH * 0.5, sy + STEP_HEIGHT * 0.5);
+            let (_, msg) = canvas.update(
+                &mut state,
+                canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                mouse::Cursor::Available(inside_step_body),
+            );
+            assert!(matches!(
+                msg,
+                Some(Message::SfcConnectPorts {
+                    ref pou_name,
+                    source: SfcPortSource::TransitionInput(ref t),
+                    target: SfcPortTarget::StepOutput(ref s),
+                }) if pou_name == "seq" && t == "T1" && s == "X1"
+            ));
+        }
+
+        // 5. Move Step X1 and verify grid snap
         let _ = app.update(Message::SfcMoveElement(
             "seq".to_string(),
             SfcElementKey::Step("X1".to_string()),

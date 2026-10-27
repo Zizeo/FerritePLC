@@ -1694,6 +1694,18 @@ impl FerriteStudioApp {
                         (
                             crate::canvas_sfc::SfcPortSource::StepOutput(step_id),
                             crate::canvas_sfc::SfcPortTarget::TransitionInput(trans_id),
+                        )
+                        | (
+                            crate::canvas_sfc::SfcPortSource::TransitionInput(trans_id),
+                            crate::canvas_sfc::SfcPortTarget::StepOutput(step_id),
+                        )
+                        | (
+                            crate::canvas_sfc::SfcPortSource::StepOutput(step_id),
+                            crate::canvas_sfc::SfcPortTarget::TransitionOutput(trans_id),
+                        )
+                        | (
+                            crate::canvas_sfc::SfcPortSource::TransitionInput(trans_id),
+                            crate::canvas_sfc::SfcPortTarget::StepInput(step_id),
                         ) => {
                             if let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == trans_id)
                                 && !tr.from_steps.contains(&step_id)
@@ -1706,6 +1718,18 @@ impl FerriteStudioApp {
                         (
                             crate::canvas_sfc::SfcPortSource::TransitionOutput(trans_id),
                             crate::canvas_sfc::SfcPortTarget::StepInput(step_id),
+                        )
+                        | (
+                            crate::canvas_sfc::SfcPortSource::StepInput(step_id),
+                            crate::canvas_sfc::SfcPortTarget::TransitionOutput(trans_id),
+                        )
+                        | (
+                            crate::canvas_sfc::SfcPortSource::TransitionOutput(trans_id),
+                            crate::canvas_sfc::SfcPortTarget::StepOutput(step_id),
+                        )
+                        | (
+                            crate::canvas_sfc::SfcPortSource::StepInput(step_id),
+                            crate::canvas_sfc::SfcPortTarget::TransitionInput(trans_id),
                         ) => {
                             if let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == trans_id)
                                 && !tr.to_steps.contains(&step_id)
