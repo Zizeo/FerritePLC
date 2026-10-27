@@ -599,22 +599,73 @@ impl SfcProgram {
                 .collect();
 
             let max_cols = tree_rows.iter().map(|r| r.len()).max().unwrap_or(1);
+
+            // Compute dynamic column widths taking into account step actions and transition receptivities
+            let mut col_widths = vec![280_i32; max_cols];
+            for row in &tree_rows {
+                for (c_idx, &s_idx) in row.iter().enumerate() {
+                    if let Some(step) = self.steps.get(s_idx) {
+                        let mut w = 180;
+                        if !step.actions.is_empty() {
+                            let max_act_len = step.actions.iter().map(|a| a.target.len()).max().unwrap_or(0);
+                            let target_w = (max_act_len as i32 * 8 + 20).max(110);
+                            w += 14 + 26 + target_w;
+                        }
+                        // Add spacing margin between columns (at least 60px) and round up to 20px grid
+                        let req_w = ((w + 60 + 19) / 20) * 20;
+                        if c_idx < max_cols && req_w > col_widths[c_idx] {
+                            col_widths[c_idx] = req_w;
+                        }
+                    }
+                }
+            }
+
+            // Also check transitions in this tree
+            for tr in &self.transitions {
+                if tree.transition_ids.contains(&tr.id) {
+                    let rec_chars = if tr.receptivity.is_empty() { 4 } else { tr.receptivity.len() };
+                    let rec_w = 80 + 10 + (rec_chars as i32 * 8) + 20;
+                    let req_w = ((rec_w + 60 + 19) / 20) * 20;
+                    for row in &tree_rows {
+                        for (c_idx, &s_idx) in row.iter().enumerate() {
+                            if let Some(s) = self.steps.get(s_idx)
+                                && (tr.from_steps.iter().any(|fs| fs == &s.id || fs == &s.name)
+                                    || tr.to_steps.iter().any(|ts| ts == &s.id || ts == &s.name))
+                                && c_idx < max_cols
+                                && req_w > col_widths[c_idx]
+                            {
+                                col_widths[c_idx] = req_w;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut col_offsets = vec![0_i32; max_cols];
+            for c in 1..max_cols {
+                col_offsets[c] = col_offsets[c - 1] + col_widths[c - 1];
+            }
+            let total_tree_cols_w: i32 = col_widths.iter().sum();
+
+            let mid_span_center = (col_offsets[0] + 90 + col_offsets[max_cols - 1] + 90) / 2;
+            let single_step_center_x = ((mid_span_center - 90 + 10) / 20) * 20;
+            let single_trans_center_x = single_step_center_x + 50;
+
             let mut y = 40;
 
             for row in &tree_rows {
                 let cols = row.len();
-                let center_offset = if cols == 1 && max_cols > 1 {
-                    ((max_cols - 1) as i32 * 260) / 2
-                } else {
-                    0
-                };
 
                 for (c_idx, &s_idx) in row.iter().enumerate() {
                     placed_steps.insert(s_idx);
                     if let Some(step) = self.steps.get_mut(s_idx)
                         && step.grid_pos.is_none()
                     {
-                        let x = current_tree_x + center_offset + (c_idx as i32) * 260;
+                        let x = if cols == 1 && max_cols > 1 {
+                            current_tree_x + single_step_center_x
+                        } else {
+                            current_tree_x + col_offsets[c_idx]
+                        };
                         step.grid_pos = Some((x, y));
                     }
                 }
@@ -640,8 +691,16 @@ impl SfcProgram {
                     }
                 }
 
+                let max_acts = row
+                    .iter()
+                    .filter_map(|&si| self.steps.get(si))
+                    .map(|s| s.actions.len())
+                    .max()
+                    .unwrap_or(0);
+                let step_h = 60.max(if max_acts > 0 { 10 + (max_acts as i32 * 25) } else { 60 });
+                y += ((step_h + 60 + 19) / 20) * 20;
+
                 if !trans_in_row.is_empty() {
-                    y += 100;
                     let t_cols = trans_in_row.len();
                     for (c_idx, &t_idx) in trans_in_row.iter().enumerate() {
                         placed_trans.insert(t_idx);
@@ -649,15 +708,17 @@ impl SfcProgram {
                             && tr.grid_pos.is_none()
                         {
                             let x = if t_cols == 1 && max_cols > 1 {
-                                current_tree_x + ((max_cols - 1) as i32 * 260) / 2 + 50
+                                current_tree_x + single_trans_center_x
+                            } else if c_idx < max_cols {
+                                current_tree_x + col_offsets[c_idx] + 50
                             } else {
-                                current_tree_x + (c_idx as i32) * 260 + 50
+                                current_tree_x + col_offsets[max_cols - 1] + 50 + ((c_idx - max_cols + 1) as i32 * 280)
                             };
                             tr.grid_pos = Some((x, y));
                         }
                     }
+                    y += 100;
                 }
-                y += 100;
             }
 
             // Any unlinked transitions belonging to this tree
@@ -672,7 +733,7 @@ impl SfcProgram {
                 }
             }
 
-            current_tree_x += (max_cols as i32 * 260) + 120;
+            current_tree_x += total_tree_cols_w + 140;
         }
 
         // 2. Any leftover unplaced steps or transitions (e.g. isolated or unreferenced)
@@ -1850,17 +1911,17 @@ mod tests {
         let t3 = get_trans_pos("T3")?;
 
         // Tree 1: 2 parallel branches (max_cols = 2).
-        // Branch A (s1) at x=60, Branch B (s2) at x=320.
-        // Single steps s0 and s3 should be horizontally centered between the branches:
-        // center = 60 + 130 = 190.
+        // Branch A (s1) at x=60, Branch B (s2) at x=340 (spaced by min col width 280).
+        // Single steps s0 and s3 are horizontally centered between the branches:
+        // center = (150 + 430) / 2 = 290 -> step_x = 290 - 90 = 200.
         assert_eq!(s1.0, 60);
-        assert_eq!(s2.0, 320);
-        assert_eq!(s0.0, 190);
-        assert_eq!(s3.0, 190);
+        assert_eq!(s2.0, 340);
+        assert_eq!(s0.0, 200);
+        assert_eq!(s3.0, 200);
 
-        // T1 and T2 are centered: 190 + 50 = 240.
-        assert_eq!(t1.0, 240);
-        assert_eq!(t2.0, 240);
+        // T1 and T2 are centered at 290 -> trans_x = 290 - 40 = 250.
+        assert_eq!(t1.0, 250);
+        assert_eq!(t2.0, 250);
 
         // Y order in Tree 1: s0 < t1 < s1 & s2 < t2 < s3
         assert!(s0.1 < t1.1);
@@ -1869,12 +1930,57 @@ mod tests {
         assert!(s1.1 < t2.1);
         assert!(t2.1 < s3.1);
 
-        // Tree 2 must be separated into a distinct horizontal band (x > 320 + 260)
+        // Tree 2 must be separated into a distinct horizontal band (x > 340 + 280)
         assert!(s10.0 > s2.0);
         assert_eq!(s10.0, s11.0);
         assert_eq!(t3.0, s10.0 + 50);
         assert!(s10.1 < t3.1);
         assert!(t3.1 < s11.1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sfc_auto_sort_expands_columns_for_actions_and_text() -> Result<(), Box<dyn std::error::Error>> {
+        let mut prog = SfcProgram {
+            name: "wide_actions_sort".to_string(),
+            comment: String::new(),
+            steps: vec![
+                SfcStep::new("0", "Init", StepKind::Initial),
+                SfcStep {
+                    id: "1".to_string(),
+                    name: "Branch_Long_Action".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![SfcAction {
+                        qualifier: ActionQualifier::P,
+                        target: "Batch_Count := Batch_Count + 1;".to_string(), // 32 chars
+                        duration: None,
+                    }],
+                    grid_pos: None,
+                },
+                SfcStep::new("2", "Branch_B", StepKind::Normal),
+            ],
+            transitions: vec![
+                SfcTransition {
+                    id: "T1".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["1".to_string(), "2".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    grid_pos: None,
+                },
+            ],
+        };
+
+        prog.assign_default_grid_positions();
+
+        let s1 = prog.steps.iter().find(|s| s.id == "1").and_then(|s| s.grid_pos).unwrap_or((0, 0));
+        let s2 = prog.steps.iter().find(|s| s.id == "2").and_then(|s| s.grid_pos).unwrap_or((0, 0));
+
+        // Column 0 must be expanded significantly beyond 280 to accommodate the 32-character action text
+        let col_gap = s2.0 - s1.0;
+        assert!(col_gap >= 500, "Expected column gap >= 500 to fit actions, got {col_gap}");
 
         Ok(())
     }
