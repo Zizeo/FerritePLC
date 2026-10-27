@@ -583,11 +583,11 @@ impl SfcProgram {
 
         for row in rows {
             for (c_idx, &s_idx) in row.iter().enumerate() {
-                if let Some(step) = self.steps.get_mut(s_idx) {
-                    if step.grid_pos.is_none() {
-                        let x = 60 + (c_idx as i32) * 260;
-                        step.grid_pos = Some((x, y));
-                    }
+                if let Some(step) = self.steps.get_mut(s_idx)
+                    && step.grid_pos.is_none()
+                {
+                    let x = 60 + (c_idx as i32) * 260;
+                    step.grid_pos = Some((x, y));
                 }
             }
 
@@ -614,11 +614,11 @@ impl SfcProgram {
                 y += 100;
                 for (c_idx, &t_idx) in trans_in_row.iter().enumerate() {
                     assigned_transitions.insert(t_idx);
-                    if let Some(tr) = self.transitions.get_mut(t_idx) {
-                        if tr.grid_pos.is_none() {
-                            let x = 60 + (c_idx as i32) * 260 + 50;
-                            tr.grid_pos = Some((x, y));
-                        }
+                    if let Some(tr) = self.transitions.get_mut(t_idx)
+                        && tr.grid_pos.is_none()
+                    {
+                        let x = 60 + (c_idx as i32) * 260 + 50;
+                        tr.grid_pos = Some((x, y));
                     }
                 }
             }
@@ -1547,7 +1547,7 @@ mod tests {
             .any(|e| matches!(e, SfcValidationError::MissingInitialStepInTree { .. })));
 
         // 3. Dangling reference in a transition
-        let mut dangling_tree = multi_tree_prog.clone();
+        let mut dangling_tree = multi_tree_prog;
         dangling_tree.transitions[0].to_steps = vec!["999".to_string()];
         let report3 = validate_sfc_topology(&dangling_tree);
         assert!(!report3.is_valid);

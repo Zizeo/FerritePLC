@@ -235,11 +235,10 @@ impl<'a> SfcCanvasProgram<'a> {
             current_y,
             ..
         } = state.drag
+            && &step.id == id
         {
-            if &step.id == id {
-                let (gx, gy) = snap_to_grid(current_x, current_y);
-                return (gx as f32, gy as f32);
-            }
+            let (gx, gy) = snap_to_grid(current_x, current_y);
+            return (gx as f32, gy as f32);
         }
         let (gx, gy) = step.grid_pos.unwrap_or((60, 40));
         (gx as f32, gy as f32)
@@ -252,11 +251,10 @@ impl<'a> SfcCanvasProgram<'a> {
             current_y,
             ..
         } = state.drag
+            && &tr.id == id
         {
-            if &tr.id == id {
-                let (gx, gy) = snap_to_grid(current_x, current_y);
-                return (gx as f32, gy as f32);
-            }
+            let (gx, gy) = snap_to_grid(current_x, current_y);
+            return (gx as f32, gy as f32);
         }
         let (gx, gy) = tr.grid_pos.unwrap_or((110, 140));
         (gx as f32, gy as f32)
@@ -710,11 +708,11 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                 break;
                             }
                         }
-                        SfcValidationError::OrphanElement { element_id, is_step } => {
-                            if *is_step && element_id == &step.id {
-                                err = Some("Unlinked Step");
-                                break;
-                            }
+                        SfcValidationError::OrphanElement { element_id, is_step }
+                            if *is_step && element_id == &step.id =>
+                        {
+                            err = Some("Unlinked Step");
+                            break;
                         }
                         _ => {}
                     }
@@ -785,17 +783,17 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     size: iced::Pixels(12.0),
                     ..Default::default()
                 });
-            } else if let Some(tid) = tree_id {
-                if self.validation_report.as_ref().map(|r| r.trees.len()).unwrap_or(0) > 1 {
-                    frame.fill_text(canvas::Text {
-                        content: format!("T{}", tid + 1),
-                        position: Point::new(x + STEP_WIDTH - 28.0, y + 8.0),
-                        color: COLOR_STEP_DROP,
-                        size: iced::Pixels(11.0),
-                        font: iced::Font::MONOSPACE,
-                        ..Default::default()
-                    });
-                }
+            } else if let Some(tid) = tree_id
+                && self.validation_report.as_ref().map(|r| r.trees.len()).unwrap_or(0) > 1
+            {
+                frame.fill_text(canvas::Text {
+                    content: format!("T{}", tid + 1),
+                    position: Point::new(x + STEP_WIDTH - 28.0, y + 8.0),
+                    color: COLOR_STEP_DROP,
+                    size: iced::Pixels(11.0),
+                    font: iced::Font::MONOSPACE,
+                    ..Default::default()
+                });
             }
 
             // Active dot & timer
@@ -911,11 +909,11 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                 break;
                             }
                         }
-                        SfcValidationError::OrphanElement { element_id, is_step } => {
-                            if !*is_step && element_id == &tr.id {
-                                err = Some("Unlinked Transition");
-                                break;
-                            }
+                        SfcValidationError::OrphanElement { element_id, is_step }
+                            if !*is_step && element_id == &tr.id =>
+                        {
+                            err = Some("Unlinked Transition");
+                            break;
                         }
                         _ => {}
                     }
@@ -954,7 +952,7 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             frame.fill_text(canvas::Text {
                 content: format!("[ {} ]", rec_text),
                 position: Point::new(x + TRANS_WIDTH + 6.0, cy - 6.0),
-                color: if has_error { Color::from_rgb(1.0, 0.4, 0.4) } else { Color::from_rgb(255.0 / 255.0, 210.0 / 255.0, 120.0 / 255.0) },
+                color: if has_error { Color::from_rgb(1.0, 0.4, 0.4) } else { Color::from_rgb(1.0, 210.0 / 255.0, 120.0 / 255.0) },
                 size: iced::Pixels(11.5),
                 font: iced::Font::MONOSPACE,
                 ..Default::default()
@@ -963,12 +961,10 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             // Transition ID and tree or error badge
             let tid_str = if has_error {
                 format!("{} ⚠", tr.id)
-            } else if let Some(tid) = tree_id {
-                if self.validation_report.as_ref().map(|r| r.trees.len()).unwrap_or(0) > 1 {
-                    format!("{} T{}", tr.id, tid + 1)
-                } else {
-                    tr.id.clone()
-                }
+            } else if let Some(tid) = tree_id
+                && self.validation_report.as_ref().map(|r| r.trees.len()).unwrap_or(0) > 1
+            {
+                format!("{} T{}", tr.id, tid + 1)
             } else {
                 tr.id.clone()
             };

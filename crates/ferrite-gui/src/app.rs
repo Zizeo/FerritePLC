@@ -1568,24 +1568,24 @@ impl FerriteStudioApp {
                             crate::canvas_sfc::SfcPortSource::StepOutput(step_id),
                             crate::canvas_sfc::SfcPortTarget::TransitionInput(trans_id),
                         ) => {
-                            if let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == trans_id) {
-                                if !tr.from_steps.contains(&step_id) {
-                                    tr.from_steps.push(step_id);
-                                    self.track_history();
-                                    self.modified = true;
-                                }
+                            if let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == trans_id)
+                                && !tr.from_steps.contains(&step_id)
+                            {
+                                tr.from_steps.push(step_id);
+                                self.track_history();
+                                self.modified = true;
                             }
                         }
                         (
                             crate::canvas_sfc::SfcPortSource::TransitionOutput(trans_id),
                             crate::canvas_sfc::SfcPortTarget::StepInput(step_id),
                         ) => {
-                            if let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == trans_id) {
-                                if !tr.to_steps.contains(&step_id) {
-                                    tr.to_steps.push(step_id);
-                                    self.track_history();
-                                    self.modified = true;
-                                }
+                            if let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == trans_id)
+                                && !tr.to_steps.contains(&step_id)
+                            {
+                                tr.to_steps.push(step_id);
+                                self.track_history();
+                                self.modified = true;
                             }
                         }
                         _ => {}
