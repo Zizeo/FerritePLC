@@ -6,7 +6,11 @@
       "id": "0",
       "name": "CIP_Standby",
       "kind": "initial",
-      "actions": []
+      "actions": [],
+      "grid_pos": [
+        60,
+        40
+      ]
     },
     {
       "id": "1",
@@ -23,6 +27,10 @@
           "target": "Sanitizer_Valve",
           "duration": null
         }
+      ],
+      "grid_pos": [
+        60,
+        240
       ]
     },
     {
@@ -35,6 +43,10 @@
           "target": "Sanitize_Count := Sanitize_Count + 1;",
           "duration": null
         }
+      ],
+      "grid_pos": [
+        60,
+        440
       ]
     }
   ],
@@ -49,7 +61,11 @@
       ],
       "receptivity": "batch_seq.X6.state AND Permissive_OK",
       "convergence": "and",
-      "divergence": "and"
+      "divergence": "and",
+      "grid_pos": [
+        110,
+        140
+      ]
     },
     {
       "id": "T_CIP_Done",
@@ -61,7 +77,11 @@
       ],
       "receptivity": "Tank_Level = 0",
       "convergence": "and",
-      "divergence": "and"
+      "divergence": "and",
+      "grid_pos": [
+        110,
+        340
+      ]
     },
     {
       "id": "T_CIP_Reset",
@@ -73,7 +93,11 @@
       ],
       "receptivity": "batch_seq.X0.state",
       "convergence": "and",
-      "divergence": "and"
+      "divergence": "and",
+      "grid_pos": [
+        110,
+        540
+      ]
     }
   ]
 }

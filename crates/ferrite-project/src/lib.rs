@@ -1059,6 +1059,11 @@ END_PROGRAM
             }],
         };
 
+        let mut sfc_pou = sfc_pou;
+        sfc_pou.assign_default_grid_positions();
+        let mut cip_sfc_pou = cip_sfc_pou;
+        cip_sfc_pou.assign_default_grid_positions();
+
         let mut pous = HashMap::new();
         pous.insert("main_safety".to_string(), PouSource::Ld(ld_pou));
         pous.insert("batch_seq".to_string(), PouSource::Sfc(sfc_pou));
@@ -1156,7 +1161,15 @@ END_PROGRAM
             })?;
             let src = match entry.language {
                 LanguageKind::Ld => PouSource::Ld(LdProgram::from_json(&raw)?),
-                LanguageKind::Sfc => PouSource::Sfc(SfcProgram::from_json(&raw)?),
+                LanguageKind::Sfc => {
+                    let mut sfc = SfcProgram::from_json(&raw)?;
+                    if sfc.steps.iter().any(|s| s.grid_pos.is_none())
+                        || sfc.transitions.iter().any(|t| t.grid_pos.is_none())
+                    {
+                        sfc.assign_default_grid_positions();
+                    }
+                    PouSource::Sfc(sfc)
+                }
                 LanguageKind::St => PouSource::St(StProgram::parse(&entry.name, raw)?),
                 LanguageKind::Fbd => PouSource::Fbd(FbdProgram::from_json(&raw)?),
             };
@@ -1239,7 +1252,7 @@ END_PROGRAM
                     name: format!("{name}_Init"),
                     kind: StepKind::Initial,
                     actions: vec![],
-                    ..Default::default()
+                    grid_pos: Some((60, 40)),
                 }],
                 transitions: vec![],
             }),
@@ -1471,6 +1484,39 @@ mod tests {
 
         let _ = fs::remove_dir_all(&temp_dir);
         let _ = fs::remove_dir_all(&import_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_examples_sfc_auto_sort_persisted() -> Result<(), Box<dyn std::error::Error>> {
+        let candidates = [
+            PathBuf::from("../../examples/my_automation_plant"),
+            PathBuf::from("examples/my_automation_plant"),
+            PathBuf::from("../../examples/complex_batch_plant"),
+            PathBuf::from("examples/complex_batch_plant"),
+        ];
+
+        for path in &candidates {
+            if path.exists() {
+                let proj = Project::load(path)?;
+                for (name, pou) in &proj.pous {
+                    if let PouSource::Sfc(sfc) = pou {
+                        assert!(
+                            sfc.steps.iter().all(|s| s.grid_pos.is_some()),
+                            "Step without grid_pos in {}::{}",
+                            path.display(),
+                            name
+                        );
+                        assert!(
+                            sfc.transitions.iter().all(|t| t.grid_pos.is_some()),
+                            "Transition without grid_pos in {}::{}",
+                            path.display(),
+                            name
+                        );
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }

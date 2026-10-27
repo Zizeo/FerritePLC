@@ -240,7 +240,9 @@ impl<'a> SfcCanvasProgram<'a> {
             let (gx, gy) = snap_to_grid(current_x, current_y);
             return (gx as f32, gy as f32);
         }
-        let (gx, gy) = step.grid_pos.unwrap_or((60, 40));
+        let fallback_idx = self.program.steps.iter().position(|s| s.id == step.id).unwrap_or(0);
+        let fallback_pos = (60 + (fallback_idx as i32 % 3) * 260, 40 + (fallback_idx as i32 / 3) * 220);
+        let (gx, gy) = step.grid_pos.unwrap_or(fallback_pos);
         (gx as f32, gy as f32)
     }
 
@@ -256,7 +258,9 @@ impl<'a> SfcCanvasProgram<'a> {
             let (gx, gy) = snap_to_grid(current_x, current_y);
             return (gx as f32, gy as f32);
         }
-        let (gx, gy) = tr.grid_pos.unwrap_or((110, 140));
+        let fallback_idx = self.program.transitions.iter().position(|t| t.id == tr.id).unwrap_or(0);
+        let fallback_pos = (110 + (fallback_idx as i32 % 3) * 260, 140 + (fallback_idx as i32 / 3) * 220);
+        let (gx, gy) = tr.grid_pos.unwrap_or(fallback_pos);
         (gx as f32, gy as f32)
     }
 
@@ -1226,7 +1230,7 @@ pub fn render_sfc_editor<'a>(
             .style(sfc_subtle_button)
             .padding([4, 10]);
 
-        let auto_layout_btn = button(text("Auto-Layout Grid").size(11.5))
+        let auto_layout_btn = button(text("Auto-Sort Layout").size(11.5))
             .on_press(Message::SfcAutoLayout(pou_name.clone()))
             .style(sfc_subtle_button)
             .padding([4, 10]);
@@ -1277,7 +1281,7 @@ pub fn render_sfc_editor<'a>(
         toolbar_row.into()
     };
 
-    let tip = text("Tip: Drag elements to snap to 20px grid. Drag from Bottom Port (●) to Top Port (●) to connect wires. Click element to inspect.")
+    let tip = text("Tip: Click 'Auto-Sort Layout' to auto-align all branches. Drag elements (snaps to 20px). Drag wires from Bottom (●) to Top (●) ports.")
         .size(10.5)
         .color(StudioTheme::TEXT_MUTED);
 

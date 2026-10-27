@@ -577,59 +577,116 @@ impl SfcProgram {
     /// Computes and assigns orderly, non-overlapping grid positions `(grid_x, grid_y)`
     /// for all steps and transitions that do not yet have explicit coordinates.
     pub fn assign_default_grid_positions(&mut self) {
-        let rows = compute_sfc_step_rows(self);
-        let mut y = 40;
-        let mut assigned_transitions = HashSet::new();
+        let report = validate_sfc_topology(self);
+        let mut current_tree_x = 60;
+        let mut placed_steps = HashSet::new();
+        let mut placed_trans = HashSet::new();
 
-        for row in rows {
-            for (c_idx, &s_idx) in row.iter().enumerate() {
-                if let Some(step) = self.steps.get_mut(s_idx)
-                    && step.grid_pos.is_none()
-                {
-                    let x = 60 + (c_idx as i32) * 260;
-                    step.grid_pos = Some((x, y));
+        // 1. Arrange each independent tree in its own non-overlapping vertical column band
+        for tree in &report.trees {
+            let mut tree_steps: Vec<usize> = Vec::new();
+            for sid in &tree.step_ids {
+                if let Some(pos) = self.steps.iter().position(|s| &s.id == sid || &s.name == sid) {
+                    tree_steps.push(pos);
                 }
             }
 
-            // Find transitions originating from steps in this row
-            let from_step_ids: Vec<String> = row
-                .iter()
-                .filter_map(|&si| self.steps.get(si).map(|s| s.id.clone()))
+            let all_rows = compute_sfc_step_rows(self);
+            let tree_rows: Vec<Vec<usize>> = all_rows
+                .into_iter()
+                .map(|r| r.into_iter().filter(|si| tree_steps.contains(si)).collect())
+                .filter(|r: &Vec<usize>| !r.is_empty())
                 .collect();
-            let mut trans_in_row = Vec::new();
-            for (t_idx, tr) in self.transitions.iter().enumerate() {
-                if !assigned_transitions.contains(&t_idx)
-                    && tr.from_steps.iter().any(|fs| {
-                        from_step_ids.contains(fs)
-                            || from_step_ids
-                                .iter()
-                                .any(|sid| sid == fs.strip_prefix('X').unwrap_or(fs))
-                    })
-                {
-                    trans_in_row.push(t_idx);
+
+            let max_cols = tree_rows.iter().map(|r| r.len()).max().unwrap_or(1);
+            let mut y = 40;
+
+            for row in &tree_rows {
+                let cols = row.len();
+                let center_offset = if cols == 1 && max_cols > 1 {
+                    ((max_cols - 1) as i32 * 260) / 2
+                } else {
+                    0
+                };
+
+                for (c_idx, &s_idx) in row.iter().enumerate() {
+                    placed_steps.insert(s_idx);
+                    if let Some(step) = self.steps.get_mut(s_idx)
+                        && step.grid_pos.is_none()
+                    {
+                        let x = current_tree_x + center_offset + (c_idx as i32) * 260;
+                        step.grid_pos = Some((x, y));
+                    }
                 }
+
+                // Find transitions originating from steps in this row
+                let from_step_ids: Vec<String> = row
+                    .iter()
+                    .filter_map(|&si| self.steps.get(si).map(|s| s.id.clone()))
+                    .collect();
+
+                let mut trans_in_row = Vec::new();
+                for (t_idx, tr) in self.transitions.iter().enumerate() {
+                    if !placed_trans.contains(&t_idx)
+                        && tree.transition_ids.contains(&tr.id)
+                        && tr.from_steps.iter().any(|fs| {
+                            from_step_ids.contains(fs)
+                                || from_step_ids
+                                    .iter()
+                                    .any(|sid| sid == fs.strip_prefix('X').unwrap_or(fs))
+                        })
+                    {
+                        trans_in_row.push(t_idx);
+                    }
+                }
+
+                if !trans_in_row.is_empty() {
+                    y += 100;
+                    let t_cols = trans_in_row.len();
+                    for (c_idx, &t_idx) in trans_in_row.iter().enumerate() {
+                        placed_trans.insert(t_idx);
+                        if let Some(tr) = self.transitions.get_mut(t_idx)
+                            && tr.grid_pos.is_none()
+                        {
+                            let x = if t_cols == 1 && max_cols > 1 {
+                                current_tree_x + ((max_cols - 1) as i32 * 260) / 2 + 50
+                            } else {
+                                current_tree_x + (c_idx as i32) * 260 + 50
+                            };
+                            tr.grid_pos = Some((x, y));
+                        }
+                    }
+                }
+                y += 100;
             }
 
-            if !trans_in_row.is_empty() {
-                y += 100;
-                for (c_idx, &t_idx) in trans_in_row.iter().enumerate() {
-                    assigned_transitions.insert(t_idx);
-                    if let Some(tr) = self.transitions.get_mut(t_idx)
-                        && tr.grid_pos.is_none()
-                    {
-                        let x = 60 + (c_idx as i32) * 260 + 50;
+            // Any unlinked transitions belonging to this tree
+            for (t_idx, tr) in self.transitions.iter_mut().enumerate() {
+                if tree.transition_ids.contains(&tr.id) && !placed_trans.contains(&t_idx) {
+                    placed_trans.insert(t_idx);
+                    if tr.grid_pos.is_none() {
+                        let x = current_tree_x + 50;
                         tr.grid_pos = Some((x, y));
+                        y += 80;
                     }
                 }
             }
-            y += 100;
+
+            current_tree_x += (max_cols as i32 * 260) + 120;
         }
 
-        // Any leftover unlinked transitions
+        // 2. Any leftover unplaced steps or transitions (e.g. isolated or unreferenced)
+        let mut unlinked_y = 40;
+        for (s_idx, step) in self.steps.iter_mut().enumerate() {
+            if !placed_steps.contains(&s_idx) && step.grid_pos.is_none() {
+                step.grid_pos = Some((current_tree_x, unlinked_y));
+                unlinked_y += 120;
+            }
+        }
         for (t_idx, tr) in self.transitions.iter_mut().enumerate() {
-            if !assigned_transitions.contains(&t_idx) && tr.grid_pos.is_none() {
-                tr.grid_pos = Some((360, y));
-                y += 80;
+            if !placed_trans.contains(&t_idx) && tr.grid_pos.is_none() {
+                tr.grid_pos = Some((current_tree_x + 50, unlinked_y));
+                unlinked_y += 100;
             }
         }
     }
@@ -1703,6 +1760,121 @@ mod tests {
         assert!(ctx.read_bool("dual_trees.X11.state")?);
         assert!(ctx.read_bool("Act_Tree2")?);
         assert!(ctx.read_bool("Act_Tree1")?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sfc_auto_sort_layout_multi_tree_and_divergence() -> Result<(), Box<dyn std::error::Error>> {
+        let mut prog = SfcProgram {
+            name: "multi_auto_sort".to_string(),
+            comment: String::new(),
+            steps: vec![
+                SfcStep::new("0", "Init1", StepKind::Initial),
+                SfcStep::new("1", "BranchA", StepKind::Normal),
+                SfcStep::new("2", "BranchB", StepKind::Normal),
+                SfcStep::new("3", "Join", StepKind::Normal),
+                // Tree 2
+                SfcStep::new("10", "Init2", StepKind::Initial),
+                SfcStep::new("11", "Run2", StepKind::Normal),
+            ],
+            transitions: vec![
+                // T1: AND divergence 0 -> 1, 2
+                SfcTransition {
+                    id: "T1".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["1".to_string(), "2".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    grid_pos: None,
+                },
+                // T2: AND convergence 1, 2 -> 3
+                SfcTransition {
+                    id: "T2".to_string(),
+                    from_steps: vec!["1".to_string(), "2".to_string()],
+                    to_steps: vec!["3".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    grid_pos: None,
+                },
+                // Tree 2 transition
+                SfcTransition {
+                    id: "T3".to_string(),
+                    from_steps: vec!["10".to_string()],
+                    to_steps: vec!["11".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    grid_pos: None,
+                },
+            ],
+        };
+
+        // All grid_pos are initially None
+        assert!(prog.steps.iter().all(|s| s.grid_pos.is_none()));
+        assert!(prog.transitions.iter().all(|t| t.grid_pos.is_none()));
+
+        // Run auto-sort
+        prog.assign_default_grid_positions();
+
+        // Every step and transition now has a valid grid position
+        assert!(prog.steps.iter().all(|s| s.grid_pos.is_some()));
+        assert!(prog.transitions.iter().all(|t| t.grid_pos.is_some()));
+
+        let get_step_pos = |id: &str| -> Result<(i32, i32), Box<dyn std::error::Error>> {
+            prog.steps
+                .iter()
+                .find(|s| s.id == id)
+                .and_then(|s| s.grid_pos)
+                .ok_or_else(|| format!("missing grid_pos for step {id}").into())
+        };
+        let get_trans_pos = |id: &str| -> Result<(i32, i32), Box<dyn std::error::Error>> {
+            prog.transitions
+                .iter()
+                .find(|t| t.id == id)
+                .and_then(|t| t.grid_pos)
+                .ok_or_else(|| format!("missing grid_pos for transition {id}").into())
+        };
+
+        let s0 = get_step_pos("0")?;
+        let s1 = get_step_pos("1")?;
+        let s2 = get_step_pos("2")?;
+        let s3 = get_step_pos("3")?;
+        let s10 = get_step_pos("10")?;
+        let s11 = get_step_pos("11")?;
+
+        let t1 = get_trans_pos("T1")?;
+        let t2 = get_trans_pos("T2")?;
+        let t3 = get_trans_pos("T3")?;
+
+        // Tree 1: 2 parallel branches (max_cols = 2).
+        // Branch A (s1) at x=60, Branch B (s2) at x=320.
+        // Single steps s0 and s3 should be horizontally centered between the branches:
+        // center = 60 + 130 = 190.
+        assert_eq!(s1.0, 60);
+        assert_eq!(s2.0, 320);
+        assert_eq!(s0.0, 190);
+        assert_eq!(s3.0, 190);
+
+        // T1 and T2 are centered: 190 + 50 = 240.
+        assert_eq!(t1.0, 240);
+        assert_eq!(t2.0, 240);
+
+        // Y order in Tree 1: s0 < t1 < s1 & s2 < t2 < s3
+        assert!(s0.1 < t1.1);
+        assert!(t1.1 < s1.1);
+        assert_eq!(s1.1, s2.1);
+        assert!(s1.1 < t2.1);
+        assert!(t2.1 < s3.1);
+
+        // Tree 2 must be separated into a distinct horizontal band (x > 320 + 260)
+        assert!(s10.0 > s2.0);
+        assert_eq!(s10.0, s11.0);
+        assert_eq!(t3.0, s10.0 + 50);
+        assert!(s10.1 < t3.1);
+        assert!(t3.1 < s11.1);
 
         Ok(())
     }

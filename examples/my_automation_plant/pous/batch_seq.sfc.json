@@ -17,6 +17,10 @@
           "target": "cip_clean.X0.state",
           "duration": null
         }
+      ],
+      "grid_pos": [
+        190,
+        40
       ]
     },
     {
@@ -34,6 +38,10 @@
           "target": "Batch_Count := Batch_Count + 1;",
           "duration": null
         }
+      ],
+      "grid_pos": [
+        60,
+        240
       ]
     },
     {
@@ -51,13 +59,21 @@
           "target": "Agitator_Fast",
           "duration": "T#150ms"
         }
+      ],
+      "grid_pos": [
+        320,
+        240
       ]
     },
     {
       "id": "3",
       "name": "Step_Recipe_Select",
       "kind": "normal",
-      "actions": []
+      "actions": [],
+      "grid_pos": [
+        190,
+        440
+      ]
     },
     {
       "id": "4",
@@ -74,6 +90,10 @@
           "target": "Heater_On",
           "duration": null
         }
+      ],
+      "grid_pos": [
+        60,
+        640
       ]
     },
     {
@@ -91,6 +111,10 @@
           "target": "Agitator_Slow",
           "duration": "T#100ms"
         }
+      ],
+      "grid_pos": [
+        320,
+        640
       ]
     },
     {
@@ -103,6 +127,10 @@
           "target": "Drain_Valve",
           "duration": null
         }
+      ],
+      "grid_pos": [
+        190,
+        840
       ]
     }
   ],
@@ -118,7 +146,11 @@
       ],
       "receptivity": "Permissive_OK AND (Start_Pulse OR Start_Button)",
       "convergence": "and",
-      "divergence": "and"
+      "divergence": "and",
+      "grid_pos": [
+        240,
+        140
+      ]
     },
     {
       "id": "T2_AndConv",
@@ -131,7 +163,11 @@
       ],
       "receptivity": "Tank_Level >= 50 AND Reagent_Ready",
       "convergence": "and",
-      "divergence": "and"
+      "divergence": "and",
+      "grid_pos": [
+        240,
+        340
+      ]
     },
     {
       "id": "T3_Or_Fast",
@@ -143,7 +179,11 @@
       ],
       "receptivity": "Fast_Recipe_Mode AND Permissive_OK",
       "convergence": "and",
-      "divergence": "or"
+      "divergence": "or",
+      "grid_pos": [
+        110,
+        540
+      ]
     },
     {
       "id": "T4_Or_Slow",
@@ -155,7 +195,11 @@
       ],
       "receptivity": "NOT Fast_Recipe_Mode AND Permissive_OK",
       "convergence": "and",
-      "divergence": "or"
+      "divergence": "or",
+      "grid_pos": [
+        370,
+        540
+      ]
     },
     {
       "id": "T5_OrConv",
@@ -168,7 +212,11 @@
       ],
       "receptivity": "Mix_Done AND Tank_Temp >= 60.0",
       "convergence": "or",
-      "divergence": "and"
+      "divergence": "and",
+      "grid_pos": [
+        240,
+        740
+      ]
     },
     {
       "id": "T6_SubSfc_Done",
@@ -180,7 +228,11 @@
       ],
       "receptivity": "cip_clean.X2.state OR NOT Permissive_OK",
       "convergence": "and",
-      "divergence": "and"
+      "divergence": "and",
+      "grid_pos": [
+        240,
+        940
+      ]
     }
   ]
 }

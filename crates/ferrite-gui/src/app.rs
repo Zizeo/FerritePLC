@@ -263,7 +263,16 @@ impl FerriteStudioApp {
         Self::with_language(initial_project, UiLanguage::En)
     }
 
-    pub fn with_language(initial_project: Project, ui_lang: UiLanguage) -> Self {
+    pub fn with_language(mut initial_project: Project, ui_lang: UiLanguage) -> Self {
+        for pou_src in initial_project.pous.values_mut() {
+            if let PouSource::Sfc(sfc) = pou_src
+                && (sfc.steps.iter().any(|s| s.grid_pos.is_none())
+                    || sfc.transitions.iter().any(|t| t.grid_pos.is_none()))
+            {
+                sfc.assign_default_grid_positions();
+            }
+        }
+
         let first_pou = initial_project
             .manifest
             .pous
@@ -1252,12 +1261,58 @@ impl FerriteStudioApp {
             Message::SfcAddStep(pou_name) => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
                     let next = sfc.steps.len() + 1;
+                    let step_id = format!("X{next}");
+                    let step_name = format!("Step_{next}");
+
+                    let pos = if let Some((ref p, ref key)) = self.sfc_selected
+                        && p == &pou_name
+                    {
+                        match key {
+                            crate::canvas_sfc::SfcElementKey::Step(sid) => {
+                                sfc.steps
+                                    .iter()
+                                    .find(|s| &s.id == sid)
+                                    .and_then(|s| s.grid_pos)
+                                    .map(|(sx, sy)| (sx, sy + 160))
+                            }
+                            crate::canvas_sfc::SfcElementKey::Transition(tid) => {
+                                sfc.transitions
+                                    .iter()
+                                    .find(|t| &t.id == tid)
+                                    .and_then(|t| t.grid_pos)
+                                    .map(|(tx, ty)| ((tx - 50).max(60), ty + 80))
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    let grid_pos = pos.or_else(|| {
+                        let lowest_y = sfc
+                            .steps
+                            .iter()
+                            .filter_map(|s| s.grid_pos.map(|(_, y)| y + 60))
+                            .chain(sfc.transitions.iter().filter_map(|t| t.grid_pos.map(|(_, y)| y + 20)))
+                            .max();
+                        let base_x = sfc.steps.first().and_then(|s| s.grid_pos.map(|(x, _)| x)).unwrap_or(60);
+                        Some((base_x, lowest_y.map(|y| y + 40).unwrap_or(40)))
+                    });
+
+                    // If a transition was selected, automatically connect it to this new step
+                    if let Some((ref p, crate::canvas_sfc::SfcElementKey::Transition(ref tid))) = self.sfc_selected
+                        && p == &pou_name
+                        && let Some(tr) = sfc.transitions.iter_mut().find(|t| &t.id == tid)
+                        && !tr.to_steps.contains(&step_id)
+                    {
+                        tr.to_steps.push(step_id.clone());
+                    }
+
                     sfc.steps.push(SfcStep {
-                        id: format!("X{next}"),
-                        name: format!("Step_{next}"),
+                        id: step_id,
+                        name: step_name,
                         kind: StepKind::Normal,
                         actions: Vec::new(),
-                        ..Default::default()
+                        grid_pos,
                     });
                     self.track_history();
                     self.modified = true;
@@ -1350,14 +1405,46 @@ impl FerriteStudioApp {
             Message::SfcAddTransition(pou_name) => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
                     let next = sfc.transitions.len() + 1;
+                    let trans_id = format!("T{next}");
+
+                    let (pos, from_steps) = if let Some((ref p, ref key)) = self.sfc_selected
+                        && p == &pou_name
+                    {
+                        match key {
+                            crate::canvas_sfc::SfcElementKey::Step(sid) => {
+                                let step_pos = sfc.steps.iter().find(|s| &s.id == sid).and_then(|s| s.grid_pos);
+                                let p = step_pos.map(|(sx, sy)| (sx + 50, sy + 100));
+                                (p, vec![sid.clone()])
+                            }
+                            crate::canvas_sfc::SfcElementKey::Transition(tid) => {
+                                let tr_pos = sfc.transitions.iter().find(|t| &t.id == tid).and_then(|t| t.grid_pos);
+                                let p = tr_pos.map(|(tx, ty)| (tx, ty + 120));
+                                (p, vec![])
+                            }
+                        }
+                    } else {
+                        (None, sfc.steps.last().map(|s| vec![s.id.clone()]).unwrap_or_default())
+                    };
+
+                    let grid_pos = pos.or_else(|| {
+                        let lowest_y = sfc
+                            .steps
+                            .iter()
+                            .filter_map(|s| s.grid_pos.map(|(_, y)| y + 60))
+                            .chain(sfc.transitions.iter().filter_map(|t| t.grid_pos.map(|(_, y)| y + 20)))
+                            .max();
+                        let base_x = sfc.transitions.first().and_then(|t| t.grid_pos.map(|(x, _)| x)).unwrap_or(110);
+                        Some((base_x, lowest_y.map(|y| y + 40).unwrap_or(140)))
+                    });
+
                     sfc.transitions.push(SfcTransition {
-                        id: format!("T{next}"),
-                        from_steps: vec!["X1".to_string()],
-                        to_steps: vec!["X2".to_string()],
+                        id: trans_id,
+                        from_steps,
+                        to_steps: Vec::new(),
                         receptivity: "TRUE".to_string(),
                         convergence: Default::default(),
                         divergence: Default::default(),
-                        ..Default::default()
+                        grid_pos,
                     });
                     self.track_history();
                     self.modified = true;
@@ -1402,22 +1489,31 @@ impl FerriteStudioApp {
             }
             Message::SfcAddAndDivergence(pou_name) => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
-                    let src_id = sfc.steps.last().map(|s| s.id.clone()).unwrap_or_else(|| "0".to_string());
+                    let src_step = sfc.steps.last().cloned();
+                    let src_id = src_step.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| "0".to_string());
+                    let src_pos = src_step.as_ref().and_then(|s| s.grid_pos).unwrap_or((60, 40));
+
                     let id_a = sfc.steps.len().to_string();
                     let id_b = (sfc.steps.len() + 1).to_string();
+
+                    let trans_x = src_pos.0 + 50;
+                    let trans_y = src_pos.1 + 100;
+                    let step_a_pos = (src_pos.0, trans_y + 80);
+                    let step_b_pos = (src_pos.0 + 260, trans_y + 80);
+
                     sfc.steps.push(SfcStep {
                         id: id_a.clone(),
                         name: format!("Branch_{id_a}"),
                         kind: StepKind::Normal,
                         actions: vec![],
-                        ..Default::default()
+                        grid_pos: Some(step_a_pos),
                     });
                     sfc.steps.push(SfcStep {
                         id: id_b.clone(),
                         name: format!("Branch_{id_b}"),
                         kind: StepKind::Normal,
                         actions: vec![],
-                        ..Default::default()
+                        grid_pos: Some(step_b_pos),
                     });
                     let next_t = sfc.transitions.len() + 1;
                     sfc.transitions.push(SfcTransition {
@@ -1427,7 +1523,7 @@ impl FerriteStudioApp {
                         receptivity: "TRUE".to_string(),
                         convergence: ConvergenceKind::And,
                         divergence: DivergenceKind::And,
-                        ..Default::default()
+                        grid_pos: Some((trans_x, trans_y)),
                     });
                     self.track_history();
                     self.modified = true;
@@ -1438,15 +1534,26 @@ impl FerriteStudioApp {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name)
                     && sfc.steps.len() >= 2 {
                         let len = sfc.steps.len();
-                        let from_a = sfc.steps[len - 2].id.clone();
-                        let from_b = sfc.steps[len - 1].id.clone();
+                        let from_a_step = sfc.steps[len - 2].clone();
+                        let from_b_step = sfc.steps[len - 1].clone();
+                        let from_a = from_a_step.id.clone();
+                        let from_b = from_b_step.id.clone();
+
+                        let pos_a = from_a_step.grid_pos.unwrap_or((60, 40));
+                        let pos_b = from_b_step.grid_pos.unwrap_or((320, 40));
+                        let max_y = pos_a.1.max(pos_b.1);
+                        let center_x = (pos_a.0 + pos_b.0) / 2;
+
+                        let trans_pos = (center_x + 50, max_y + 100);
+                        let join_pos = (center_x, trans_pos.1 + 80);
+
                         let join_id = len.to_string();
                         sfc.steps.push(SfcStep {
                             id: join_id.clone(),
                             name: format!("Step_Join_{join_id}"),
                             kind: StepKind::Normal,
                             actions: vec![],
-                            ..Default::default()
+                            grid_pos: Some(join_pos),
                         });
                         let next_t = sfc.transitions.len() + 1;
                         sfc.transitions.push(SfcTransition {
@@ -1456,7 +1563,7 @@ impl FerriteStudioApp {
                             receptivity: "TRUE".to_string(),
                             convergence: ConvergenceKind::And,
                             divergence: DivergenceKind::And,
-                            ..Default::default()
+                            grid_pos: Some(trans_pos),
                         });
                         self.track_history();
                         self.modified = true;
@@ -1465,22 +1572,31 @@ impl FerriteStudioApp {
             }
             Message::SfcAddOrDivergence(pou_name) => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
-                    let src_id = sfc.steps.last().map(|s| s.id.clone()).unwrap_or_else(|| "0".to_string());
+                    let src_step = sfc.steps.last().cloned();
+                    let src_id = src_step.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| "0".to_string());
+                    let src_pos = src_step.as_ref().and_then(|s| s.grid_pos).unwrap_or((60, 40));
+
                     let id_a = sfc.steps.len().to_string();
                     let id_b = (sfc.steps.len() + 1).to_string();
+
+                    let trans_a_pos = (src_pos.0 + 50, src_pos.1 + 100);
+                    let step_a_pos = (src_pos.0, src_pos.1 + 180);
+                    let trans_b_pos = (src_pos.0 + 260 + 50, src_pos.1 + 100);
+                    let step_b_pos = (src_pos.0 + 260, src_pos.1 + 180);
+
                     sfc.steps.push(SfcStep {
                         id: id_a.clone(),
                         name: format!("Alt_{id_a}"),
                         kind: StepKind::Normal,
                         actions: vec![],
-                        ..Default::default()
+                        grid_pos: Some(step_a_pos),
                     });
                     sfc.steps.push(SfcStep {
                         id: id_b.clone(),
                         name: format!("Alt_{id_b}"),
                         kind: StepKind::Normal,
                         actions: vec![],
-                        ..Default::default()
+                        grid_pos: Some(step_b_pos),
                     });
                     let t1 = sfc.transitions.len() + 1;
                     let t2 = t1 + 1;
@@ -1491,7 +1607,7 @@ impl FerriteStudioApp {
                         receptivity: "TRUE".to_string(),
                         convergence: ConvergenceKind::And,
                         divergence: DivergenceKind::Or,
-                        ..Default::default()
+                        grid_pos: Some(trans_a_pos),
                     });
                     sfc.transitions.push(SfcTransition {
                         id: format!("T{t2}_OrB"),
@@ -1500,7 +1616,7 @@ impl FerriteStudioApp {
                         receptivity: "FALSE".to_string(),
                         convergence: ConvergenceKind::And,
                         divergence: DivergenceKind::Or,
-                        ..Default::default()
+                        grid_pos: Some(trans_b_pos),
                     });
                     self.track_history();
                     self.modified = true;
@@ -1511,15 +1627,26 @@ impl FerriteStudioApp {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name)
                     && sfc.steps.len() >= 2 {
                         let len = sfc.steps.len();
-                        let from_a = sfc.steps[len - 2].id.clone();
-                        let from_b = sfc.steps[len - 1].id.clone();
+                        let from_a_step = sfc.steps[len - 2].clone();
+                        let from_b_step = sfc.steps[len - 1].clone();
+                        let from_a = from_a_step.id.clone();
+                        let from_b = from_b_step.id.clone();
+
+                        let pos_a = from_a_step.grid_pos.unwrap_or((60, 40));
+                        let pos_b = from_b_step.grid_pos.unwrap_or((320, 40));
+                        let max_y = pos_a.1.max(pos_b.1);
+                        let center_x = (pos_a.0 + pos_b.0) / 2;
+
+                        let trans_pos = (center_x + 50, max_y + 100);
+                        let join_pos = (center_x, trans_pos.1 + 80);
+
                         let join_id = len.to_string();
                         sfc.steps.push(SfcStep {
                             id: join_id.clone(),
                             name: format!("Step_Merge_{join_id}"),
                             kind: StepKind::Normal,
                             actions: vec![],
-                            ..Default::default()
+                            grid_pos: Some(join_pos),
                         });
                         let next_t = sfc.transitions.len() + 1;
                         sfc.transitions.push(SfcTransition {
@@ -1529,7 +1656,7 @@ impl FerriteStudioApp {
                             receptivity: "TRUE".to_string(),
                             convergence: ConvergenceKind::Or,
                             divergence: DivergenceKind::And,
-                            ..Default::default()
+                            grid_pos: Some(trans_pos),
                         });
                         self.track_history();
                         self.modified = true;
