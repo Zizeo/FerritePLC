@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use ferrite_core::{
     CoreError, ExecutablePou, IecType, IecValue, LanguageKind, PouId, RuntimeError, ScanContext,
@@ -47,12 +47,19 @@ pub enum SfcError {
         #[source]
         source: CoreError,
     },
+
+    #[error("Topology validation error in SFC POU '{pou}': {errors:?}")]
+    TopologyValidation {
+        pou: String,
+        errors: Vec<SfcValidationError>,
+    },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StepKind {
     Initial,
+    #[default]
     Normal,
     Macro,
 }
@@ -110,7 +117,7 @@ pub struct SfcAction {
     pub duration: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SfcStep {
     pub id: String,
     #[serde(default)]
@@ -118,9 +125,28 @@ pub struct SfcStep {
     pub kind: StepKind,
     #[serde(default)]
     pub actions: Vec<SfcAction>,
+    #[serde(default)]
+    pub grid_pos: Option<(i32, i32)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl SfcStep {
+    pub fn new(id: impl Into<String>, name: impl Into<String>, kind: StepKind) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            kind,
+            actions: Vec::new(),
+            grid_pos: None,
+        }
+    }
+
+    pub fn with_pos(mut self, x: i32, y: i32) -> Self {
+        self.grid_pos = Some((x, y));
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SfcTransition {
     pub id: String,
     pub from_steps: Vec<String>,
@@ -133,6 +159,383 @@ pub struct SfcTransition {
     /// Divergence behavior (`And` = simultaneous `===`, `Or` = exclusive selection `---`).
     #[serde(default)]
     pub divergence: DivergenceKind,
+    #[serde(default)]
+    pub grid_pos: Option<(i32, i32)>,
+}
+
+impl SfcTransition {
+    pub fn new(id: impl Into<String>, receptivity: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            from_steps: Vec::new(),
+            to_steps: Vec::new(),
+            receptivity: receptivity.into(),
+            convergence: ConvergenceKind::And,
+            divergence: DivergenceKind::And,
+            grid_pos: None,
+        }
+    }
+
+    pub fn with_pos(mut self, x: i32, y: i32) -> Self {
+        self.grid_pos = Some((x, y));
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SfcTreeInfo {
+    pub tree_id: usize,
+    pub step_ids: Vec<String>,
+    pub transition_ids: Vec<String>,
+    pub initial_step_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SfcValidationError {
+    MissingInitialStepInTree {
+        tree_id: usize,
+        step_ids: Vec<String>,
+    },
+    DanglingStepReference {
+        transition_id: String,
+        referenced_step: String,
+        is_from_step: bool,
+    },
+    InvalidAlternation {
+        element_id: String,
+        reason: String,
+    },
+    OrphanElement {
+        element_id: String,
+        is_step: bool,
+    },
+    UnclosedAndBranch {
+        transition_id: String,
+        reason: String,
+    },
+}
+
+impl std::fmt::Display for SfcValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingInitialStepInTree { tree_id, step_ids } => {
+                write!(
+                    f,
+                    "Tree #{tree_id} (steps: [{}]) is missing an Initial Step",
+                    step_ids.join(", ")
+                )
+            }
+            Self::DanglingStepReference {
+                transition_id,
+                referenced_step,
+                is_from_step,
+            } => {
+                let dir = if *is_from_step { "source" } else { "target" };
+                write!(
+                    f,
+                    "Transition '{transition_id}' references unknown {dir} step '{referenced_step}'"
+                )
+            }
+            Self::InvalidAlternation { element_id, reason } => {
+                write!(f, "Alternation violation at '{element_id}': {reason}")
+            }
+            Self::OrphanElement { element_id, is_step } => {
+                let kind = if *is_step { "Step" } else { "Transition" };
+                write!(f, "Orphan {kind} '{element_id}' is disconnected from any link")
+            }
+            Self::UnclosedAndBranch { transition_id, reason } => {
+                write!(
+                    f,
+                    "Unclosed AND divergence at transition '{transition_id}': {reason}"
+                )
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SfcValidationReport {
+    pub is_valid: bool,
+    pub errors: Vec<SfcValidationError>,
+    pub warnings: Vec<String>,
+    pub trees: Vec<SfcTreeInfo>,
+}
+
+/// Validates the graph topology of an SFC program:
+/// 1. Discovers independent parallel trees (connected components).
+/// 2. Verifies each non-empty tree has at least one initial step.
+/// 3. Detects dangling step references in transitions.
+/// 4. Checks for orphan steps and transitions.
+pub fn validate_sfc_topology(program: &SfcProgram) -> SfcValidationReport {
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+
+    if program.steps.is_empty() && program.transitions.is_empty() {
+        return SfcValidationReport {
+            is_valid: true,
+            errors,
+            warnings,
+            trees: Vec::new(),
+        };
+    }
+
+    // 1. Build step lookup map
+    let mut step_map: HashMap<String, usize> = HashMap::new();
+    for (idx, step) in program.steps.iter().enumerate() {
+        step_map.insert(step.id.clone(), idx);
+        step_map.insert(step.name.clone(), idx);
+        let trimmed = step.id.trim();
+        let stripped = trimmed
+            .strip_prefix('X')
+            .or_else(|| trimmed.strip_prefix('x'))
+            .unwrap_or(trimmed);
+        step_map.insert(stripped.to_string(), idx);
+    }
+
+    // 2. Validate step references in transitions
+    for tr in &program.transitions {
+        for fs in &tr.from_steps {
+            let trimmed = fs.trim();
+            let stripped = trimmed
+                .strip_prefix('X')
+                .or_else(|| trimmed.strip_prefix('x'))
+                .unwrap_or(trimmed);
+            if !step_map.contains_key(trimmed) && !step_map.contains_key(stripped) {
+                errors.push(SfcValidationError::DanglingStepReference {
+                    transition_id: tr.id.clone(),
+                    referenced_step: fs.clone(),
+                    is_from_step: true,
+                });
+            }
+        }
+        for ts in &tr.to_steps {
+            let trimmed = ts.trim();
+            let stripped = trimmed
+                .strip_prefix('X')
+                .or_else(|| trimmed.strip_prefix('x'))
+                .unwrap_or(trimmed);
+            if !step_map.contains_key(trimmed) && !step_map.contains_key(stripped) {
+                errors.push(SfcValidationError::DanglingStepReference {
+                    transition_id: tr.id.clone(),
+                    referenced_step: ts.clone(),
+                    is_from_step: false,
+                });
+            }
+        }
+    }
+
+    // 3. Graph connected components
+    let n_steps = program.steps.len();
+    let n_trans = program.transitions.len();
+
+    let mut step_adj: Vec<Vec<usize>> = vec![Vec::new(); n_steps];
+    let mut trans_adj: Vec<Vec<usize>> = vec![Vec::new(); n_trans];
+
+    for (t_idx, tr) in program.transitions.iter().enumerate() {
+        for fs in &tr.from_steps {
+            let trimmed = fs.trim();
+            let stripped = trimmed
+                .strip_prefix('X')
+                .or_else(|| trimmed.strip_prefix('x'))
+                .unwrap_or(trimmed);
+            if let Some(&s_idx) = step_map.get(trimmed).or_else(|| step_map.get(stripped)) {
+                step_adj[s_idx].push(t_idx);
+                trans_adj[t_idx].push(s_idx);
+            }
+        }
+        for ts in &tr.to_steps {
+            let trimmed = ts.trim();
+            let stripped = trimmed
+                .strip_prefix('X')
+                .or_else(|| trimmed.strip_prefix('x'))
+                .unwrap_or(trimmed);
+            if let Some(&s_idx) = step_map.get(trimmed).or_else(|| step_map.get(stripped)) {
+                step_adj[s_idx].push(t_idx);
+                trans_adj[t_idx].push(s_idx);
+            }
+        }
+    }
+
+    let mut visited_steps = HashSet::new();
+    let mut visited_trans = HashSet::new();
+    let mut trees = Vec::new();
+
+    for s_start in 0..n_steps {
+        if visited_steps.contains(&s_start) {
+            continue;
+        }
+
+        let mut queue_steps = VecDeque::new();
+        let mut queue_trans = VecDeque::new();
+
+        queue_steps.push_back(s_start);
+        visited_steps.insert(s_start);
+
+        let mut comp_steps = Vec::new();
+        let mut comp_trans = Vec::new();
+
+        while !queue_steps.is_empty() || !queue_trans.is_empty() {
+            while let Some(s) = queue_steps.pop_front() {
+                comp_steps.push(s);
+                for &t in &step_adj[s] {
+                    if visited_trans.insert(t) {
+                        queue_trans.push_back(t);
+                    }
+                }
+            }
+            while let Some(t) = queue_trans.pop_front() {
+                comp_trans.push(t);
+                for &s in &trans_adj[t] {
+                    if visited_steps.insert(s) {
+                        queue_steps.push_back(s);
+                    }
+                }
+            }
+        }
+
+        let tree_id = trees.len() + 1;
+        let step_ids: Vec<String> = comp_steps
+            .iter()
+            .map(|&si| program.steps[si].id.clone())
+            .collect();
+        let transition_ids: Vec<String> = comp_trans
+            .iter()
+            .map(|&ti| program.transitions[ti].id.clone())
+            .collect();
+        let initial_step_ids: Vec<String> = comp_steps
+            .iter()
+            .filter(|&&si| program.steps[si].kind == StepKind::Initial)
+            .map(|&si| program.steps[si].id.clone())
+            .collect();
+
+        // A sequence tree (having transitions) MUST contain at least one initial step!
+        if !comp_trans.is_empty() && initial_step_ids.is_empty() {
+            errors.push(SfcValidationError::MissingInitialStepInTree {
+                tree_id,
+                step_ids: step_ids.clone(),
+            });
+        }
+
+        // Check orphan step (isolated from any transitions)
+        if comp_steps.len() == 1 && comp_trans.is_empty() && (n_steps > 1 || n_trans > 0) {
+            warnings.push(format!(
+                "Step '{}' is an orphan (not connected to any transition)",
+                step_ids[0]
+            ));
+        }
+
+        trees.push(SfcTreeInfo {
+            tree_id,
+            step_ids,
+            transition_ids,
+            initial_step_ids,
+        });
+    }
+
+    // Check any transitions not connected to any step
+    for t_start in 0..n_trans {
+        if !visited_trans.contains(&t_start) {
+            visited_trans.insert(t_start);
+            let tr_id = program.transitions[t_start].id.clone();
+            errors.push(SfcValidationError::OrphanElement {
+                element_id: tr_id.clone(),
+                is_step: false,
+            });
+            let tree_id = trees.len() + 1;
+            trees.push(SfcTreeInfo {
+                tree_id,
+                step_ids: Vec::new(),
+                transition_ids: vec![tr_id],
+                initial_step_ids: Vec::new(),
+            });
+        }
+    }
+
+    let is_valid = errors.is_empty();
+    SfcValidationReport {
+        is_valid,
+        errors,
+        warnings,
+        trees,
+    }
+}
+
+/// Computes visual rows of step indices so that parallel branches created by AND Divergence
+/// (`to_steps.len() > 1`) or OR Divergence (multiple transitions sharing `from_steps`) render side-by-side.
+pub fn compute_sfc_step_rows(program: &SfcProgram) -> Vec<Vec<usize>> {
+    let mut rows: Vec<Vec<usize>> = Vec::new();
+    let mut placed: HashSet<usize> = HashSet::new();
+
+    let mut idx = 0;
+    while idx < program.steps.len() {
+        if placed.contains(&idx) {
+            idx += 1;
+            continue;
+        }
+        let step_id = &program.steps[idx].id;
+        let step_name = &program.steps[idx].name;
+        let mut sibling_row: Vec<usize> = Vec::new();
+
+        // Case A: Single transition with multiple `to_steps` (AND divergence) containing this step
+        if let Some(and_tr) = program.transitions.iter().find(|t| {
+            t.to_steps.len() > 1
+                && (t.to_steps.contains(step_id) || t.to_steps.iter().any(|s| s == step_name))
+        }) {
+            for tid in &and_tr.to_steps {
+                if let Some(s_pos) = program
+                    .steps
+                    .iter()
+                    .position(|s| &s.id == tid || &s.name == tid)
+                    && !placed.contains(&s_pos)
+                    && !sibling_row.contains(&s_pos)
+                {
+                    sibling_row.push(s_pos);
+                }
+            }
+        }
+
+        // Case B: Multiple transitions sharing the same `from_steps` (OR divergence) targeting this step
+        if sibling_row.len() <= 1
+            && let Some(parent_tr) = program.transitions.iter().find(|t| {
+                (t.to_steps.contains(step_id) || t.to_steps.iter().any(|s| s == step_name))
+                    && !t.from_steps.is_empty()
+            })
+        {
+            let shared_from = &parent_tr.from_steps;
+            let or_siblings: Vec<&SfcTransition> = program
+                .transitions
+                .iter()
+                .filter(|t| &t.from_steps == shared_from)
+                .collect();
+            if or_siblings.len() > 1 {
+                sibling_row.clear();
+                for otr in or_siblings {
+                    for tid in &otr.to_steps {
+                        if let Some(s_pos) = program
+                            .steps
+                            .iter()
+                            .position(|s| &s.id == tid || &s.name == tid)
+                            && !placed.contains(&s_pos)
+                            && !sibling_row.contains(&s_pos)
+                        {
+                            sibling_row.push(s_pos);
+                        }
+                    }
+                }
+            }
+        }
+
+        if sibling_row.is_empty() {
+            sibling_row.push(idx);
+        }
+        for &s_pos in &sibling_row {
+            placed.insert(s_pos);
+        }
+        rows.push(sibling_row);
+        idx += 1;
+    }
+
+    rows
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,9 +574,89 @@ impl SfcProgram {
         Ok(())
     }
 
+    /// Computes and assigns orderly, non-overlapping grid positions `(grid_x, grid_y)`
+    /// for all steps and transitions that do not yet have explicit coordinates.
+    pub fn assign_default_grid_positions(&mut self) {
+        let rows = compute_sfc_step_rows(self);
+        let mut y = 40;
+        let mut assigned_transitions = HashSet::new();
+
+        for row in rows {
+            for (c_idx, &s_idx) in row.iter().enumerate() {
+                if let Some(step) = self.steps.get_mut(s_idx) {
+                    if step.grid_pos.is_none() {
+                        let x = 60 + (c_idx as i32) * 260;
+                        step.grid_pos = Some((x, y));
+                    }
+                }
+            }
+
+            // Find transitions originating from steps in this row
+            let from_step_ids: Vec<String> = row
+                .iter()
+                .filter_map(|&si| self.steps.get(si).map(|s| s.id.clone()))
+                .collect();
+            let mut trans_in_row = Vec::new();
+            for (t_idx, tr) in self.transitions.iter().enumerate() {
+                if !assigned_transitions.contains(&t_idx)
+                    && tr.from_steps.iter().any(|fs| {
+                        from_step_ids.contains(fs)
+                            || from_step_ids
+                                .iter()
+                                .any(|sid| sid == fs.strip_prefix('X').unwrap_or(fs))
+                    })
+                {
+                    trans_in_row.push(t_idx);
+                }
+            }
+
+            if !trans_in_row.is_empty() {
+                y += 100;
+                for (c_idx, &t_idx) in trans_in_row.iter().enumerate() {
+                    assigned_transitions.insert(t_idx);
+                    if let Some(tr) = self.transitions.get_mut(t_idx) {
+                        if tr.grid_pos.is_none() {
+                            let x = 60 + (c_idx as i32) * 260 + 50;
+                            tr.grid_pos = Some((x, y));
+                        }
+                    }
+                }
+            }
+            y += 100;
+        }
+
+        // Any leftover unlinked transitions
+        for (t_idx, tr) in self.transitions.iter_mut().enumerate() {
+            if !assigned_transitions.contains(&t_idx) && tr.grid_pos.is_none() {
+                tr.grid_pos = Some((360, y));
+                y += 80;
+            }
+        }
+    }
+
     pub fn compile(&self, tags: &TagTable) -> Result<CompiledSfcPou, SfcError> {
-        if !self.steps.iter().any(|s| s.kind == StepKind::Initial) {
-            return Err(SfcError::MissingInitialStep(self.name.clone()));
+        let report = validate_sfc_topology(self);
+        if !report.is_valid {
+            // Check if entirely missing initial step (preserves exact SfcError::MissingInitialStep)
+            if !self.steps.iter().any(|s| s.kind == StepKind::Initial) {
+                return Err(SfcError::MissingInitialStep(self.name.clone()));
+            }
+            // Check for dangling steps first to preserve UnknownStep errors
+            for err in &report.errors {
+                if let SfcValidationError::DanglingStepReference {
+                    referenced_step, ..
+                } = err
+                {
+                    return Err(SfcError::UnknownStep {
+                        pou: self.name.clone(),
+                        step: referenced_step.clone(),
+                    });
+                }
+            }
+            return Err(SfcError::TopologyValidation {
+                pou: self.name.clone(),
+                errors: report.errors,
+            });
         }
 
         let mut step_map: HashMap<String, usize> = HashMap::new();
@@ -729,6 +1212,7 @@ mod tests {
                     name: "Step_Idle".to_string(),
                     kind: StepKind::Initial,
                     actions: vec![],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "1".to_string(),
@@ -746,6 +1230,7 @@ mod tests {
                             duration: None,
                         },
                     ],
+                    ..Default::default()
                 },
             ],
             transitions: vec![
@@ -756,6 +1241,7 @@ mod tests {
                     receptivity: "Permissive_OK AND Sensor_1".to_string(),
                     convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::And,
+                    ..Default::default()
                 },
                 SfcTransition {
                     id: "T2".to_string(),
@@ -764,6 +1250,7 @@ mod tests {
                     receptivity: "X1.t >= T#100ms".to_string(),
                     convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::And,
+                    ..Default::default()
                 },
             ],
         };
@@ -837,18 +1324,21 @@ mod tests {
                     name: "Master_Idle".to_string(),
                     kind: StepKind::Initial,
                     actions: vec![],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "1".to_string(),
                     name: "Branch_A".to_string(),
                     kind: StepKind::Normal,
                     actions: vec![],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "2".to_string(),
                     name: "Branch_B".to_string(),
                     kind: StepKind::Normal,
                     actions: vec![],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "3".to_string(),
@@ -866,6 +1356,7 @@ mod tests {
                             duration: None,
                         },
                     ],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "4".to_string(),
@@ -883,6 +1374,7 @@ mod tests {
                             duration: None,
                         },
                     ],
+                    ..Default::default()
                 },
             ],
             transitions: vec![
@@ -894,6 +1386,7 @@ mod tests {
                     receptivity: "Start_Split".to_string(),
                     convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::And,
+                    ..Default::default()
                 },
                 // AND Convergence: [1, 2] -> 3
                 SfcTransition {
@@ -903,6 +1396,7 @@ mod tests {
                     receptivity: "Join_Ready".to_string(),
                     convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::And,
+                    ..Default::default()
                 },
                 // OR Convergence: [3] -> 4
                 SfcTransition {
@@ -912,6 +1406,7 @@ mod tests {
                     receptivity: "TRUE".to_string(),
                     convergence: ConvergenceKind::Or,
                     divergence: DivergenceKind::Or,
+                    ..Default::default()
                 },
             ],
         };
@@ -926,18 +1421,21 @@ mod tests {
                     name: "Slave_Idle".to_string(),
                     kind: StepKind::Initial,
                     actions: vec![],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "1".to_string(),
                     name: "Slave_Work".to_string(),
                     kind: StepKind::Normal,
                     actions: vec![],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "2".to_string(),
                     name: "Slave_Override".to_string(),
                     kind: StepKind::Normal,
                     actions: vec![],
+                    ..Default::default()
                 },
             ],
             transitions: vec![SfcTransition {
@@ -947,6 +1445,7 @@ mod tests {
                 receptivity: "master_seq.X1.state".to_string(),
                 convergence: ConvergenceKind::And,
                 divergence: DivergenceKind::And,
+                ..Default::default()
             }],
         };
 
@@ -991,6 +1490,219 @@ mod tests {
         assert!(ctx.read_bool("master_seq.X4.state")?);
         assert!(ctx.read_bool("slave_seq.X0.state")?);
         assert!(!ctx.read_bool("slave_seq.X2.state")?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sfc_multi_tree_detection_and_validation() {
+        // 1. Two valid independent parallel trees in the same POU
+        let multi_tree_prog = SfcProgram {
+            name: "parallel_trees".to_string(),
+            comment: "Two concurrent SFC trees".to_string(),
+            steps: vec![
+                // Tree 1: X0 -> T0 -> X1
+                SfcStep::new("0", "Tree1_Init", StepKind::Initial),
+                SfcStep::new("1", "Tree1_Step1", StepKind::Normal),
+                // Tree 2: X10 -> T10 -> X11
+                SfcStep::new("10", "Tree2_Init", StepKind::Initial),
+                SfcStep::new("11", "Tree2_Step1", StepKind::Normal),
+            ],
+            transitions: vec![
+                SfcTransition {
+                    id: "T0".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["1".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    grid_pos: None,
+                },
+                SfcTransition {
+                    id: "T10".to_string(),
+                    from_steps: vec!["10".to_string()],
+                    to_steps: vec!["11".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    grid_pos: None,
+                },
+            ],
+        };
+
+        let report = validate_sfc_topology(&multi_tree_prog);
+        assert!(report.is_valid);
+        assert_eq!(report.trees.len(), 2);
+        assert_eq!(report.trees[0].initial_step_ids.len(), 1);
+        assert_eq!(report.trees[1].initial_step_ids.len(), 1);
+
+        // 2. Tree 2 is missing an initial step -> reports MissingInitialStepInTree
+        let mut invalid_tree = multi_tree_prog.clone();
+        invalid_tree.steps[2].kind = StepKind::Normal; // X10 is no longer Initial
+        let report2 = validate_sfc_topology(&invalid_tree);
+        assert!(!report2.is_valid);
+        assert!(report2
+            .errors
+            .iter()
+            .any(|e| matches!(e, SfcValidationError::MissingInitialStepInTree { .. })));
+
+        // 3. Dangling reference in a transition
+        let mut dangling_tree = multi_tree_prog.clone();
+        dangling_tree.transitions[0].to_steps = vec!["999".to_string()];
+        let report3 = validate_sfc_topology(&dangling_tree);
+        assert!(!report3.is_valid);
+        assert!(report3
+            .errors
+            .iter()
+            .any(|e| matches!(e, SfcValidationError::DanglingStepReference { .. })));
+    }
+
+    #[test]
+    fn test_sfc_grid_pos_json_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+        // 1. JSON without grid_pos defaults cleanly to None
+        let raw_json = r#"{
+            "name": "legacy_seq",
+            "comment": "",
+            "steps": [
+                { "id": "0", "name": "Init", "kind": "initial", "actions": [] }
+            ],
+            "transitions": [
+                { "id": "T0", "from_steps": ["0"], "to_steps": ["0"], "receptivity": "TRUE" }
+            ]
+        }"#;
+
+        let mut prog = SfcProgram::from_json(raw_json)?;
+        assert_eq!(prog.steps[0].grid_pos, None);
+        assert_eq!(prog.transitions[0].grid_pos, None);
+
+        // 2. assign_default_grid_positions computes valid coordinates
+        prog.assign_default_grid_positions();
+        assert!(prog.steps[0].grid_pos.is_some());
+        assert!(prog.transitions[0].grid_pos.is_some());
+
+        // 3. Custom coordinates serialize and deserialize accurately
+        prog.steps[0].grid_pos = Some((160, 320));
+        let serialized = prog.to_json_pretty()?;
+        assert!(serialized.contains("\"grid_pos\""));
+
+        let reloaded = SfcProgram::from_json(&serialized)?;
+        assert_eq!(reloaded.steps[0].grid_pos, Some((160, 320)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sfc_multi_tree_parallel_execution() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+
+        tags.register_tag(TagEntry::new(
+            "Go_Tree1",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Go_Tree2",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Act_Tree1",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Act_Tree2",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+
+        let prog = SfcProgram {
+            name: "dual_trees".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "T1_Idle", StepKind::Initial),
+                SfcStep {
+                    id: "1".to_string(),
+                    name: "T1_Active".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![SfcAction {
+                        qualifier: ActionQualifier::N,
+                        target: "Act_Tree1".to_string(),
+                        duration: None,
+                    }],
+                    grid_pos: Some((100, 100)),
+                },
+                SfcStep::new("10", "T2_Idle", StepKind::Initial),
+                SfcStep {
+                    id: "11".to_string(),
+                    name: "T2_Active".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![SfcAction {
+                        qualifier: ActionQualifier::N,
+                        target: "Act_Tree2".to_string(),
+                        duration: None,
+                    }],
+                    grid_pos: Some((400, 100)),
+                },
+            ],
+            transitions: vec![
+                SfcTransition {
+                    id: "T1".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["1".to_string()],
+                    receptivity: "Go_Tree1".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    grid_pos: Some((100, 200)),
+                },
+                SfcTransition {
+                    id: "T2".to_string(),
+                    from_steps: vec!["10".to_string()],
+                    to_steps: vec!["11".to_string()],
+                    receptivity: "Go_Tree2".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    grid_pos: Some((400, 200)),
+                },
+            ],
+        };
+
+        prog.register_introspection_symbols(&mut tags)?;
+        let mut compiled = prog.compile(&tags)?;
+
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 50, 1);
+        compiled.execute(&mut ctx)?;
+        // Both initial steps are active simultaneously!
+        assert!(ctx.read_bool("dual_trees.X0.state")?);
+        assert!(ctx.read_bool("dual_trees.X10.state")?);
+        assert!(!ctx.read_bool("Act_Tree1")?);
+        assert!(!ctx.read_bool("Act_Tree2")?);
+
+        // Advance Tree 1 only
+        ctx.write_symbol("Go_Tree1", IecValue::Bool(true))?;
+        compiled.execute(&mut ctx)?;
+        assert!(!ctx.read_bool("dual_trees.X0.state")?);
+        assert!(ctx.read_bool("dual_trees.X1.state")?);
+        assert!(ctx.read_bool("Act_Tree1")?);
+        // Tree 2 remains unaffected in its initial state!
+        assert!(ctx.read_bool("dual_trees.X10.state")?);
+        assert!(!ctx.read_bool("Act_Tree2")?);
+
+        // Advance Tree 2
+        ctx.write_symbol("Go_Tree2", IecValue::Bool(true))?;
+        compiled.execute(&mut ctx)?;
+        assert!(ctx.read_bool("dual_trees.X11.state")?);
+        assert!(ctx.read_bool("Act_Tree2")?);
+        assert!(ctx.read_bool("Act_Tree1")?);
 
         Ok(())
     }

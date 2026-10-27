@@ -1246,6 +1246,7 @@ impl FerriteStudioApp {
                         name: format!("Step_{next}"),
                         kind: StepKind::Normal,
                         actions: Vec::new(),
+                        ..Default::default()
                     });
                     self.track_history();
                     self.modified = true;
@@ -1345,6 +1346,7 @@ impl FerriteStudioApp {
                         receptivity: "TRUE".to_string(),
                         convergence: Default::default(),
                         divergence: Default::default(),
+                        ..Default::default()
                     });
                     self.track_history();
                     self.modified = true;
@@ -1397,12 +1399,14 @@ impl FerriteStudioApp {
                         name: format!("Branch_{id_a}"),
                         kind: StepKind::Normal,
                         actions: vec![],
+                        ..Default::default()
                     });
                     sfc.steps.push(SfcStep {
                         id: id_b.clone(),
                         name: format!("Branch_{id_b}"),
                         kind: StepKind::Normal,
                         actions: vec![],
+                        ..Default::default()
                     });
                     let next_t = sfc.transitions.len() + 1;
                     sfc.transitions.push(SfcTransition {
@@ -1412,6 +1416,7 @@ impl FerriteStudioApp {
                         receptivity: "TRUE".to_string(),
                         convergence: ConvergenceKind::And,
                         divergence: DivergenceKind::And,
+                        ..Default::default()
                     });
                     self.track_history();
                     self.modified = true;
@@ -1430,6 +1435,7 @@ impl FerriteStudioApp {
                             name: format!("Step_Join_{join_id}"),
                             kind: StepKind::Normal,
                             actions: vec![],
+                            ..Default::default()
                         });
                         let next_t = sfc.transitions.len() + 1;
                         sfc.transitions.push(SfcTransition {
@@ -1439,6 +1445,7 @@ impl FerriteStudioApp {
                             receptivity: "TRUE".to_string(),
                             convergence: ConvergenceKind::And,
                             divergence: DivergenceKind::And,
+                            ..Default::default()
                         });
                         self.track_history();
                         self.modified = true;
@@ -1455,12 +1462,14 @@ impl FerriteStudioApp {
                         name: format!("Alt_{id_a}"),
                         kind: StepKind::Normal,
                         actions: vec![],
+                        ..Default::default()
                     });
                     sfc.steps.push(SfcStep {
                         id: id_b.clone(),
                         name: format!("Alt_{id_b}"),
                         kind: StepKind::Normal,
                         actions: vec![],
+                        ..Default::default()
                     });
                     let t1 = sfc.transitions.len() + 1;
                     let t2 = t1 + 1;
@@ -1471,6 +1480,7 @@ impl FerriteStudioApp {
                         receptivity: "TRUE".to_string(),
                         convergence: ConvergenceKind::And,
                         divergence: DivergenceKind::Or,
+                        ..Default::default()
                     });
                     sfc.transitions.push(SfcTransition {
                         id: format!("T{t2}_OrB"),
@@ -1479,6 +1489,7 @@ impl FerriteStudioApp {
                         receptivity: "FALSE".to_string(),
                         convergence: ConvergenceKind::And,
                         divergence: DivergenceKind::Or,
+                        ..Default::default()
                     });
                     self.track_history();
                     self.modified = true;
@@ -1497,6 +1508,7 @@ impl FerriteStudioApp {
                             name: format!("Step_Merge_{join_id}"),
                             kind: StepKind::Normal,
                             actions: vec![],
+                            ..Default::default()
                         });
                         let next_t = sfc.transitions.len() + 1;
                         sfc.transitions.push(SfcTransition {
@@ -1506,6 +1518,7 @@ impl FerriteStudioApp {
                             receptivity: "TRUE".to_string(),
                             convergence: ConvergenceKind::Or,
                             divergence: DivergenceKind::And,
+                            ..Default::default()
                         });
                         self.track_history();
                         self.modified = true;

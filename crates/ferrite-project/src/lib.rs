@@ -532,6 +532,7 @@ impl Project {
                             duration: None,
                         },
                     ],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "1".to_string(),
@@ -549,6 +550,7 @@ impl Project {
                             duration: None,
                         },
                     ],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "2".to_string(),
@@ -566,12 +568,14 @@ impl Project {
                             duration: Some("T#150ms".to_string()),
                         },
                     ],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "3".to_string(),
                     name: "Step_Recipe_Select".to_string(),
                     kind: StepKind::Normal,
                     actions: vec![],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "4".to_string(),
@@ -589,6 +593,7 @@ impl Project {
                             duration: None,
                         },
                     ],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "5".to_string(),
@@ -606,6 +611,7 @@ impl Project {
                             duration: Some("T#100ms".to_string()),
                         },
                     ],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "6".to_string(),
@@ -616,6 +622,7 @@ impl Project {
                         target: "Drain_Valve".to_string(),
                         duration: None,
                     }],
+                    ..Default::default()
                 },
             ],
             transitions: vec![
@@ -626,6 +633,7 @@ impl Project {
                     receptivity: "Permissive_OK AND (Start_Pulse OR Start_Button)".to_string(),
                     convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::And,
+                    ..Default::default()
                 },
                 SfcTransition {
                     id: "T2_AndConv".to_string(),
@@ -634,6 +642,7 @@ impl Project {
                     receptivity: "Tank_Level >= 50 AND Reagent_Ready".to_string(),
                     convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::And,
+                    ..Default::default()
                 },
                 SfcTransition {
                     id: "T3_Or_Fast".to_string(),
@@ -642,6 +651,7 @@ impl Project {
                     receptivity: "Fast_Recipe_Mode AND Permissive_OK".to_string(),
                     convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::Or,
+                    ..Default::default()
                 },
                 SfcTransition {
                     id: "T4_Or_Slow".to_string(),
@@ -650,6 +660,7 @@ impl Project {
                     receptivity: "NOT Fast_Recipe_Mode AND Permissive_OK".to_string(),
                     convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::Or,
+                    ..Default::default()
                 },
                 SfcTransition {
                     id: "T5_OrConv".to_string(),
@@ -658,6 +669,7 @@ impl Project {
                     receptivity: "Mix_Done OR Tank_Temp >= 60.0".to_string(),
                     convergence: ConvergenceKind::Or,
                     divergence: DivergenceKind::And,
+                    ..Default::default()
                 },
                 SfcTransition {
                     id: "T6_SubSfc_Done".to_string(),
@@ -666,6 +678,7 @@ impl Project {
                     receptivity: "cip_clean.X2.state OR NOT Permissive_OK".to_string(),
                     convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::And,
+                    ..Default::default()
                 },
             ],
         };
@@ -681,6 +694,7 @@ impl Project {
                     name: "CIP_Standby".to_string(),
                     kind: StepKind::Initial,
                     actions: vec![],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "1".to_string(),
@@ -698,6 +712,7 @@ impl Project {
                             duration: None,
                         },
                     ],
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "2".to_string(),
@@ -708,6 +723,7 @@ impl Project {
                         target: "Sanitize_Count := Sanitize_Count + 1;".to_string(),
                         duration: None,
                     }],
+                    ..Default::default()
                 },
             ],
             transitions: vec![
@@ -718,6 +734,7 @@ impl Project {
                     receptivity: "batch_seq.X6.state AND Permissive_OK".to_string(),
                     convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::And,
+                    ..Default::default()
                 },
                 SfcTransition {
                     id: "T_CIP_Done".to_string(),
@@ -726,6 +743,7 @@ impl Project {
                     receptivity: "Tank_Level = 0".to_string(),
                     convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::And,
+                    ..Default::default()
                 },
                 SfcTransition {
                     id: "T_CIP_Reset".to_string(),
@@ -734,6 +752,7 @@ impl Project {
                     receptivity: "batch_seq.X0.state".to_string(),
                     convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::And,
+                    ..Default::default()
                 },
             ],
         };
@@ -1220,6 +1239,7 @@ END_PROGRAM
                     name: format!("{name}_Init"),
                     kind: StepKind::Initial,
                     actions: vec![],
+                    ..Default::default()
                 }],
                 transitions: vec![],
             }),
