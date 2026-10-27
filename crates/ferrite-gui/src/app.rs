@@ -183,6 +183,15 @@ pub enum Message {
     SfcAddAndConvergence(String),
     SfcAddOrDivergence(String),
     SfcAddOrConvergence(String),
+    SfcSelectElement(String, Option<crate::canvas_sfc::SfcElementKey>),
+    SfcMoveElement(String, crate::canvas_sfc::SfcElementKey, (i32, i32)),
+    SfcConnectPorts {
+        pou_name: String,
+        source: crate::canvas_sfc::SfcPortSource,
+        target: crate::canvas_sfc::SfcPortTarget,
+    },
+    SfcAutoLayout(String),
+    SfcValidate(String),
     ToggleForceTag(String),
 
     // Function Block Diagram (FBD)
@@ -246,6 +255,7 @@ pub struct FerriteStudioApp {
     pub pou_filter_text: String,
     pub st_contents: HashMap<String, text_editor::Content>,
     pub confirm_clear_modal: Option<String>,
+    pub sfc_selected: Option<(String, crate::canvas_sfc::SfcElementKey)>,
 }
 
 impl FerriteStudioApp {
@@ -353,6 +363,7 @@ impl FerriteStudioApp {
             pou_filter_text: String::new(),
             st_contents,
             confirm_clear_modal: None,
+            sfc_selected: None,
         }
     }
 
@@ -1525,6 +1536,92 @@ impl FerriteStudioApp {
                     }
                 Task::none()
             }
+            Message::SfcSelectElement(pou_name, key) => {
+                self.sfc_selected = key.map(|k| (pou_name, k));
+                Task::none()
+            }
+            Message::SfcMoveElement(pou_name, key, (gx, gy)) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                    match key {
+                        crate::canvas_sfc::SfcElementKey::Step(id) => {
+                            if let Some(step) = sfc.steps.iter_mut().find(|s| s.id == id) {
+                                step.grid_pos = Some((gx, gy));
+                                self.track_history();
+                                self.modified = true;
+                            }
+                        }
+                        crate::canvas_sfc::SfcElementKey::Transition(id) => {
+                            if let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == id) {
+                                tr.grid_pos = Some((gx, gy));
+                                self.track_history();
+                                self.modified = true;
+                            }
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::SfcConnectPorts { pou_name, source, target } => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                    match (source, target) {
+                        (
+                            crate::canvas_sfc::SfcPortSource::StepOutput(step_id),
+                            crate::canvas_sfc::SfcPortTarget::TransitionInput(trans_id),
+                        ) => {
+                            if let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == trans_id) {
+                                if !tr.from_steps.contains(&step_id) {
+                                    tr.from_steps.push(step_id);
+                                    self.track_history();
+                                    self.modified = true;
+                                }
+                            }
+                        }
+                        (
+                            crate::canvas_sfc::SfcPortSource::TransitionOutput(trans_id),
+                            crate::canvas_sfc::SfcPortTarget::StepInput(step_id),
+                        ) => {
+                            if let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == trans_id) {
+                                if !tr.to_steps.contains(&step_id) {
+                                    tr.to_steps.push(step_id);
+                                    self.track_history();
+                                    self.modified = true;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Task::none()
+            }
+            Message::SfcAutoLayout(pou_name) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                    for s in &mut sfc.steps {
+                        s.grid_pos = None;
+                    }
+                    for t in &mut sfc.transitions {
+                        t.grid_pos = None;
+                    }
+                    sfc.assign_default_grid_positions();
+                    self.track_history();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::SfcValidate(pou_name) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get(&pou_name) {
+                    let report = ferrite_lang_sfc::validate_sfc_topology(sfc);
+                    self.status_banner = if report.is_valid {
+                        format!(
+                            "SFC '{pou_name}': Topology valid ({} independent parallel tree{})",
+                            report.trees.len(),
+                            if report.trees.len() == 1 { "" } else { "s" }
+                        )
+                    } else {
+                        format!("SFC '{pou_name}': {} validation error(s) detected", report.errors.len())
+                    };
+                }
+                Task::none()
+            }
             Message::ToggleForceTag(tag_name) => {
                 if let Some(rt) = &mut self.runtime {
                     let cur = rt.read_value(&tag_name).ok().and_then(|v| v.as_bool().ok()).unwrap_or(false);
@@ -2218,7 +2315,13 @@ impl FerriteStudioApp {
                 if let Some(pou) = self.project.pous.get(name) {
                     match pou {
                         PouSource::Ld(ld) => render_ld_editor(ld, self.runtime.as_ref(), self.ui_lang),
-                        PouSource::Sfc(sfc) => render_sfc_editor(sfc, self.runtime.as_ref(), self.ui_lang),
+                        PouSource::Sfc(sfc) => {
+                            let sel = self
+                                .sfc_selected
+                                .as_ref()
+                                .and_then(|(p, k)| if p == name { Some(k) } else { None });
+                            render_sfc_editor(sfc, self.runtime.as_ref(), self.ui_lang, sel)
+                        }
                         PouSource::St(_) => {
                             if let Some(content) = self.st_contents.get(name) {
                                 render_st_editor(name, content, self.runtime.as_ref(), self.ui_lang)
