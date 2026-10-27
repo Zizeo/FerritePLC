@@ -8,7 +8,7 @@ use ferrite_core::IecValue;
 pub use ferrite_lang_sfc::compute_sfc_step_rows;
 use ferrite_lang_sfc::{
     validate_sfc_topology, ActionQualifier, ConvergenceKind, DivergenceKind, SfcProgram, SfcStep,
-    SfcTransition, StepKind,
+    SfcTransition, SfcValidationError, SfcValidationReport, StepKind,
 };
 use ferrite_runtime::PlcRuntime;
 
@@ -224,7 +224,7 @@ pub struct SfcCanvasProgram<'a> {
     pub program: &'a SfcProgram,
     pub runtime: Option<&'a PlcRuntime>,
     pub selected: Option<&'a SfcElementKey>,
-    pub validation_error_count: usize,
+    pub validation_report: Option<SfcValidationReport>,
 }
 
 impl<'a> SfcCanvasProgram<'a> {
@@ -693,7 +693,40 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             let is_selected = self.selected == Some(&SfcElementKey::Step(step.id.clone()))
                 || state.selected.as_ref() == Some(&SfcElementKey::Step(step.id.clone()));
 
-            let border_color = if active {
+            let (tree_id, has_error, _err_msg) = if let Some(ref report) = self.validation_report {
+                let t_id = report.trees.iter().find(|t| t.step_ids.contains(&step.id)).map(|t| t.tree_id);
+                let mut err = None;
+                for e in &report.errors {
+                    match e {
+                        SfcValidationError::MissingInitialStepInTree { step_ids, .. } => {
+                            if step_ids.contains(&step.id) {
+                                err = Some("Missing Initial Step");
+                                break;
+                            }
+                        }
+                        SfcValidationError::InvalidAlternation { element_id, .. } => {
+                            if element_id == &step.id {
+                                err = Some("Alternation Error");
+                                break;
+                            }
+                        }
+                        SfcValidationError::OrphanElement { element_id, is_step } => {
+                            if *is_step && element_id == &step.id {
+                                err = Some("Unlinked Step");
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                (t_id, err.is_some(), err)
+            } else {
+                (None, false, None)
+            };
+
+            let border_color = if has_error {
+                Color::from_rgb(1.0, 0.35, 0.35)
+            } else if active {
                 COLOR_ACTIVE_STEP
             } else if is_selected {
                 COLOR_STEP_DROP
@@ -712,8 +745,17 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             frame.stroke_rectangle(
                 Point::new(x, y),
                 Size::new(STEP_WIDTH, STEP_HEIGHT),
-                Stroke::default().with_color(border_color).with_width(if is_selected { 2.5 } else { 2.0 }),
+                Stroke::default().with_color(border_color).with_width(if is_selected || has_error { 2.5 } else { 2.0 }),
             );
+
+            // Error halo outline
+            if has_error {
+                frame.stroke_rectangle(
+                    Point::new(x - 2.0, y - 2.0),
+                    Size::new(STEP_WIDTH + 4.0, STEP_HEIGHT + 4.0),
+                    Stroke::default().with_color(Color::from_rgba(1.0, 0.3, 0.3, 0.4)).with_width(2.0),
+                );
+            }
 
             // Initial Step: authentic double inner border
             if step.kind == StepKind::Initial {
@@ -733,6 +775,28 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 font: iced::Font::MONOSPACE,
                 ..Default::default()
             });
+
+            // Tree badge or error badge
+            if has_error {
+                frame.fill_text(canvas::Text {
+                    content: "⚠".to_string(),
+                    position: Point::new(x + STEP_WIDTH - 24.0, y + 7.0),
+                    color: Color::from_rgb(1.0, 0.35, 0.35),
+                    size: iced::Pixels(12.0),
+                    ..Default::default()
+                });
+            } else if let Some(tid) = tree_id {
+                if self.validation_report.as_ref().map(|r| r.trees.len()).unwrap_or(0) > 1 {
+                    frame.fill_text(canvas::Text {
+                        content: format!("T{}", tid + 1),
+                        position: Point::new(x + STEP_WIDTH - 28.0, y + 8.0),
+                        color: COLOR_STEP_DROP,
+                        size: iced::Pixels(11.0),
+                        font: iced::Font::MONOSPACE,
+                        ..Default::default()
+                    });
+                }
+            }
 
             // Active dot & timer
             if active {
@@ -824,7 +888,46 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             let is_selected = self.selected == Some(&SfcElementKey::Transition(tr.id.clone()))
                 || state.selected.as_ref() == Some(&SfcElementKey::Transition(tr.id.clone()));
 
-            let color = if is_selected {
+            let (tree_id, has_error, _err_msg) = if let Some(ref report) = self.validation_report {
+                let t_id = report.trees.iter().find(|t| t.transition_ids.contains(&tr.id)).map(|t| t.tree_id);
+                let mut err = None;
+                for e in &report.errors {
+                    match e {
+                        SfcValidationError::DanglingStepReference { transition_id, .. } => {
+                            if transition_id == &tr.id {
+                                err = Some("Dangling Step");
+                                break;
+                            }
+                        }
+                        SfcValidationError::UnclosedAndBranch { transition_id, .. } => {
+                            if transition_id == &tr.id {
+                                err = Some("Unclosed Branch");
+                                break;
+                            }
+                        }
+                        SfcValidationError::InvalidAlternation { element_id, .. } => {
+                            if element_id == &tr.id {
+                                err = Some("Alternation Error");
+                                break;
+                            }
+                        }
+                        SfcValidationError::OrphanElement { element_id, is_step } => {
+                            if !*is_step && element_id == &tr.id {
+                                err = Some("Unlinked Transition");
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                (t_id, err.is_some(), err)
+            } else {
+                (None, false, None)
+            };
+
+            let color = if has_error {
+                Color::from_rgb(1.0, 0.35, 0.35)
+            } else if is_selected {
                 COLOR_STEP_DROP
             } else {
                 COLOR_TRANSITION
@@ -832,10 +935,18 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
 
             let cy = y + TRANS_HEIGHT * 0.5;
 
+            // Error halo around transition crossbar
+            if has_error {
+                frame.stroke(
+                    &Path::line(Point::new(x - 3.0, cy), Point::new(x + TRANS_WIDTH + 3.0, cy)),
+                    Stroke::default().with_color(Color::from_rgba(1.0, 0.3, 0.3, 0.4)).with_width(6.0),
+                );
+            }
+
             // Authentic IEC 60848 transition crossbar
             frame.stroke(
                 &Path::line(Point::new(x, cy), Point::new(x + TRANS_WIDTH, cy)),
-                Stroke::default().with_color(color).with_width(3.2),
+                Stroke::default().with_color(color).with_width(if is_selected || has_error { 4.0 } else { 3.2 }),
             );
 
             // Receptivity text
@@ -843,17 +954,29 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             frame.fill_text(canvas::Text {
                 content: format!("[ {} ]", rec_text),
                 position: Point::new(x + TRANS_WIDTH + 6.0, cy - 6.0),
-                color: Color::from_rgb(255.0 / 255.0, 210.0 / 255.0, 120.0 / 255.0),
+                color: if has_error { Color::from_rgb(1.0, 0.4, 0.4) } else { Color::from_rgb(255.0 / 255.0, 210.0 / 255.0, 120.0 / 255.0) },
                 size: iced::Pixels(11.5),
                 font: iced::Font::MONOSPACE,
                 ..Default::default()
             });
 
-            // Transition ID
+            // Transition ID and tree or error badge
+            let tid_str = if has_error {
+                format!("{} ⚠", tr.id)
+            } else if let Some(tid) = tree_id {
+                if self.validation_report.as_ref().map(|r| r.trees.len()).unwrap_or(0) > 1 {
+                    format!("{} T{}", tr.id, tid + 1)
+                } else {
+                    tr.id.clone()
+                }
+            } else {
+                tr.id.clone()
+            };
+
             frame.fill_text(canvas::Text {
-                content: tr.id.clone(),
-                position: Point::new(x - 28.0, cy - 6.0),
-                color: COLOR_INACTIVE_STEP,
+                content: tid_str,
+                position: Point::new(x - 44.0, cy - 6.0),
+                color: if has_error { Color::from_rgb(1.0, 0.35, 0.35) } else { COLOR_INACTIVE_STEP },
                 size: iced::Pixels(10.5),
                 font: iced::Font::MONOSPACE,
                 ..Default::default()
@@ -1064,7 +1187,7 @@ pub fn render_sfc_editor<'a>(
     // Validate topology to find independent trees and error count
     let validation_report = validate_sfc_topology(program);
     let tree_count = validation_report.trees.len();
-    let error_count = validation_report.errors.len();
+    let _error_count = validation_report.errors.len();
 
     // Check if an element is selected and render its inspector
     let inspector_elem: Option<Element<'a, Message>> = match selected {
@@ -1186,7 +1309,7 @@ pub fn render_sfc_editor<'a>(
         program,
         runtime,
         selected,
-        validation_error_count: error_count,
+        validation_report: Some(validation_report),
     })
     .width(Length::Fixed(max_x))
     .height(Length::Fixed(max_y));
@@ -1237,7 +1360,7 @@ mod tests {
             },
             runtime: None,
             selected: None,
-            validation_error_count: 0,
+            validation_report: None,
         };
         let state = SfcCanvasState::default();
         let in_p = canvas.step_in_port(&canvas.program.steps[0], &state);

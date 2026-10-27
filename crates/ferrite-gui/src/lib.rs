@@ -534,6 +534,108 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
     }
+
+    #[test]
+    fn test_sfc_multi_tree_editing_and_deferred_compile_errors() -> Result<(), Box<dyn std::error::Error>> {
+        use ferrite_lang_sfc::{
+            validate_sfc_topology, ConvergenceKind, DivergenceKind, SfcProgram, SfcStep,
+            SfcTransition, StepKind,
+        };
+
+        let temp_dir = env::temp_dir().join("ferrite_gui_sfc_multi_tree_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        let mut proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+        proj.add_pou("parallel_sfc", ferrite_core::LanguageKind::Sfc)?;
+        if let Some(task) = proj.manifest.tasks.first_mut() {
+            task.pou_order.push("parallel_sfc".to_string());
+        }
+
+        // Construct 2 independent parallel SFC trees in the same POU
+        let mut sfc = SfcProgram {
+            name: "parallel_sfc".to_string(),
+            comment: "Dual-tree SFC".to_string(),
+            steps: vec![
+                // Tree 1
+                SfcStep::new("X1".to_string(), "Init_1".to_string(), StepKind::Initial),
+                SfcStep::new("X2".to_string(), "Step_2".to_string(), StepKind::Normal),
+                // Tree 2
+                SfcStep::new("X10".to_string(), "Init_2".to_string(), StepKind::Initial),
+                SfcStep::new("X11".to_string(), "Step_11".to_string(), StepKind::Normal),
+            ],
+            transitions: vec![
+                // Tree 1 transition
+                SfcTransition {
+                    id: "T1".to_string(),
+                    from_steps: vec!["X1".to_string()],
+                    to_steps: vec!["X2".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    ..Default::default()
+                },
+                // Tree 2 transition
+                SfcTransition {
+                    id: "T10".to_string(),
+                    from_steps: vec!["X10".to_string()],
+                    to_steps: vec!["X11".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    ..Default::default()
+                },
+            ],
+        };
+        sfc.assign_default_grid_positions();
+        proj.pous.insert("parallel_sfc".to_string(), PouSource::Sfc(sfc));
+        let mut app = FerriteStudioApp::new(proj);
+
+        // 1. Initial topology check: 2 trees, valid
+        let report = if let Some(PouSource::Sfc(s)) = app.project.pous.get("parallel_sfc") {
+            validate_sfc_topology(s)
+        } else {
+            panic!("parallel_sfc not found");
+        };
+        assert_eq!(report.trees.len(), 2);
+        assert!(report.is_valid);
+
+        // 2. Trigger SfcValidate message
+        let _ = app.update(Message::SfcValidate("parallel_sfc".to_string()));
+        assert!(app.status_banner.contains("2 independent parallel trees"));
+
+        // 3. Deferred validation: User modifies Tree 2 step kind to Normal (missing initial step in tree 2)
+        let _ = app.update(Message::SfcStepKindChanged("parallel_sfc".to_string(), 2, StepKind::Normal));
+
+        let report_invalid = if let Some(PouSource::Sfc(s)) = app.project.pous.get("parallel_sfc") {
+            validate_sfc_topology(s)
+        } else {
+            panic!("parallel_sfc not found");
+        };
+        assert!(!report_invalid.is_valid);
+        assert_eq!(report_invalid.errors.len(), 1);
+
+        let _ = app.update(Message::SfcValidate("parallel_sfc".to_string()));
+        assert!(app.status_banner.contains("validation error"));
+
+        // Recompile fails with topological error
+        app.recompile_runtime();
+        assert!(app.status_banner.contains("Compilation error"));
+
+        // 4. User corrects Tree 2 by making X10 Initial again
+        let _ = app.update(Message::SfcStepKindChanged("parallel_sfc".to_string(), 2, StepKind::Initial));
+        app.recompile_runtime();
+        assert!(app.runtime.is_some());
+        assert!(app.status_banner.contains("recompiled successfully"));
+
+        // 5. Verify render_sfc_editor renders without panic with both trees
+        if let Some(PouSource::Sfc(s)) = app.project.pous.get("parallel_sfc") {
+            let _elem = canvas_sfc::render_sfc_editor(s, app.runtime.as_ref(), app.ui_lang, None);
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }
 
 
