@@ -444,7 +444,7 @@ mod tests {
             let s2_name = &batch_sfc.steps[rows[1][1]].name;
             assert!(s1_name.contains("Fill") || s1_name.contains("Dose"));
             assert!(s2_name.contains("Fill") || s2_name.contains("Dose"));
-            let _element = canvas_sfc::render_sfc_editor(batch_sfc, app.runtime.as_ref(), app.ui_lang, None);
+            let _element = canvas_sfc::render_sfc_editor(batch_sfc, app.runtime.as_ref(), app.ui_lang, None, &[]);
         }
 
         // 2. Test interactive ToggleForceTag for purely symbolic booleans
@@ -460,7 +460,7 @@ mod tests {
             assert!(!val);
         }
 
-        // 3. Test SFC Quick Topology builders via Messages
+        // 3. Test SFC Manual Divergence builder via Message (manual spawning without automatic dummy steps)
         let original_step_count = if let Some(PouSource::Sfc(sfc)) = app.project.pous.get("batch_seq") {
             sfc.steps.len()
         } else {
@@ -468,9 +468,9 @@ mod tests {
         };
         let _ = app.update(Message::SfcAddAndDivergence("batch_seq".to_string()));
         if let Some(PouSource::Sfc(sfc)) = app.project.pous.get("batch_seq") {
-            assert_eq!(sfc.steps.len(), original_step_count + 2);
+            assert_eq!(sfc.steps.len(), original_step_count);
             let last_tr = sfc.transitions.last().ok_or("no transition found")?;
-            assert_eq!(last_tr.to_steps.len(), 2);
+            assert_eq!(last_tr.divergence, ferrite_lang_sfc::DivergenceKind::And);
         }
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -630,7 +630,7 @@ mod tests {
 
         // 5. Verify render_sfc_editor renders without panic with both trees
         if let Some(PouSource::Sfc(s)) = app.project.pous.get("parallel_sfc") {
-            let _elem = canvas_sfc::render_sfc_editor(s, app.runtime.as_ref(), app.ui_lang, None);
+            let _elem = canvas_sfc::render_sfc_editor(s, app.runtime.as_ref(), app.ui_lang, None, &[]);
         }
 
         let _ = fs::remove_dir_all(&temp_dir);

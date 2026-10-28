@@ -107,6 +107,7 @@ pub enum Message {
     PouFilterTextChanged(String),
     IoFilterTextChanged(String),
     IoFilterAreaSelected(Option<MemoryArea>),
+    IoFilterSfcSelected,
     ToggleForceBool(String, DirectAddress),
     ForceValInputChanged(String, String),
 
@@ -179,16 +180,37 @@ pub enum Message {
     SfcTransitionReceptivityChanged(String, usize, String),
     SfcTransitionFromChanged(String, usize, String),
     SfcTransitionToChanged(String, usize, String),
+    SfcTransitionConvergenceChanged(String, usize, ConvergenceKind),
+    SfcTransitionDivergenceChanged(String, usize, DivergenceKind),
     SfcAddAndDivergence(String),
     SfcAddAndConvergence(String),
     SfcAddOrDivergence(String),
     SfcAddOrConvergence(String),
     SfcSelectElement(String, Option<crate::canvas_sfc::SfcElementKey>),
+    SfcSelectElements(String, Vec<crate::canvas_sfc::SfcElementKey>),
+    SfcRequestDeleteSelected(String),
+    SfcConfirmDeleteSelected,
+    SfcCancelDeleteSelected,
+    SfcDisconnectStepInput(String, String),
+    SfcDisconnectStepOutput(String, String),
+    SfcDisconnectTransitionInput(String, String),
+    SfcDisconnectTransitionOutput(String, String),
+    SfcDisconnectAll(String, crate::canvas_sfc::SfcElementKey),
     SfcMoveElement(String, crate::canvas_sfc::SfcElementKey, (i32, i32)),
     SfcConnectPorts {
         pou_name: String,
         source: crate::canvas_sfc::SfcPortSource,
         target: crate::canvas_sfc::SfcPortTarget,
+    },
+    SfcConnectSteps {
+        pou_name: String,
+        from_step: String,
+        to_step: String,
+    },
+    SfcConnectTransitions {
+        pou_name: String,
+        from_trans: String,
+        to_trans: String,
     },
     SfcAutoLayout(String),
     SfcValidate(String),
@@ -252,10 +274,13 @@ pub struct FerriteStudioApp {
     pub digital_twin_workspace: DigitalTwinWorkspace,
     pub io_filter_text: String,
     pub io_filter_area: Option<MemoryArea>,
+    pub io_filter_sfc: bool,
     pub pou_filter_text: String,
     pub st_contents: HashMap<String, text_editor::Content>,
     pub confirm_clear_modal: Option<String>,
     pub sfc_selected: Option<(String, crate::canvas_sfc::SfcElementKey)>,
+    pub sfc_selected_elements: Vec<crate::canvas_sfc::SfcElementKey>,
+    pub sfc_delete_modal: Option<(String, Vec<crate::canvas_sfc::SfcElementKey>)>,
 }
 
 impl FerriteStudioApp {
@@ -369,10 +394,13 @@ impl FerriteStudioApp {
             digital_twin_workspace,
             io_filter_text: String::new(),
             io_filter_area: None,
+            io_filter_sfc: false,
             pou_filter_text: String::new(),
             st_contents,
             confirm_clear_modal: None,
             sfc_selected: None,
+            sfc_selected_elements: Vec::new(),
+            sfc_delete_modal: None,
         }
     }
 
@@ -404,7 +432,17 @@ impl FerriteStudioApp {
         } else {
             iced::Subscription::none()
         };
-        iced::Subscription::batch([close_sub, tick_sub])
+        let key_sub = iced::keyboard::on_key_press(|key, _modifiers| {
+            if matches!(
+                key,
+                iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete | iced::keyboard::key::Named::Backspace)
+            ) {
+                Some(Message::SfcRequestDeleteSelected(String::new()))
+            } else {
+                None
+            }
+        });
+        iced::Subscription::batch([close_sub, tick_sub, key_sub])
     }
 
     pub fn track_history(&mut self) {
@@ -870,7 +908,13 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::IoFilterAreaSelected(area) => {
+                self.io_filter_sfc = false;
                 self.io_filter_area = area;
+                Task::none()
+            }
+            Message::IoFilterSfcSelected => {
+                self.io_filter_sfc = true;
+                self.io_filter_area = None;
                 Task::none()
             }
             Message::ToggleForceBool(tag_name, addr) => {
@@ -1260,8 +1304,14 @@ impl FerriteStudioApp {
             }
             Message::SfcAddStep(pou_name) => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
-                    let next = sfc.steps.len() + 1;
-                    let step_id = format!("X{next}");
+                    let next = sfc
+                        .steps
+                        .iter()
+                        .filter_map(|s| s.id.trim_start_matches(['X', 'x']).parse::<usize>().ok())
+                        .max()
+                        .unwrap_or(0)
+                        + 1;
+                    let step_id = format!("{next}");
                     let step_name = format!("Step_{next}");
 
                     let pos = if let Some((ref p, ref key)) = self.sfc_selected
@@ -1298,8 +1348,22 @@ impl FerriteStudioApp {
                         Some((base_x, lowest_y.map(|y| y + 40).unwrap_or(40)))
                     });
 
-                    // If a transition was selected, automatically connect it to this new step
-                    if let Some((ref p, crate::canvas_sfc::SfcElementKey::Transition(ref tid))) = self.sfc_selected
+                    // If a step was selected, insert an intermediate transition between them
+                    if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) = self.sfc_selected
+                        && p == &pou_name
+                    {
+                        let trans_id = format!("T{}", sfc.transitions.len() + 1);
+                        let (sx, sy) = sfc.steps.iter().find(|s| &s.id == sid).and_then(|s| s.grid_pos).unwrap_or((60, 40));
+                        sfc.transitions.push(SfcTransition {
+                            id: trans_id,
+                            from_steps: vec![sid.clone()],
+                            to_steps: vec![step_id.clone()],
+                            receptivity: "TRUE".to_string(),
+                            convergence: Default::default(),
+                            divergence: Default::default(),
+                            grid_pos: Some((sx + 50, sy + 80)),
+                        });
+                    } else if let Some((ref p, crate::canvas_sfc::SfcElementKey::Transition(ref tid))) = self.sfc_selected
                         && p == &pou_name
                         && let Some(tr) = sfc.transitions.iter_mut().find(|t| &t.id == tid)
                         && !tr.to_steps.contains(&step_id)
@@ -1417,13 +1481,25 @@ impl FerriteStudioApp {
                                 (p, vec![sid.clone()])
                             }
                             crate::canvas_sfc::SfcElementKey::Transition(tid) => {
-                                let tr_pos = sfc.transitions.iter().find(|t| &t.id == tid).and_then(|t| t.grid_pos);
-                                let p = tr_pos.map(|(tx, ty)| (tx, ty + 120));
-                                (p, vec![])
+                                let (tx, ty) = sfc.transitions.iter().find(|t| &t.id == tid).and_then(|t| t.grid_pos).unwrap_or((110, 140));
+                                let inter_step_id = format!("X{}", sfc.steps.len() + 1);
+                                let inter_step_name = format!("Step_{}", sfc.steps.len() + 1);
+                                if let Some(tr) = sfc.transitions.iter_mut().find(|t| &t.id == tid)
+                                    && !tr.to_steps.contains(&inter_step_id) {
+                                        tr.to_steps.push(inter_step_id.clone());
+                                    }
+                                sfc.steps.push(SfcStep {
+                                    id: inter_step_id.clone(),
+                                    name: inter_step_name,
+                                    kind: StepKind::Normal,
+                                    actions: Vec::new(),
+                                    grid_pos: Some(((tx - 50).max(60), ty + 80)),
+                                });
+                                (Some((tx, ty + 180)), vec![inter_step_id])
                             }
                         }
                     } else {
-                        (None, sfc.steps.last().map(|s| vec![s.id.clone()]).unwrap_or_default())
+                        (None, Vec::new())
                     };
 
                     let grid_pos = pos.or_else(|| {
@@ -1487,43 +1563,73 @@ impl FerriteStudioApp {
                     }
                 Task::none()
             }
+            Message::SfcTransitionConvergenceChanged(pou_name, t_idx, conv) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(tr) = sfc.transitions.get_mut(t_idx) {
+                        tr.convergence = conv;
+                        self.track_history();
+                        self.modified = true;
+                    }
+                Task::none()
+            }
+            Message::SfcTransitionDivergenceChanged(pou_name, t_idx, div) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(tr) = sfc.transitions.get_mut(t_idx) {
+                        tr.divergence = div;
+                        self.track_history();
+                        self.modified = true;
+                    }
+                Task::none()
+            }
             Message::SfcAddAndDivergence(pou_name) => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
-                    let src_step = sfc.steps.last().cloned();
-                    let src_id = src_step.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| "0".to_string());
-                    let src_pos = src_step.as_ref().and_then(|s| s.grid_pos).unwrap_or((60, 40));
-
-                    let id_a = sfc.steps.len().to_string();
-                    let id_b = (sfc.steps.len() + 1).to_string();
-
-                    let trans_x = src_pos.0 + 50;
-                    let trans_y = src_pos.1 + 100;
-                    let step_a_pos = (src_pos.0, trans_y + 80);
-                    let step_b_pos = (src_pos.0 + 260, trans_y + 80);
-
-                    sfc.steps.push(SfcStep {
-                        id: id_a.clone(),
-                        name: format!("Branch_{id_a}"),
-                        kind: StepKind::Normal,
-                        actions: vec![],
-                        grid_pos: Some(step_a_pos),
-                    });
-                    sfc.steps.push(SfcStep {
-                        id: id_b.clone(),
-                        name: format!("Branch_{id_b}"),
-                        kind: StepKind::Normal,
-                        actions: vec![],
-                        grid_pos: Some(step_b_pos),
-                    });
                     let next_t = sfc.transitions.len() + 1;
+                    let trans_id = format!("T{next_t}_AndDiv");
+
+                    let mut from_steps = Vec::new();
+                    let mut to_steps = Vec::new();
+                    let mut pos = None;
+
+                    let selected_steps: Vec<String> = self.sfc_selected_elements.iter().filter_map(|e| {
+                        if let crate::canvas_sfc::SfcElementKey::Step(id) = e { Some(id.clone()) } else { None }
+                    }).collect();
+
+                    if selected_steps.len() >= 2 {
+                        to_steps = selected_steps.clone();
+                        let step_positions: Vec<(i32, i32)> = sfc.steps.iter()
+                            .filter(|s| selected_steps.contains(&s.id))
+                            .filter_map(|s| s.grid_pos)
+                            .collect();
+                        if !step_positions.is_empty() {
+                            let avg_x = step_positions.iter().map(|(x, _)| x).sum::<i32>() / step_positions.len() as i32;
+                            let min_y = step_positions.iter().map(|(_, y)| *y).min().unwrap_or(140);
+                            pos = Some((avg_x + 50, (min_y - 80).max(40)));
+                        }
+                    } else if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) = self.sfc_selected
+                        && p == &pou_name {
+                            from_steps.push(sid.clone());
+                            if let Some(s) = sfc.steps.iter().find(|s| &s.id == sid)
+                                && let Some((sx, sy)) = s.grid_pos {
+                                    pos = Some((sx + 50, sy + 100));
+                                }
+                    }
+
+                    let grid_pos = pos.or_else(|| {
+                        let lowest_y = sfc.steps.iter().filter_map(|s| s.grid_pos.map(|(_, y)| y + 60))
+                            .chain(sfc.transitions.iter().filter_map(|t| t.grid_pos.map(|(_, y)| y + 20)))
+                            .max();
+                        let base_x = sfc.transitions.first().and_then(|t| t.grid_pos.map(|(x, _)| x)).unwrap_or(110);
+                        Some((base_x, lowest_y.map(|y| y + 40).unwrap_or(140)))
+                    });
+
                     sfc.transitions.push(SfcTransition {
-                        id: format!("T{next_t}_AndDiv"),
-                        from_steps: vec![src_id],
-                        to_steps: vec![id_a, id_b],
+                        id: trans_id,
+                        from_steps,
+                        to_steps,
                         receptivity: "TRUE".to_string(),
                         convergence: ConvergenceKind::And,
                         divergence: DivergenceKind::And,
-                        grid_pos: Some((trans_x, trans_y)),
+                        grid_pos,
                     });
                     self.track_history();
                     self.modified = true;
@@ -1531,92 +1637,108 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::SfcAddAndConvergence(pou_name) => {
-                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name)
-                    && sfc.steps.len() >= 2 {
-                        let len = sfc.steps.len();
-                        let from_a_step = sfc.steps[len - 2].clone();
-                        let from_b_step = sfc.steps[len - 1].clone();
-                        let from_a = from_a_step.id.clone();
-                        let from_b = from_b_step.id.clone();
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                    let next_t = sfc.transitions.len() + 1;
+                    let trans_id = format!("T{next_t}_AndConv");
 
-                        let pos_a = from_a_step.grid_pos.unwrap_or((60, 40));
-                        let pos_b = from_b_step.grid_pos.unwrap_or((320, 40));
-                        let max_y = pos_a.1.max(pos_b.1);
-                        let center_x = (pos_a.0 + pos_b.0) / 2;
+                    let mut from_steps = Vec::new();
+                    let mut pos = None;
 
-                        let trans_pos = (center_x + 50, max_y + 100);
-                        let join_pos = (center_x, trans_pos.1 + 80);
+                    let selected_steps: Vec<String> = self.sfc_selected_elements.iter().filter_map(|e| {
+                        if let crate::canvas_sfc::SfcElementKey::Step(id) = e { Some(id.clone()) } else { None }
+                    }).collect();
 
-                        let join_id = len.to_string();
-                        sfc.steps.push(SfcStep {
-                            id: join_id.clone(),
-                            name: format!("Step_Join_{join_id}"),
-                            kind: StepKind::Normal,
-                            actions: vec![],
-                            grid_pos: Some(join_pos),
-                        });
-                        let next_t = sfc.transitions.len() + 1;
-                        sfc.transitions.push(SfcTransition {
-                            id: format!("T{next_t}_AndConv"),
-                            from_steps: vec![from_a, from_b],
-                            to_steps: vec![join_id],
-                            receptivity: "TRUE".to_string(),
-                            convergence: ConvergenceKind::And,
-                            divergence: DivergenceKind::And,
-                            grid_pos: Some(trans_pos),
-                        });
-                        self.track_history();
-                        self.modified = true;
+                    if selected_steps.len() >= 2 {
+                        from_steps = selected_steps.clone();
+                        let step_positions: Vec<(i32, i32)> = sfc.steps.iter()
+                            .filter(|s| selected_steps.contains(&s.id))
+                            .filter_map(|s| s.grid_pos)
+                            .collect();
+                        if !step_positions.is_empty() {
+                            let avg_x = step_positions.iter().map(|(x, _)| x).sum::<i32>() / step_positions.len() as i32;
+                            let max_y = step_positions.iter().map(|(_, y)| *y).max().unwrap_or(100);
+                            pos = Some((avg_x + 50, max_y + 100));
+                        }
+                    } else if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) = self.sfc_selected
+                        && p == &pou_name {
+                            from_steps.push(sid.clone());
+                            if let Some(s) = sfc.steps.iter().find(|s| &s.id == sid)
+                                && let Some((sx, sy)) = s.grid_pos {
+                                    pos = Some((sx + 50, sy + 100));
+                                }
                     }
+
+                    let grid_pos = pos.or_else(|| {
+                        let lowest_y = sfc.steps.iter().filter_map(|s| s.grid_pos.map(|(_, y)| y + 60))
+                            .chain(sfc.transitions.iter().filter_map(|t| t.grid_pos.map(|(_, y)| y + 20)))
+                            .max();
+                        let base_x = sfc.transitions.first().and_then(|t| t.grid_pos.map(|(x, _)| x)).unwrap_or(110);
+                        Some((base_x, lowest_y.map(|y| y + 40).unwrap_or(140)))
+                    });
+
+                    sfc.transitions.push(SfcTransition {
+                        id: trans_id,
+                        from_steps,
+                        to_steps: Vec::new(),
+                        receptivity: "TRUE".to_string(),
+                        convergence: ConvergenceKind::And,
+                        divergence: DivergenceKind::And,
+                        grid_pos,
+                    });
+                    self.track_history();
+                    self.modified = true;
+                }
                 Task::none()
             }
             Message::SfcAddOrDivergence(pou_name) => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
-                    let src_step = sfc.steps.last().cloned();
-                    let src_id = src_step.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| "0".to_string());
-                    let src_pos = src_step.as_ref().and_then(|s| s.grid_pos).unwrap_or((60, 40));
+                    let next_t = sfc.transitions.len() + 1;
+                    let trans_id = format!("T{next_t}_OrDiv");
 
-                    let id_a = sfc.steps.len().to_string();
-                    let id_b = (sfc.steps.len() + 1).to_string();
+                    let mut from_steps = Vec::new();
+                    let mut to_steps = Vec::new();
+                    let mut pos = None;
 
-                    let trans_a_pos = (src_pos.0 + 50, src_pos.1 + 100);
-                    let step_a_pos = (src_pos.0, src_pos.1 + 180);
-                    let trans_b_pos = (src_pos.0 + 260 + 50, src_pos.1 + 100);
-                    let step_b_pos = (src_pos.0 + 260, src_pos.1 + 180);
+                    let selected_steps: Vec<String> = self.sfc_selected_elements.iter().filter_map(|e| {
+                        if let crate::canvas_sfc::SfcElementKey::Step(id) = e { Some(id.clone()) } else { None }
+                    }).collect();
 
-                    sfc.steps.push(SfcStep {
-                        id: id_a.clone(),
-                        name: format!("Alt_{id_a}"),
-                        kind: StepKind::Normal,
-                        actions: vec![],
-                        grid_pos: Some(step_a_pos),
+                    if selected_steps.len() >= 2 {
+                        to_steps = selected_steps.clone();
+                        let step_positions: Vec<(i32, i32)> = sfc.steps.iter()
+                            .filter(|s| selected_steps.contains(&s.id))
+                            .filter_map(|s| s.grid_pos)
+                            .collect();
+                        if !step_positions.is_empty() {
+                            let avg_x = step_positions.iter().map(|(x, _)| x).sum::<i32>() / step_positions.len() as i32;
+                            let min_y = step_positions.iter().map(|(_, y)| *y).min().unwrap_or(140);
+                            pos = Some((avg_x + 50, (min_y - 80).max(40)));
+                        }
+                    } else if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) = self.sfc_selected
+                        && p == &pou_name {
+                            from_steps.push(sid.clone());
+                            if let Some(s) = sfc.steps.iter().find(|s| &s.id == sid)
+                                && let Some((sx, sy)) = s.grid_pos {
+                                    pos = Some((sx + 50, sy + 100));
+                                }
+                    }
+
+                    let grid_pos = pos.or_else(|| {
+                        let lowest_y = sfc.steps.iter().filter_map(|s| s.grid_pos.map(|(_, y)| y + 60))
+                            .chain(sfc.transitions.iter().filter_map(|t| t.grid_pos.map(|(_, y)| y + 20)))
+                            .max();
+                        let base_x = sfc.transitions.first().and_then(|t| t.grid_pos.map(|(x, _)| x)).unwrap_or(110);
+                        Some((base_x, lowest_y.map(|y| y + 40).unwrap_or(140)))
                     });
-                    sfc.steps.push(SfcStep {
-                        id: id_b.clone(),
-                        name: format!("Alt_{id_b}"),
-                        kind: StepKind::Normal,
-                        actions: vec![],
-                        grid_pos: Some(step_b_pos),
-                    });
-                    let t1 = sfc.transitions.len() + 1;
-                    let t2 = t1 + 1;
+
                     sfc.transitions.push(SfcTransition {
-                        id: format!("T{t1}_OrA"),
-                        from_steps: vec![src_id.clone()],
-                        to_steps: vec![id_a],
+                        id: trans_id,
+                        from_steps,
+                        to_steps,
                         receptivity: "TRUE".to_string(),
                         convergence: ConvergenceKind::And,
                         divergence: DivergenceKind::Or,
-                        grid_pos: Some(trans_a_pos),
-                    });
-                    sfc.transitions.push(SfcTransition {
-                        id: format!("T{t2}_OrB"),
-                        from_steps: vec![src_id],
-                        to_steps: vec![id_b],
-                        receptivity: "FALSE".to_string(),
-                        convergence: ConvergenceKind::And,
-                        divergence: DivergenceKind::Or,
-                        grid_pos: Some(trans_b_pos),
+                        grid_pos,
                     });
                     self.track_history();
                     self.modified = true;
@@ -1624,47 +1746,222 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::SfcAddOrConvergence(pou_name) => {
-                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name)
-                    && sfc.steps.len() >= 2 {
-                        let len = sfc.steps.len();
-                        let from_a_step = sfc.steps[len - 2].clone();
-                        let from_b_step = sfc.steps[len - 1].clone();
-                        let from_a = from_a_step.id.clone();
-                        let from_b = from_b_step.id.clone();
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                    let next_t = sfc.transitions.len() + 1;
+                    let trans_id = format!("T{next_t}_OrConv");
 
-                        let pos_a = from_a_step.grid_pos.unwrap_or((60, 40));
-                        let pos_b = from_b_step.grid_pos.unwrap_or((320, 40));
-                        let max_y = pos_a.1.max(pos_b.1);
-                        let center_x = (pos_a.0 + pos_b.0) / 2;
+                    let mut from_steps = Vec::new();
+                    let mut pos = None;
 
-                        let trans_pos = (center_x + 50, max_y + 100);
-                        let join_pos = (center_x, trans_pos.1 + 80);
+                    let selected_steps: Vec<String> = self.sfc_selected_elements.iter().filter_map(|e| {
+                        if let crate::canvas_sfc::SfcElementKey::Step(id) = e { Some(id.clone()) } else { None }
+                    }).collect();
 
-                        let join_id = len.to_string();
-                        sfc.steps.push(SfcStep {
-                            id: join_id.clone(),
-                            name: format!("Step_Merge_{join_id}"),
-                            kind: StepKind::Normal,
-                            actions: vec![],
-                            grid_pos: Some(join_pos),
-                        });
-                        let next_t = sfc.transitions.len() + 1;
-                        sfc.transitions.push(SfcTransition {
-                            id: format!("T{next_t}_OrConv"),
-                            from_steps: vec![from_a, from_b],
-                            to_steps: vec![join_id],
-                            receptivity: "TRUE".to_string(),
-                            convergence: ConvergenceKind::Or,
-                            divergence: DivergenceKind::And,
-                            grid_pos: Some(trans_pos),
-                        });
+                    if selected_steps.len() >= 2 {
+                        from_steps = selected_steps.clone();
+                        let step_positions: Vec<(i32, i32)> = sfc.steps.iter()
+                            .filter(|s| selected_steps.contains(&s.id))
+                            .filter_map(|s| s.grid_pos)
+                            .collect();
+                        if !step_positions.is_empty() {
+                            let avg_x = step_positions.iter().map(|(x, _)| x).sum::<i32>() / step_positions.len() as i32;
+                            let max_y = step_positions.iter().map(|(_, y)| *y).max().unwrap_or(100);
+                            pos = Some((avg_x + 50, max_y + 100));
+                        }
+                    } else if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) = self.sfc_selected
+                        && p == &pou_name {
+                            from_steps.push(sid.clone());
+                            if let Some(s) = sfc.steps.iter().find(|s| &s.id == sid)
+                                && let Some((sx, sy)) = s.grid_pos {
+                                    pos = Some((sx + 50, sy + 100));
+                                }
+                    }
+
+                    let grid_pos = pos.or_else(|| {
+                        let lowest_y = sfc.steps.iter().filter_map(|s| s.grid_pos.map(|(_, y)| y + 60))
+                            .chain(sfc.transitions.iter().filter_map(|t| t.grid_pos.map(|(_, y)| y + 20)))
+                            .max();
+                        let base_x = sfc.transitions.first().and_then(|t| t.grid_pos.map(|(x, _)| x)).unwrap_or(110);
+                        Some((base_x, lowest_y.map(|y| y + 40).unwrap_or(140)))
+                    });
+
+                    sfc.transitions.push(SfcTransition {
+                        id: trans_id,
+                        from_steps,
+                        to_steps: Vec::new(),
+                        receptivity: "TRUE".to_string(),
+                        convergence: ConvergenceKind::Or,
+                        divergence: DivergenceKind::And,
+                        grid_pos,
+                    });
+                    self.track_history();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::SfcSelectElement(pou_name, key) => {
+                self.sfc_selected = key.as_ref().map(|k| (pou_name, k.clone()));
+                self.sfc_selected_elements = key.map(|k| vec![k]).unwrap_or_default();
+                Task::none()
+            }
+            Message::SfcSelectElements(pou_name, keys) => {
+                if keys.len() == 1 {
+                    self.sfc_selected = Some((pou_name, keys[0].clone()));
+                } else {
+                    self.sfc_selected = None;
+                }
+                self.sfc_selected_elements = keys;
+                Task::none()
+            }
+            Message::SfcRequestDeleteSelected(pou_name) => {
+                let target_pou = if pou_name.is_empty() {
+                    if let WorkspaceTab::Pou(ref p) = self.active_tab {
+                        p.clone()
+                    } else {
+                        return Task::none();
+                    }
+                } else {
+                    pou_name
+                };
+
+                let mut elements = self.sfc_selected_elements.clone();
+                if elements.is_empty()
+                    && let Some((ref p, ref k)) = self.sfc_selected
+                        && p == &target_pou {
+                            elements.push(k.clone());
+                        }
+
+                if elements.len() > 1 {
+                    self.sfc_delete_modal = Some((target_pou, elements));
+                } else if elements.len() == 1
+                    && let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&target_pou) {
+                        let mut del_steps = std::collections::HashSet::new();
+                        let mut del_trans = std::collections::HashSet::new();
+                        for el in &elements {
+                            match el {
+                                crate::canvas_sfc::SfcElementKey::Step(id) => {
+                                    del_steps.insert(id.clone());
+                                }
+                                crate::canvas_sfc::SfcElementKey::Transition(id) => {
+                                    del_trans.insert(id.clone());
+                                }
+                            }
+                        }
+
+                        sfc.steps.retain(|s| !del_steps.contains(&s.id));
+                        sfc.transitions.retain(|t| !del_trans.contains(&t.id));
+
+                        for tr in &mut sfc.transitions {
+                            tr.from_steps.retain(|sid| !del_steps.contains(sid));
+                            tr.to_steps.retain(|sid| !del_steps.contains(sid));
+                        }
+
+                        self.sfc_selected = None;
+                        self.sfc_selected_elements.clear();
                         self.track_history();
+                        self.recompile_runtime();
+                        self.modified = true;
+                }
+                Task::none()
+            }
+            Message::SfcCancelDeleteSelected => {
+                self.sfc_delete_modal = None;
+                Task::none()
+            }
+            Message::SfcConfirmDeleteSelected => {
+                if let Some((pou_name, elements)) = self.sfc_delete_modal.take()
+                    && let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                        let mut del_steps = std::collections::HashSet::new();
+                        let mut del_trans = std::collections::HashSet::new();
+                        for el in &elements {
+                            match el {
+                                crate::canvas_sfc::SfcElementKey::Step(id) => {
+                                    del_steps.insert(id.clone());
+                                }
+                                crate::canvas_sfc::SfcElementKey::Transition(id) => {
+                                    del_trans.insert(id.clone());
+                                }
+                            }
+                        }
+
+                        sfc.steps.retain(|s| !del_steps.contains(&s.id));
+                        sfc.transitions.retain(|t| !del_trans.contains(&t.id));
+
+                        for tr in &mut sfc.transitions {
+                            tr.from_steps.retain(|sid| !del_steps.contains(sid));
+                            tr.to_steps.retain(|sid| !del_steps.contains(sid));
+                        }
+
+                        self.sfc_selected = None;
+                        self.sfc_selected_elements.clear();
+                        self.track_history();
+                        self.recompile_runtime();
                         self.modified = true;
                     }
                 Task::none()
             }
-            Message::SfcSelectElement(pou_name, key) => {
-                self.sfc_selected = key.map(|k| (pou_name, k));
+            Message::SfcDisconnectStepInput(pou_name, step_id) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                    for tr in &mut sfc.transitions {
+                        tr.to_steps.retain(|sid| sid != &step_id);
+                    }
+                    self.track_history();
+                    self.recompile_runtime();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::SfcDisconnectStepOutput(pou_name, step_id) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                    for tr in &mut sfc.transitions {
+                        tr.from_steps.retain(|sid| sid != &step_id);
+                    }
+                    self.track_history();
+                    self.recompile_runtime();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::SfcDisconnectTransitionInput(pou_name, trans_id) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == trans_id) {
+                        tr.from_steps.clear();
+                        self.track_history();
+                        self.recompile_runtime();
+                        self.modified = true;
+                    }
+                Task::none()
+            }
+            Message::SfcDisconnectTransitionOutput(pou_name, trans_id) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == trans_id) {
+                        tr.to_steps.clear();
+                        self.track_history();
+                        self.recompile_runtime();
+                        self.modified = true;
+                    }
+                Task::none()
+            }
+            Message::SfcDisconnectAll(pou_name, key) => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                    match key {
+                        crate::canvas_sfc::SfcElementKey::Step(step_id) => {
+                            for tr in &mut sfc.transitions {
+                                tr.from_steps.retain(|sid| sid != &step_id);
+                                tr.to_steps.retain(|sid| sid != &step_id);
+                            }
+                        }
+                        crate::canvas_sfc::SfcElementKey::Transition(trans_id) => {
+                            if let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == trans_id) {
+                                tr.from_steps.clear();
+                                tr.to_steps.clear();
+                            }
+                        }
+                    }
+                    self.track_history();
+                    self.recompile_runtime();
+                    self.modified = true;
+                }
                 Task::none()
             }
             Message::SfcMoveElement(pou_name, key, (gx, gy)) => {
@@ -1741,6 +2038,65 @@ impl FerriteStudioApp {
                         }
                         _ => {}
                     }
+                }
+                Task::none()
+            }
+            Message::SfcConnectSteps { pou_name, from_step, to_step } => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                    let trans_id = format!("T{}", sfc.transitions.len() + 1);
+                    let pos = {
+                        let p1 = sfc.steps.iter().find(|s| s.id == from_step).and_then(|s| s.grid_pos);
+                        let p2 = sfc.steps.iter().find(|s| s.id == to_step).and_then(|s| s.grid_pos);
+                        match (p1, p2) {
+                            (Some((x1, y1)), Some((x2, y2))) => Some(((x1 + x2) / 2 + 50, (y1 + y2) / 2)),
+                            (Some((x, y)), None) => Some((x + 50, y + 80)),
+                            _ => None,
+                        }
+                    };
+                    sfc.transitions.push(SfcTransition {
+                        id: trans_id,
+                        from_steps: vec![from_step],
+                        to_steps: vec![to_step],
+                        receptivity: "TRUE".to_string(),
+                        convergence: Default::default(),
+                        divergence: Default::default(),
+                        grid_pos: pos,
+                    });
+                    self.track_history();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::SfcConnectTransitions { pou_name, from_trans, to_trans } => {
+                if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
+                    let step_id = format!("X{}", sfc.steps.len() + 1);
+                    let step_name = format!("Step_{}", sfc.steps.len() + 1);
+                    let pos = {
+                        let p1 = sfc.transitions.iter().find(|t| t.id == from_trans).and_then(|t| t.grid_pos);
+                        let p2 = sfc.transitions.iter().find(|t| t.id == to_trans).and_then(|t| t.grid_pos);
+                        match (p1, p2) {
+                            (Some((x1, y1)), Some((x2, y2))) => Some((((x1 + x2) / 2 - 50).max(60), (y1 + y2) / 2)),
+                            (Some((x, y)), None) => Some(((x - 50).max(60), y + 80)),
+                            _ => None,
+                        }
+                    };
+                    if let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == from_trans)
+                        && !tr.to_steps.contains(&step_id) {
+                            tr.to_steps.push(step_id.clone());
+                        }
+                    if let Some(tr) = sfc.transitions.iter_mut().find(|t| t.id == to_trans)
+                        && !tr.from_steps.contains(&step_id) {
+                            tr.from_steps.push(step_id.clone());
+                        }
+                    sfc.steps.push(SfcStep {
+                        id: step_id,
+                        name: step_name,
+                        kind: StepKind::Normal,
+                        actions: Vec::new(),
+                        grid_pos: pos,
+                    });
+                    self.track_history();
+                    self.modified = true;
                 }
                 Task::none()
             }
@@ -1962,6 +2318,62 @@ impl FerriteStudioApp {
             .into();
         }
 
+        if let Some((ref _pou_name, ref elements)) = self.sfc_delete_modal {
+            let step_count = elements.iter().filter(|e| matches!(e, crate::canvas_sfc::SfcElementKey::Step(_))).count();
+            let trans_count = elements.iter().filter(|e| matches!(e, crate::canvas_sfc::SfcElementKey::Transition(_))).count();
+            let total = elements.len();
+
+            let modal_content = container(
+                column![
+                    text(self.ui_lang.tr("Delete Selected SFC Elements", "Supprimer les éléments SFC sélectionnés")).size(16),
+                    text(format!(
+                        "{} {} {} ({} {}, {} {})? {}",
+                        self.ui_lang.tr("Are you sure you want to delete", "Voulez-vous vraiment supprimer"),
+                        total,
+                        self.ui_lang.tr("selected object(s)", "objet(s) sélectionné(s)"),
+                        step_count,
+                        self.ui_lang.tr("step(s)", "étape(s)"),
+                        trans_count,
+                        self.ui_lang.tr("transition(s)", "transition(s)"),
+                        self.ui_lang.tr("All attached wires and links will be removed.", "Toutes les liaisons associées seront supprimées.")
+                    ))
+                    .size(13)
+                    .color(StudioTheme::TEXT_SECONDARY),
+                    row![
+                        button(text(self.ui_lang.tr("Delete", "Supprimer")).size(12))
+                            .on_press(Message::SfcConfirmDeleteSelected)
+                            .style(StudioTheme::danger_button)
+                            .padding([6, 12]),
+                        button(text(self.ui_lang.tr("Cancel", "Annuler")).size(12))
+                            .on_press(Message::SfcCancelDeleteSelected)
+                            .style(StudioTheme::secondary_button)
+                            .padding([6, 12]),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                ]
+                .spacing(16),
+            )
+            .padding(20)
+            .style(StudioTheme::modal_card_style)
+            .width(460);
+
+            return container(
+                container(modal_content)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.65))),
+                ..Default::default()
+            })
+            .into();
+        }
+
         if let Some(ref pou_name) = self.confirm_clear_modal {
             let p_name = pou_name.clone();
             let modal_content = container(
@@ -2151,7 +2563,7 @@ impl FerriteStudioApp {
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED),
             iced::widget::Space::with_width(Length::Fill),
-            button(text(self.ui_lang.tr("⧉ Detach", "⧉ Détacher")).size(10.5))
+            button(text(self.ui_lang.tr("Detach", "Détacher")).size(10.5))
                 .on_press(Message::DetachLeftExplorer)
                 .style(StudioTheme::ghost_button)
                 .padding([1, 4]),
@@ -2176,7 +2588,7 @@ impl FerriteStudioApp {
         let header = row![
             text(self.ui_lang.tr("Project Explorer", "Explorateur de Projet")).size(15),
             iced::widget::Space::with_width(Length::Fill),
-            button(text(self.ui_lang.tr("⬇ Reattach", "⬇ Réattacher")).size(11))
+            button(text(self.ui_lang.tr("Reattach", "Réattacher")).size(11))
                 .on_press(Message::DockLeftExplorer)
                 .style(StudioTheme::secondary_button)
                 .padding([4, 8]),
@@ -2314,11 +2726,11 @@ impl FerriteStudioApp {
 
     fn view_right_io(&self) -> Element<'_, Message> {
         let header = row![
-            text(self.ui_lang.tr("PROCESS IMAGE & I/O", "IMAGE MÉMOIRE & E/S"))
+            text(self.ui_lang.tr("Memory & I/O", "Mémoire & E/S"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED),
             iced::widget::Space::with_width(Length::Fill),
-            button(text(self.ui_lang.tr("⧉ Detach", "⧉ Détacher")).size(10.5))
+            button(text(self.ui_lang.tr("Detach", "Détacher")).size(10.5))
                 .on_press(Message::DetachRightIo)
                 .style(StudioTheme::ghost_button)
                 .padding([1, 4]),
@@ -2331,9 +2743,9 @@ impl FerriteStudioApp {
                 self.view_right_io_body(),
             ]
             .spacing(10)
-            .padding(14),
+            .padding([12, 12]),
         )
-        .width(280)
+        .width(295)
         .height(Length::Fill)
         .style(StudioTheme::sidebar_container_style)
         .into()
@@ -2343,7 +2755,7 @@ impl FerriteStudioApp {
         let header = row![
             text(self.ui_lang.tr("Virtual I/O Rack & Watch Table", "Baie E/S Virtuelle & Table de Forçage")).size(15),
             iced::widget::Space::with_width(Length::Fill),
-            button(text(self.ui_lang.tr("⬇ Reattach", "⬇ Réattacher")).size(11))
+            button(text(self.ui_lang.tr("Reattach", "Réattacher")).size(11))
                 .on_press(Message::DockRightIo)
                 .style(StudioTheme::secondary_button)
                 .padding([4, 8]),
@@ -2378,29 +2790,38 @@ impl FerriteStudioApp {
         let area_selectors = row![
             button(text("ALL").size(10))
                 .on_press(Message::IoFilterAreaSelected(None))
-                .style(StudioTheme::tab_button(self.io_filter_area.is_none()))
+                .style(StudioTheme::tab_button(self.io_filter_area.is_none() && !self.io_filter_sfc))
                 .padding([4, 6]),
             button(text("%I").size(10))
                 .on_press(Message::IoFilterAreaSelected(Some(MemoryArea::Input)))
-                .style(StudioTheme::tab_button(self.io_filter_area == Some(MemoryArea::Input)))
+                .style(StudioTheme::tab_button(self.io_filter_area == Some(MemoryArea::Input) && !self.io_filter_sfc))
                 .padding([4, 6]),
             button(text("%Q").size(10))
                 .on_press(Message::IoFilterAreaSelected(Some(MemoryArea::Output)))
-                .style(StudioTheme::tab_button(self.io_filter_area == Some(MemoryArea::Output)))
+                .style(StudioTheme::tab_button(self.io_filter_area == Some(MemoryArea::Output) && !self.io_filter_sfc))
                 .padding([4, 6]),
             button(text("%M").size(10))
                 .on_press(Message::IoFilterAreaSelected(Some(MemoryArea::Marker)))
-                .style(StudioTheme::tab_button(self.io_filter_area == Some(MemoryArea::Marker)))
+                .style(StudioTheme::tab_button(self.io_filter_area == Some(MemoryArea::Marker) && !self.io_filter_sfc))
+                .padding([4, 6]),
+            button(text("SFC").size(10))
+                .on_press(Message::IoFilterSfcSelected)
+                .style(StudioTheme::tab_button(self.io_filter_sfc))
                 .padding([4, 6]),
         ]
         .spacing(4);
 
-        let mut tags_list = column![].spacing(6);
+        let mut tags_list = column![].spacing(4);
 
         if let Some(ref rt) = self.runtime {
             let query = self.io_filter_text.to_lowercase();
             for tag in rt.tags.tags() {
-                if let Some(selected_area) = self.io_filter_area
+                if self.io_filter_sfc {
+                    let is_sfc_var = tag.name.ends_with(".state") || tag.name.ends_with(".t") || tag.name.contains(".state");
+                    if !is_sfc_var {
+                        continue;
+                    }
+                } else if let Some(selected_area) = self.io_filter_area
                     && tag.address.map(|a| a.area) != Some(selected_area) {
                         continue;
                     }
@@ -2419,31 +2840,31 @@ impl FerriteStudioApp {
 
                 let interactive_val: Element<'_, Message> = match &val {
                     IecValue::Bool(b) => {
-                        button(text(if *b { "TRUE" } else { "FALSE" }).size(11))
+                        button(text(if *b { "TRUE" } else { "FALSE" }).size(10.5))
                             .on_press(Message::ToggleForceTag(t_name))
                             .style(if *b { StudioTheme::success_button } else { StudioTheme::secondary_button })
-                            .padding([2, 8])
+                            .padding([2, 6])
                             .into()
                     }
                     _ => {
-                        text(val.to_string()).size(12).color(StudioTheme::ACCENT_CYAN).into()
+                        text(val.to_string()).size(11).color(StudioTheme::ACCENT_CYAN).into()
                     }
                 };
 
                 let tag_row = container(
                     row![
                         column![
-                            text(&tag.name).size(12),
-                            text(addr_str).size(10).color(StudioTheme::TEXT_MUTED),
+                            text(&tag.name).size(11.5),
+                            text(addr_str).size(9.5).color(StudioTheme::TEXT_MUTED),
                         ]
-                        .spacing(2)
+                        .spacing(1)
                         .width(Length::Fill),
                         interactive_val,
                     ]
-                    .spacing(8)
+                    .spacing(6)
                     .align_y(Alignment::Center),
                 )
-                .padding([6, 8])
+                .padding([4, 6])
                 .style(StudioTheme::card_style)
                 .width(Length::Fill);
 
@@ -2454,7 +2875,7 @@ impl FerriteStudioApp {
         column![
             filter_input,
             area_selectors,
-            scrollable(tags_list).height(Length::Fill),
+            scrollable(container(tags_list).padding(iced::Padding { top: 0.0, right: 10.0, bottom: 0.0, left: 0.0 }).width(Length::Fill)).height(Length::Fill),
         ]
         .spacing(8)
         .into()
@@ -2471,7 +2892,7 @@ impl FerriteStudioApp {
                                 .sfc_selected
                                 .as_ref()
                                 .and_then(|(p, k)| if p == name { Some(k) } else { None });
-                            render_sfc_editor(sfc, self.runtime.as_ref(), self.ui_lang, sel)
+                            render_sfc_editor(sfc, self.runtime.as_ref(), self.ui_lang, sel, &self.sfc_selected_elements)
                         }
                         PouSource::St(_) => {
                             if let Some(content) = self.st_contents.get(name) {
@@ -2507,12 +2928,12 @@ impl FerriteStudioApp {
 
     fn view_bottom_dock_tabs(&self, is_detached: bool) -> Element<'_, Message> {
         let detach_btn = if is_detached {
-            button(text(self.ui_lang.tr("⬇ Reattach", "⬇ Réattacher")).size(11))
+            button(text(self.ui_lang.tr("Reattach", "Réattacher")).size(11))
                 .on_press(Message::DockBottomDock)
                 .style(StudioTheme::secondary_button)
                 .padding([4, 8])
         } else {
-            button(text(self.ui_lang.tr("⧉ Detach", "⧉ Détacher")).size(10.5))
+            button(text(self.ui_lang.tr("Detach", "Détacher")).size(10.5))
                 .on_press(Message::DetachBottomDock)
                 .style(StudioTheme::ghost_button)
                 .padding([2, 5])
