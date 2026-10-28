@@ -417,13 +417,16 @@ pub fn validate_sfc_topology(program: &SfcProgram) -> SfcValidationReport {
         }
 
         // Check orphan step (isolated from any transitions)
-        if comp_steps.len() == 1 && comp_trans.is_empty() && (n_steps > 1 || n_trans > 0) {
+        if comp_trans.is_empty() && (n_steps > 1 || n_trans > 0) {
             warnings.push(format!(
                 "Step '{}' is an orphan (not connected to any transition)",
                 step_ids[0]
             ));
+            // Do not treat standalone orphan steps as independent parallel execution trees
+            continue;
         }
 
+        let tree_id = trees.len() + 1;
         trees.push(SfcTreeInfo {
             tree_id,
             step_ids,
@@ -441,13 +444,7 @@ pub fn validate_sfc_topology(program: &SfcProgram) -> SfcValidationReport {
                 element_id: tr_id.clone(),
                 is_step: false,
             });
-            let tree_id = trees.len() + 1;
-            trees.push(SfcTreeInfo {
-                tree_id,
-                step_ids: Vec::new(),
-                transition_ids: vec![tr_id],
-                initial_step_ids: Vec::new(),
-            });
+            // Do not treat standalone orphan transitions as independent parallel execution trees
         }
     }
 
@@ -1665,7 +1662,7 @@ mod tests {
             .any(|e| matches!(e, SfcValidationError::MissingInitialStepInTree { .. })));
 
         // 3. Dangling reference in a transition
-        let mut dangling_tree = multi_tree_prog;
+        let mut dangling_tree = multi_tree_prog.clone();
         dangling_tree.transitions[0].to_steps = vec!["999".to_string()];
         let report3 = validate_sfc_topology(&dangling_tree);
         assert!(!report3.is_valid);
@@ -1673,6 +1670,27 @@ mod tests {
             .errors
             .iter()
             .any(|e| matches!(e, SfcValidationError::DanglingStepReference { .. })));
+
+        // 4. Spawning an unconnected orphan step does not create a fake parallel tree
+        let mut with_orphan = multi_tree_prog.clone();
+        with_orphan.steps.push(SfcStep::new("99", "OrphanStep", StepKind::Normal));
+        let report4 = validate_sfc_topology(&with_orphan);
+        assert_eq!(report4.trees.len(), 2, "Orphan step must not be counted as a parallel tree");
+        assert!(report4.warnings.iter().any(|w| w.contains("is an orphan")));
+
+        // 5. Spawning an unconnected orphan transition does not create a fake parallel tree
+        let mut with_orphan_tr = multi_tree_prog;
+        with_orphan_tr.transitions.push(SfcTransition {
+            id: "T99".to_string(),
+            from_steps: vec![],
+            to_steps: vec![],
+            receptivity: "TRUE".to_string(),
+            convergence: ConvergenceKind::And,
+            divergence: DivergenceKind::And,
+            grid_pos: None,
+        });
+        let report5 = validate_sfc_topology(&with_orphan_tr);
+        assert_eq!(report5.trees.len(), 2, "Orphan transition must not be counted as a parallel tree");
     }
 
     #[test]
