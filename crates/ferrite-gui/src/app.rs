@@ -123,6 +123,15 @@ pub enum Message {
     StepSimTick,
     SetSimSpeed(SimSpeed),
     ResetSim,
+    ResetSimCold,
+    ResetSimWarm,
+    UnforceAllTags,
+    AddBreakpoint(ferrite_runtime::Breakpoint),
+    RemoveBreakpoint(usize),
+    SetBpTypeScan(bool),
+    SetBpInputVal(String),
+    SetForceAnalogInput(String),
+    ForceNumericTag(String, String),
     PlcTickTimer,
     RunScenarios,
 
@@ -271,6 +280,9 @@ pub struct FerriteStudioApp {
     pub active_tab: WorkspaceTab,
     pub sim_running: bool,
     pub sim_speed: SimSpeed,
+    pub bp_type_scan: bool,
+    pub bp_input_val: String,
+    pub force_analog_input: String,
     pub modified: bool,
     pub last_tick: Instant,
     pub status_banner: String,
@@ -393,6 +405,9 @@ impl FerriteStudioApp {
             active_tab: first_pou,
             sim_running: false,
             sim_speed: SimSpeed::Realtime1x,
+            bp_type_scan: true,
+            bp_input_val: String::new(),
+            force_analog_input: String::new(),
             modified: false,
             last_tick: Instant::now(),
             status_banner,
@@ -852,6 +867,78 @@ impl FerriteStudioApp {
             Message::ResetSim => {
                 self.recompile_runtime();
                 self.trend_plotter.clear_all();
+                Task::none()
+            }
+            Message::ResetSimWarm => {
+                if let Some(rt) = &mut self.runtime {
+                    let _ = rt.warm_restart();
+                } else {
+                    self.recompile_runtime();
+                }
+                self.trend_plotter.clear_all();
+                self.status_banner = self.ui_lang.tr("Warm restart performed (retain memory preserved).", "Redémarrage à chaud effectué (mémoire rémanente conservée).").to_string();
+                Task::none()
+            }
+            Message::ResetSimCold => {
+                if let Some(rt) = &mut self.runtime {
+                    let _ = rt.cold_restart();
+                } else {
+                    self.recompile_runtime();
+                }
+                self.trend_plotter.clear_all();
+                self.status_banner = self.ui_lang.tr("Cold restart performed (memory wiped).", "Redémarrage à froid effectué (mémoire effacée).").to_string();
+                Task::none()
+            }
+            Message::UnforceAllTags => {
+                if let Some(rt) = &mut self.runtime {
+                    let _ = rt.unforce_all();
+                    self.status_banner = self.ui_lang.tr("All forces cleared.", "Tous les forçages ont été annulés.").to_string();
+                }
+                Task::none()
+            }
+            Message::AddBreakpoint(bp) => {
+                if let Some(rt) = &mut self.runtime {
+                    rt.breakpoints.push(bp);
+                    self.status_banner = self.ui_lang.tr("Breakpoint added.", "Point d'arrêt ajouté.").to_string();
+                }
+                Task::none()
+            }
+            Message::RemoveBreakpoint(idx) => {
+                if let Some(rt) = &mut self.runtime && idx < rt.breakpoints.len() {
+                    rt.breakpoints.remove(idx);
+                    self.status_banner = self.ui_lang.tr("Breakpoint removed.", "Point d'arrêt supprimé.").to_string();
+                }
+                Task::none()
+            }
+            Message::SetBpTypeScan(b) => {
+                self.bp_type_scan = b;
+                Task::none()
+            }
+            Message::SetBpInputVal(v) => {
+                self.bp_input_val = v;
+                Task::none()
+            }
+            Message::SetForceAnalogInput(v) => {
+                self.force_analog_input = v;
+                Task::none()
+            }
+            Message::ForceNumericTag(name, val_str) => {
+                if let Some(rt) = &mut self.runtime {
+                    if let Some(tag) = rt.tags.get_tag(&name) {
+                        let parsed_val = match tag.data_type {
+                            IecType::Int => val_str.trim().parse::<i16>().map(IecValue::Int).ok(),
+                            IecType::Dint => val_str.trim().parse::<i32>().map(IecValue::Dint).ok(),
+                            IecType::Real => val_str.trim().parse::<f32>().map(IecValue::Real).ok(),
+                            _ => None,
+                        };
+                        if let Some(val) = parsed_val {
+                            let _ = rt.force(&name, val);
+                            self.status_banner = format!("Forced tag '{}' to '{}'", name, val_str.trim());
+                        } else {
+                            self.status_banner = format!("Invalid numerical format for tag '{}'", name);
+                        }
+                    }
+                }
                 Task::none()
             }
             Message::PlcTickTimer => {
@@ -2197,12 +2284,40 @@ impl FerriteStudioApp {
             }
             Message::ToggleForceTag(tag_name) => {
                 if let Some(rt) = &mut self.runtime {
-                    let cur = rt.read_value(&tag_name).ok().and_then(|v| v.as_bool().ok()).unwrap_or(false);
-                    let next = IecValue::Bool(!cur);
-                    let _ = rt.force(&tag_name, next.clone());
-                    if let Ok(mut snap) = self.shared_io.write() {
-                        snap.values.insert(tag_name.clone(), next.clone());
-                        snap.request_write(&tag_name, next);
+                    if let Some(tag) = rt.tags.get_tag(&tag_name) {
+                        if tag.forced.is_some() {
+                            let _ = rt.unforce(&tag_name);
+                            self.status_banner = format!("Unforced '{}'", tag_name);
+                        } else {
+                            match tag.data_type {
+                                IecType::Bool => {
+                                    let cur = rt.read_value(&tag_name).ok().and_then(|v| v.as_bool().ok()).unwrap_or(false);
+                                    let next = IecValue::Bool(!cur);
+                                    let _ = rt.force(&tag_name, next);
+                                }
+                                _ => {
+                                    if !self.force_analog_input.trim().is_empty() {
+                                        let val_str = self.force_analog_input.clone();
+                                        let parsed_val = match tag.data_type {
+                                            IecType::Int => val_str.trim().parse::<i16>().map(IecValue::Int).ok(),
+                                            IecType::Dint => val_str.trim().parse::<i32>().map(IecValue::Dint).ok(),
+                                            IecType::Real => val_str.trim().parse::<f32>().map(IecValue::Real).ok(),
+                                            _ => None,
+                                        };
+                                        if let Some(val) = parsed_val {
+                                            let _ = rt.force(&tag_name, val);
+                                            self.status_banner = format!("Forced tag '{}' to '{}'", tag_name, val_str.trim());
+                                        } else {
+                                            self.status_banner = format!("Invalid numeric value for '{}'", tag_name);
+                                        }
+                                    } else {
+                                        let cur = rt.read_value(&tag_name).unwrap_or_else(|_| tag.initial_value.clone());
+                                        let _ = rt.force(&tag_name, cur);
+                                        self.status_banner = format!("Forced tag '{}' to current value", tag_name);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 Task::none()
@@ -2503,6 +2618,28 @@ impl FerriteStudioApp {
             StudioTheme::ACCENT_AMBER
         };
 
+        let active_forces = self.runtime.as_ref().map(|rt| rt.active_forces_count()).unwrap_or(0);
+        let forces_banner: Element<'_, Message> = if active_forces > 0 {
+            row![
+                container(
+                    text(format!("⚠️ {} {}", active_forces, self.ui_lang.tr("FORCES ACTIVE", "FORÇAGES ACTIFS")))
+                        .size(11)
+                        .color(StudioTheme::ACCENT_AMBER)
+                )
+                .padding([3, 8])
+                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.961, 0.620, 0.043, 0.2))),
+                button(text(self.ui_lang.tr("Unforce All", "Annuler forçages")).size(11))
+                    .on_press(Message::UnforceAllTags)
+                    .style(StudioTheme::danger_button)
+                    .padding([3, 8]),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            row![].into()
+        };
+
         let telemetry_pill = container(
             row![
                 container(iced::widget::Space::with_width(Length::Fixed(8.0))).height(Length::Fixed(8.0)).style(move |_theme: &Theme| container::Style { background: Some(Background::Color(status_dot_color)), border: Border { radius: Radius::from(4.0), ..Default::default() }, ..Default::default() }),
@@ -2541,10 +2678,15 @@ impl FerriteStudioApp {
             .style(StudioTheme::secondary_button)
             .padding([6, 12]);
 
-        let reset_btn = button(text(self.ui_lang.tr("Reset", "Réinit")).size(12))
-            .on_press(Message::ResetSim)
+        let reset_warm_btn = button(text(self.ui_lang.tr("Reset (Warm)", "Réinit (Chaud)")).size(12))
+            .on_press(Message::ResetSimWarm)
             .style(StudioTheme::secondary_button)
-            .padding([6, 12]);
+            .padding([6, 10]);
+
+        let reset_cold_btn = button(text(self.ui_lang.tr("Reset (Cold)", "Réinit (Froid)")).size(12))
+            .on_press(Message::ResetSimCold)
+            .style(StudioTheme::ghost_button)
+            .padding([6, 10]);
 
         let speeds = [
             SimSpeed::Slow0_1x,
@@ -2627,10 +2769,12 @@ impl FerriteStudioApp {
             row![
                 text("FerritePLC").size(15),
                 telemetry_pill,
+                forces_banner,
                 iced::widget::Space::with_width(12),
                 run_btn,
                 step_btn,
-                reset_btn,
+                reset_warm_btn,
+                reset_cold_btn,
                 iced::widget::Space::with_width(6),
                 speed_group,
                 iced::widget::Space::with_width(8),
@@ -2908,6 +3052,17 @@ impl FerriteStudioApp {
         ]
         .spacing(4);
 
+        let analog_force_row = row![
+            text(self.ui_lang.tr("Force val:", "Val forçage :")).size(10.5).color(StudioTheme::TEXT_MUTED),
+            text_input("e.g. 85.0", &self.force_analog_input)
+                .on_input(Message::SetForceAnalogInput)
+                .width(Length::Fill)
+                .padding(3)
+                .style(StudioTheme::styled_input),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+
         let mut tags_list = column![].spacing(4);
 
         if let Some(ref rt) = self.runtime {
@@ -2944,7 +3099,18 @@ impl FerriteStudioApp {
                             .into()
                     }
                     _ => {
-                        text(val.to_string()).size(11).color(StudioTheme::ACCENT_CYAN).into()
+                        let is_forced = tag.forced.is_some();
+                        let display_val = val.to_string();
+                        let btn_text = if is_forced {
+                            format!("{display_val} 🔒")
+                        } else {
+                            display_val
+                        };
+                        button(text(btn_text).size(10.5))
+                            .on_press(Message::ToggleForceTag(t_name))
+                            .style(if is_forced { StudioTheme::danger_button } else { StudioTheme::secondary_button })
+                            .padding([2, 6])
+                            .into()
                     }
                 };
 
@@ -2972,6 +3138,7 @@ impl FerriteStudioApp {
         column![
             filter_input,
             area_selectors,
+            analog_force_row,
             scrollable(container(tags_list).padding(iced::Padding { top: 0.0, right: 10.0, bottom: 0.0, left: 0.0 }).width(Length::Fill)).height(Length::Fill),
         ]
         .spacing(8)
@@ -3137,7 +3304,96 @@ impl FerriteStudioApp {
                         );
                     }
                 }
-                scrollable(diag_list).height(120).into()
+
+                // Breakpoints subsection
+                let mut bp_items = column![].spacing(4);
+                let bp_header = text(self.ui_lang.tr("Commissioning Breakpoints", "Points d'Arrêt de Mise en Service"))
+                    .size(11.5)
+                    .color(StudioTheme::TEXT_PRIMARY);
+                bp_items = bp_items.push(bp_header);
+
+                if let Some(ref rt) = self.runtime {
+                    if rt.breakpoints.is_empty() {
+                        bp_items = bp_items.push(
+                            text(self.ui_lang.tr("No breakpoints set. Simulation runs continuously.", "Aucun point d'arrêt configuré. La simulation s'exécute en continu."))
+                                .size(10.5)
+                                .color(StudioTheme::TEXT_MUTED)
+                        );
+                    } else {
+                        for (idx, bp) in rt.breakpoints.iter().enumerate() {
+                            let desc = match bp {
+                                ferrite_runtime::Breakpoint::ScanCount(n) => format!("Scan #{}", n),
+                                ferrite_runtime::Breakpoint::SymbolTrue(s) => format!("Symbol '{}' == TRUE", s),
+                                ferrite_runtime::Breakpoint::Pou(id) => format!("POU '{}'", id),
+                            };
+                            let bp_row = row![
+                                container(text(format!("#{}", idx + 1)).size(10).color(StudioTheme::ACCENT_CYAN))
+                                    .padding([1, 4])
+                                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.220, 0.741, 0.973, 0.15))),
+                                text(desc).size(11).width(Length::Fill),
+                                button(text(self.ui_lang.tr("Remove", "Supprimer")).size(10))
+                                    .on_press(Message::RemoveBreakpoint(idx))
+                                    .style(StudioTheme::danger_button)
+                                    .padding([2, 6]),
+                            ]
+                            .spacing(6)
+                            .align_y(Alignment::Center);
+                            bp_items = bp_items.push(bp_row);
+                        }
+                    }
+                }
+
+                let bp_add_form = row![
+                    button(text(if self.bp_type_scan {
+                        self.ui_lang.tr("Scan #", "N° Cycle")
+                    } else {
+                        self.ui_lang.tr("Symbol", "Symbole")
+                    }).size(10))
+                    .on_press(Message::SetBpTypeScan(!self.bp_type_scan))
+                    .style(StudioTheme::secondary_button)
+                    .padding([3, 6]),
+                    text_input(
+                        if self.bp_type_scan { "100" } else { "EStop_OK" },
+                        &self.bp_input_val,
+                    )
+                    .on_input(Message::SetBpInputVal)
+                    .width(110)
+                    .padding(3)
+                    .style(StudioTheme::styled_input),
+                    button(text(self.ui_lang.tr("+ Add", "+ Ajouter")).size(10.5))
+                        .on_press_maybe({
+                            let val = self.bp_input_val.trim();
+                            if val.is_empty() {
+                                None
+                            } else if self.bp_type_scan {
+                                val.parse::<u64>().ok().map(|n| Message::AddBreakpoint(ferrite_runtime::Breakpoint::ScanCount(n)))
+                            } else {
+                                Some(Message::AddBreakpoint(ferrite_runtime::Breakpoint::SymbolTrue(val.to_string())))
+                            }
+                        })
+                        .style(StudioTheme::primary_button)
+                        .padding([3, 6]),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center);
+
+                row![
+                    scrollable(diag_list).width(Length::FillPortion(1)).height(120),
+                    iced::widget::Space::with_width(12),
+                    container(
+                        column![
+                            scrollable(bp_items).height(80),
+                            bp_add_form,
+                        ]
+                        .spacing(6)
+                    )
+                    .padding(8)
+                    .width(Length::FillPortion(1))
+                    .height(120)
+                    .style(StudioTheme::card_style),
+                ]
+                .spacing(8)
+                .into()
             }
             BottomDockTab::TrendPlotter => {
                 let toolbar = row![
