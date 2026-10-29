@@ -342,6 +342,20 @@ impl PlcRuntime {
         self.process_image.import_markers(&markers);
         self.tags.reset_values_to_initial();
         self.tags.import_retain_values(&retain_tags);
+
+        // Re-initialize direct address bindings with tag initial values and re-latch inputs
+        for tag in self.tags.tags() {
+            if let Some(addr) = tag.address {
+                if addr.area == MemoryArea::Input {
+                    let _ = self.process_image.set_hw_input(addr, &tag.initial_value);
+                } else {
+                    let _ = self.process_image.write(addr, &tag.initial_value);
+                }
+            }
+        }
+        self.process_image.latch_inputs();
+
+        self.tags.reset_fbs();
         self.scan_count = 0;
         self.virtual_time_ms = 0;
         self.last_scan_duration_us = 0;
@@ -970,6 +984,43 @@ mod tests {
             runtime.evaluate_expression_bool("Invalid Syntax &^%", "main"),
             None
         );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_runtime_warm_restart_relatches_inputs_and_resets_fbs() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_plc_warm_restart_relatch_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        let project = Project::scaffold(&temp_dir, "warm_relatch_plant")?;
+        let mut runtime = PlcRuntime::from_project(&project)?;
+
+        // Verify initial input EStop_OK is latched TRUE
+        assert_eq!(runtime.read_value("EStop_OK")?, IecValue::Bool(true));
+
+        // Mutate hardware input to FALSE and advance a timer
+        let estop_addr: ferrite_core::address::DirectAddress = "%IX0.0".parse()?;
+        runtime.process_image.set_hw_input(estop_addr, &IecValue::Bool(false))?;
+        runtime.process_image.latch_inputs();
+        assert_eq!(runtime.read_value("EStop_OK")?, IecValue::Bool(false));
+
+        if let Some(fb) = runtime.tags.get_fb_mut("Fill_Timer") {
+            fb.et_ms = 3500;
+            fb.q = true;
+        }
+        assert_eq!(runtime.read_value("Fill_Timer.ET")?, IecValue::Time(3500));
+
+        // Call warm_restart()
+        runtime.warm_restart()?;
+
+        // EStop_OK must be re-initialized from tag initial value and re-latched to TRUE
+        assert_eq!(runtime.read_value("EStop_OK")?, IecValue::Bool(true));
+        // Fill_Timer must have accumulators reset
+        assert_eq!(runtime.read_value("Fill_Timer.ET")?, IecValue::Time(0));
+        assert_eq!(runtime.read_value("Fill_Timer.Q")?, IecValue::Bool(false));
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
