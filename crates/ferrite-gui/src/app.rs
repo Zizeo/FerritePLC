@@ -2285,7 +2285,7 @@ impl FerriteStudioApp {
             Message::ToggleForceTag(tag_name) => {
                 if let Some(rt) = &mut self.runtime {
                     if let Some(tag) = rt.tags.get_tag(&tag_name) {
-                        if tag.forced.is_some() {
+                        if tag.forced.is_some() && tag.data_type != IecType::Bool {
                             let _ = rt.unforce(&tag_name);
                             self.status_banner = format!("Unforced '{}'", tag_name);
                         } else {
