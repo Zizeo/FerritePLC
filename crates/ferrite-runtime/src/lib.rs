@@ -285,6 +285,78 @@ impl PlcRuntime {
     }
 
     /// Executes one complete deterministic 4-phase PLC scan cycle.
+    /// Returns the total count of forced tags and addresses.
+    pub fn active_forces_count(&self) -> usize {
+        self.tags.active_forces_count() + self.process_image.active_forces_count()
+    }
+
+    /// Clears all active forces in TagTable and ProcessImage.
+    pub fn unforce_all(&mut self) -> Result<(), RuntimeError> {
+        self.tags.unforce_all();
+        self.process_image.unforce_all();
+        Ok(())
+    }
+
+    /// Performs an IEC 61131-3 Cold Restart: wipes memory, resets all tags to defaults,
+    /// clears all active forces, resets alarms and tasks, and returns POUs to initial state.
+    pub fn cold_restart(&mut self) -> Result<(), RuntimeError> {
+        self.unforce_all()?;
+        self.process_image.clear();
+        self.tags.reset_values_to_initial();
+        self.alarms.clear();
+        self.alarm_journal.clear();
+        self.scan_count = 0;
+        self.virtual_time_ms = 0;
+        self.last_scan_duration_us = 0;
+        self.max_scan_duration_us = 0;
+        for task in &mut self.tasks {
+            task.elapsed_ms = 0;
+            task.last_trigger_state = false;
+            task.execution_count = 0;
+            for pou in &mut task.pous {
+                pou.reset();
+            }
+        }
+        Ok(())
+    }
+
+    /// Performs an IEC 61131-3 Warm Restart: preserves RETAIN tags, %M markers, and active forces,
+    /// resets non-retain tags to defaults, and returns POUs to initial state.
+    pub fn warm_restart(&mut self) -> Result<(), RuntimeError> {
+        let retain_tags = self.tags.export_retain_values();
+        let markers = self.process_image.export_markers();
+        self.process_image.clear();
+        self.process_image.import_markers(&markers);
+        self.tags.reset_values_to_initial();
+        self.tags.import_retain_values(&retain_tags);
+        self.scan_count = 0;
+        self.virtual_time_ms = 0;
+        self.last_scan_duration_us = 0;
+        for task in &mut self.tasks {
+            task.elapsed_ms = 0;
+            task.last_trigger_state = false;
+            task.execution_count = 0;
+            for pou in &mut task.pous {
+                pou.reset();
+            }
+        }
+        Ok(())
+    }
+
+    /// Evaluates an ST expression to a boolean in pure read-only mode using the runtime's symbol table.
+    pub fn evaluate_expression_bool(&self, expr_str: &str, pou_name: &str) -> Option<bool> {
+        let trimmed = expr_str.trim();
+        if trimmed.is_empty() || trimmed == "1" || trimmed.eq_ignore_ascii_case("true") {
+            return Some(true);
+        }
+        if trimmed == "0" || trimmed.eq_ignore_ascii_case("false") {
+            return Some(false);
+        }
+        let expr = ferrite_lang_st::parse_st_expression(trimmed, pou_name).ok()?;
+        let val = expr.evaluate_with_resolver(&|sym| self.read_value(sym), pou_name).ok()?;
+        val.as_bool().ok()
+    }
+
     pub fn step_scan(&mut self) -> Result<ScanTelemetry, RuntimeError> {
         let start = Instant::now();
         self.scan_count = self.scan_count.saturating_add(1);
@@ -793,6 +865,56 @@ mod tests {
         assert!(tel.breakpoint_hit);
         assert_eq!(tel.scan_count, 3);
         assert_eq!(tel.hit_breakpoint, Some(Breakpoint::ScanCount(3)));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_runtime_warm_vs_cold_restart_and_unforce_all() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_plc_restart_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        let project = Project::scaffold(&temp_dir, "restart_plant")?;
+        let mut runtime = PlcRuntime::from_project(&project)?;
+
+        if let Some(t) = runtime.tags.get_tag_mut("Temp_Setpoint") {
+            t.retain = true;
+        }
+        let _ = runtime.force("Temp_Setpoint", IecValue::Real(88.5));
+        let _ = runtime.force("%IX0.0", IecValue::Bool(true));
+        assert!(runtime.active_forces_count() >= 2);
+
+        // Warm restart: preserves forces and retain values
+        runtime.warm_restart()?;
+        assert!(runtime.active_forces_count() >= 2);
+        assert_eq!(runtime.read_value("Temp_Setpoint")?, IecValue::Real(88.5));
+
+        // Cold restart: clears forces and resets Setpoint to initial
+        runtime.cold_restart()?;
+        assert_eq!(runtime.active_forces_count(), 0);
+        assert_ne!(runtime.read_value("Temp_Setpoint")?, IecValue::Real(88.5));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_runtime_compound_receptivity_evaluation() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_plc_receptivity_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        let project = Project::scaffold(&temp_dir, "rec_plant")?;
+        let mut runtime = PlcRuntime::from_project(&project)?;
+
+        let _ = runtime.force("Start_Button", IecValue::Bool(true));
+        let _ = runtime.force("Fast_Recipe_Mode", IecValue::Bool(true));
+
+        assert_eq!(runtime.evaluate_expression_bool("Start_Button AND Fast_Recipe_Mode", "main"), Some(true));
+        assert_eq!(runtime.evaluate_expression_bool("Start_Button AND NOT Fast_Recipe_Mode", "main"), Some(false));
+        assert_eq!(runtime.evaluate_expression_bool("Invalid Syntax &^%", "main"), None);
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
