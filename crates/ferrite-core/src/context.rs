@@ -54,6 +54,8 @@ pub trait ExecutablePou: Send {
     fn id(&self) -> PouId;
     fn kind(&self) -> LanguageKind;
     fn execute(&mut self, ctx: &mut ScanContext<'_>) -> Result<(), RuntimeError>;
+    /// Resets internal POU state (e.g. sequence steps and timers) on cold/warm restart.
+    fn reset(&mut self) {}
 }
 
 /// Execution context passed to every `ExecutablePou` during a deterministic scan cycle.

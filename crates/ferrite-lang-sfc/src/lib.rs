@@ -1046,6 +1046,18 @@ impl CompiledSfcPou {
             }
         }
     }
+    /// Resets all SFC steps back to initial configuration and clears elapsed active timers.
+    pub fn reset(&mut self) {
+        self.initialized = false;
+        for step in &mut self.steps {
+            step.active = step.initial;
+            step.prev_active = false;
+            step.elapsed_ms = 0;
+        }
+        self.fired_scratch.fill(false);
+        self.clear_scratch.fill(false);
+        self.activate_scratch.fill(false);
+    }
 }
 
 impl ExecutablePou for CompiledSfcPou {
@@ -1057,6 +1069,10 @@ impl ExecutablePou for CompiledSfcPou {
         LanguageKind::Sfc
     }
 
+    fn reset(&mut self) {
+        self.reset();
+    }
+
     fn execute(&mut self, ctx: &mut ScanContext<'_>) -> Result<(), RuntimeError> {
         if !self.initialized {
             for step in &mut self.steps {
@@ -1065,7 +1081,7 @@ impl ExecutablePou for CompiledSfcPou {
                 step.elapsed_ms = 0;
             }
             // Honor any external Set/Force applied before first scan
-            self.sync_external_step_overrides(ctx);
+            self.enforce_forced_steps(ctx);
             self.initialized = true;
             self.sync_introspection_symbols(ctx)?;
         } else {
@@ -2000,6 +2016,64 @@ mod tests {
         let col_gap = s2.0 - s1.0;
         assert!(col_gap >= 500, "Expected column gap >= 500 to fit actions, got {col_gap}");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_compiled_sfc_pou_reset() -> Result<(), Box<dyn std::error::Error>> {
+        let sfc = SfcProgram {
+            name: "test_reset".to_string(),
+            comment: "Test reset".to_string(),
+            steps: vec![
+                SfcStep {
+                    id: "0".to_string(),
+                    name: "Step0".to_string(),
+                    kind: StepKind::Initial,
+                    actions: vec![],
+                    ..Default::default()
+                },
+                SfcStep {
+                    id: "1".to_string(),
+                    name: "Step1".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![],
+                    ..Default::default()
+                },
+            ],
+            transitions: vec![
+                SfcTransition {
+                    id: "T0".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["1".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    ..Default::default()
+                },
+            ],
+        };
+        let mut tags = TagTable::new();
+        sfc.register_introspection_symbols(&mut tags)?;
+        let mut compiled = sfc.compile(&tags)?;
+        let mut pi = ProcessImage::new(128);
+        // Scan 1: Initial step 0 is active
+        let mut ctx1 = ScanContext::new(&mut pi, &mut tags, 50, 1);
+        compiled.execute(&mut ctx1)?;
+        assert!(ctx1.read_bool("test_reset.X0.state")?);
+        assert!(!ctx1.read_bool("test_reset.X1.state")?);
+
+        // Scan 2: T0 fires, activating step 1
+        let mut ctx2 = ScanContext::new(&mut pi, &mut tags, 50, 2);
+        compiled.execute(&mut ctx2)?;
+        assert!(!ctx2.read_bool("test_reset.X0.state")?);
+        assert!(ctx2.read_bool("test_reset.X1.state")?);
+
+        // Reset: returns to initial state
+        compiled.reset();
+        let mut ctx3 = ScanContext::new(&mut pi, &mut tags, 50, 3);
+        compiled.execute(&mut ctx3)?;
+        assert!(ctx3.read_bool("test_reset.X0.state")?);
+        assert!(!ctx3.read_bool("test_reset.X1.state")?);
         Ok(())
     }
 }
