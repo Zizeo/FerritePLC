@@ -144,6 +144,12 @@ pub enum Message {
 
     // Project & Files
     SaveProject,
+    SaveProjectAsDialog,
+    OpenProjectFolderDialog,
+    OpenProjectManifestDialog,
+    ExportPlcopenXmlDialog,
+    ImportPlcopenXmlDialog,
+    LoadProjectFromPath(std::path::PathBuf),
     CheckProject,
     Undo,
     Redo,
@@ -1081,6 +1087,156 @@ impl FerriteStudioApp {
                             "Projet enregistré avec succès.",
                         )
                         .to_string();
+                }
+                Task::none()
+            }
+            Message::LoadProjectFromPath(raw_path) => {
+                let path = if raw_path.is_file() {
+                    raw_path.parent().unwrap_or(&raw_path).to_path_buf()
+                } else {
+                    raw_path
+                };
+                match Project::load(&path) {
+                    Ok(loaded) => {
+                        let p_name = loaded.manifest.name.clone();
+                        self.project = loaded;
+                        self.undo_stack.clear();
+                        self.redo_stack.clear();
+                        self.last_committed_project = self.project.clone();
+                        self.active_tab = self
+                            .project
+                            .manifest
+                            .pous
+                            .first()
+                            .map(|p| WorkspaceTab::Pou(p.name.clone()))
+                            .unwrap_or(WorkspaceTab::SymbolsAndConfig);
+                        self.recompile_runtime();
+                        self.status_banner = format!(
+                            "Project '{}' successfully loaded from {}",
+                            p_name,
+                            path.display()
+                        );
+                    }
+                    Err(e) => {
+                        self.status_banner = format!(
+                            "Failed to load project from {}: {e}",
+                            path.display()
+                        );
+                    }
+                }
+                Task::none()
+            }
+            Message::OpenProjectFolderDialog => {
+                let mut dialog = rfd::FileDialog::new().set_title(self.ui_lang.tr(
+                    "Select FerritePLC Project Folder",
+                    "Sélectionner le Dossier du Projet FerritePLC",
+                ));
+                if self.project.root_dir.exists() {
+                    dialog = dialog.set_directory(&self.project.root_dir);
+                }
+                if let Some(folder) = dialog.pick_folder() {
+                    return self.update(Message::LoadProjectFromPath(folder));
+                }
+                Task::none()
+            }
+            Message::OpenProjectManifestDialog => {
+                let mut dialog = rfd::FileDialog::new()
+                    .set_title(self.ui_lang.tr(
+                        "Open FerriteProject.fplc Manifest",
+                        "Ouvrir le Fichier Manifeste FerriteProject.fplc",
+                    ))
+                    .add_filter("FerritePLC Manifest (.fplc)", &["fplc"]);
+                if self.project.root_dir.exists() {
+                    dialog = dialog.set_directory(&self.project.root_dir);
+                }
+                if let Some(file) = dialog.pick_file() {
+                    if let Some(parent) = file.parent() {
+                        return self.update(Message::LoadProjectFromPath(parent.to_path_buf()));
+                    }
+                }
+                Task::none()
+            }
+            Message::SaveProjectAsDialog => {
+                let mut dialog = rfd::FileDialog::new().set_title(self.ui_lang.tr(
+                    "Save FerritePLC Project to Folder",
+                    "Enregistrer le Projet FerritePLC dans un Dossier",
+                ));
+                if self.project.root_dir.exists() {
+                    dialog = dialog.set_directory(&self.project.root_dir);
+                }
+                if let Some(folder) = dialog.pick_folder() {
+                    self.project.root_dir = folder.clone();
+                    match self.project.save(&folder) {
+                        Ok(()) => {
+                            self.modified = false;
+                            self.status_banner = format!("Project saved to {}", folder.display());
+                        }
+                        Err(e) => {
+                            self.status_banner = format!("Save As failed: {e}");
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::ExportPlcopenXmlDialog => {
+                let file = rfd::FileDialog::new()
+                    .set_title(self.ui_lang.tr("Export PLCopen TC6 XML", "Exporter PLCopen TC6 XML"))
+                    .add_filter("PLCopen XML (.xml)", &["xml"])
+                    .set_file_name("project_plcopen.xml")
+                    .save_file();
+                if let Some(path) = file {
+                    match self.project.export_plcopen_xml() {
+                        Ok(xml) => match std::fs::write(&path, xml) {
+                            Ok(()) => {
+                                self.status_banner = format!("PLCopen XML exported to {}", path.display());
+                            }
+                            Err(e) => {
+                                self.status_banner = format!("Failed to write XML file: {e}");
+                            }
+                        },
+                        Err(e) => {
+                            self.status_banner = format!("PLCopen XML export error: {e}");
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::ImportPlcopenXmlDialog => {
+                let file = rfd::FileDialog::new()
+                    .set_title(self.ui_lang.tr("Import PLCopen TC6 XML", "Importer PLCopen TC6 XML"))
+                    .add_filter("PLCopen XML (.xml)", &["xml"])
+                    .pick_file();
+                if let Some(xml_path) = file {
+                    let target_folder = rfd::FileDialog::new()
+                        .set_title(self.ui_lang.tr(
+                            "Select Target Directory for Imported Project",
+                            "Sélectionner le Répertoire Cible pour le Projet Importé",
+                        ))
+                        .pick_folder();
+                    if let Some(target_dir) = target_folder {
+                        match std::fs::read_to_string(&xml_path) {
+                            Ok(xml_content) => match Project::import_plcopen_xml(&xml_content, &target_dir) {
+                                Ok(imported_project) => {
+                                    let p_name = imported_project.manifest.name.clone();
+                                    self.project = imported_project;
+                                    self.undo_stack.clear();
+                                    self.redo_stack.clear();
+                                    self.recompile_runtime();
+                                    self.status_banner = format!(
+                                        "Project '{}' successfully imported from PLCopen XML to {}",
+                                        p_name,
+                                        target_dir.display()
+                                    );
+                                }
+                                Err(e) => {
+                                    self.status_banner = format!("PLCopen import failed: {e}");
+                                }
+                            },
+                            Err(e) => {
+                                self.status_banner = format!("Failed to read XML file: {e}");
+                            }
+                        }
+                    }
                 }
                 Task::none()
             }

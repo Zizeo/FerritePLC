@@ -688,4 +688,22 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
     }
+
+    #[test]
+    fn test_load_project_from_path_and_plcopen_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("ferrite_test_load_path");
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let scaffold = ferrite_project::Project::scaffold(&temp_dir, "test_load")?;
+        scaffold.save(&temp_dir)?;
+
+        let mut app = FerriteStudioApp::new(scaffold);
+        let _ = app.update(Message::LoadProjectFromPath(temp_dir.clone()));
+        assert_eq!(app.project.manifest.name, "test_load");
+        assert!(app.status_banner.contains("test_load"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }
