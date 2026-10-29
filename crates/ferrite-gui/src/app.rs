@@ -77,6 +77,15 @@ pub enum SimSpeed {
 }
 
 impl SimSpeed {
+    pub const ALL: [SimSpeed; 6] = [
+        SimSpeed::Slow0_1x,
+        SimSpeed::Realtime1x,
+        SimSpeed::Fast2x,
+        SimSpeed::Fast5x,
+        SimSpeed::Fast10x,
+        SimSpeed::Max,
+    ];
+
     pub fn batch_size(self) -> usize {
         match self {
             Self::Slow0_1x | Self::Realtime1x => 1,
@@ -96,6 +105,12 @@ impl SimSpeed {
             Self::Fast10x => "10x",
             Self::Max => "Max",
         }
+    }
+}
+
+impl std::fmt::Display for SimSpeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label())
     }
 }
 
@@ -3620,33 +3635,18 @@ impl FerriteStudioApp {
                 .style(StudioTheme::ghost_button)
                 .padding([6, 10]);
 
-        let speeds = [
-            SimSpeed::Slow0_1x,
-            SimSpeed::Realtime1x,
-            SimSpeed::Fast2x,
-            SimSpeed::Fast5x,
-            SimSpeed::Fast10x,
-            SimSpeed::Max,
-        ];
-        let mut speed_row = row![].spacing(2);
-        for s in speeds {
-            let is_sel = self.sim_speed == s;
-            speed_row = speed_row.push(
-                button(text(s.label()).size(10))
-                    .on_press(Message::SetSimSpeed(s))
-                    .style(if is_sel {
-                        StudioTheme::primary_button
-                    } else {
-                        StudioTheme::ghost_button
-                    })
-                    .padding([3, 6]),
-            );
-        }
         let speed_group = row![
             text(self.ui_lang.tr("Speed:", "Vitesse:"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED),
-            speed_row,
+            pick_list(
+                &SimSpeed::ALL[..],
+                Some(self.sim_speed),
+                Message::SetSimSpeed,
+            )
+            .style(StudioTheme::styled_pick_list)
+            .padding([3, 6])
+            .width(68),
         ]
         .spacing(4)
         .align_y(Alignment::Center);
@@ -3709,7 +3709,7 @@ impl FerriteStudioApp {
             .padding([6, 8]);
 
         let menu_bar = row![
-            button(text(self.ui_lang.tr("File ▾", "Fichier ▾")).size(11))
+            button(text(self.ui_lang.tr("File", "Fichier")).size(11))
                 .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::File)))
                 .style(if self.active_menu == Some(ActiveMenu::File) {
                     StudioTheme::secondary_button
@@ -3717,7 +3717,7 @@ impl FerriteStudioApp {
                     StudioTheme::ghost_button
                 })
                 .padding([3, 7]),
-            button(text(self.ui_lang.tr("PLC ▾", "API ▾")).size(11))
+            button(text(self.ui_lang.tr("PLC", "API")).size(11))
                 .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Plc)))
                 .style(if self.active_menu == Some(ActiveMenu::Plc) {
                     StudioTheme::secondary_button
@@ -3725,7 +3725,7 @@ impl FerriteStudioApp {
                     StudioTheme::ghost_button
                 })
                 .padding([3, 7]),
-            button(text(self.ui_lang.tr("Panels ▾", "Panneaux ▾")).size(11))
+            button(text(self.ui_lang.tr("Panels", "Panneaux")).size(11))
                 .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Panels)))
                 .style(if self.active_menu == Some(ActiveMenu::Panels) {
                     StudioTheme::secondary_button
@@ -3733,7 +3733,7 @@ impl FerriteStudioApp {
                     StudioTheme::ghost_button
                 })
                 .padding([3, 7]),
-            button(text(self.ui_lang.tr("Options ▾", "Options ▾")).size(11))
+            button(text(self.ui_lang.tr("Options", "Options")).size(11))
                 .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Options)))
                 .style(if self.active_menu == Some(ActiveMenu::Options) {
                     StudioTheme::secondary_button
@@ -3746,32 +3746,36 @@ impl FerriteStudioApp {
         .align_y(Alignment::Center);
 
         container(
-            row![
-                text("FerritePLC").size(15),
-                menu_bar,
-                telemetry_pill,
-                forces_banner,
-                iced::widget::Space::with_width(12),
-                run_btn,
-                step_btn,
-                reset_warm_btn,
-                reset_cold_btn,
-                iced::widget::Space::with_width(6),
-                speed_group,
-                iced::widget::Space::with_width(8),
-                save_btn,
-                check_btn,
-                undo_btn,
-                redo_btn,
-                scenarios_btn,
-                iced::widget::Space::with_width(Length::Fill),
-                lang_btn,
-                explorer_toggle,
-                dock_toggle,
-                io_toggle,
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
+            scrollable(
+                row![
+                    text("FerritePLC").size(15),
+                    menu_bar,
+                    telemetry_pill,
+                    forces_banner,
+                    iced::widget::Space::with_width(12),
+                    run_btn,
+                    step_btn,
+                    reset_warm_btn,
+                    reset_cold_btn,
+                    iced::widget::Space::with_width(6),
+                    speed_group,
+                    iced::widget::Space::with_width(8),
+                    save_btn,
+                    check_btn,
+                    undo_btn,
+                    redo_btn,
+                    scenarios_btn,
+                    iced::widget::Space::with_width(Length::Fill),
+                    lang_btn,
+                    explorer_toggle,
+                    dock_toggle,
+                    io_toggle,
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::default()))
+            .width(Length::Fill),
         )
         .padding([8, 16])
         .style(StudioTheme::header_container_style)

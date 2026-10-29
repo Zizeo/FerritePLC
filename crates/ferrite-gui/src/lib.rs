@@ -788,4 +788,16 @@ mod tests {
         assert_eq!(pin_11.pin_number, 11);
         assert_eq!(pin_11.bcm, Some(17));
     }
+
+    #[test]
+    fn test_sim_speed_display_and_options() {
+        use crate::app::SimSpeed;
+        assert_eq!(SimSpeed::ALL.len(), 6);
+        assert_eq!(SimSpeed::Slow0_1x.to_string(), "0.1x");
+        assert_eq!(SimSpeed::Realtime1x.to_string(), "1x");
+        assert_eq!(SimSpeed::Fast2x.to_string(), "2x");
+        assert_eq!(SimSpeed::Fast5x.to_string(), "5x");
+        assert_eq!(SimSpeed::Fast10x.to_string(), "10x");
+        assert_eq!(SimSpeed::Max.to_string(), "Max");
+    }
 }
