@@ -220,6 +220,24 @@ pub struct FbInstance {
 }
 
 impl FbInstance {
+    /// Resets runtime state and accumulators of the Function Block instance to defaults.
+    pub fn reset(&mut self) {
+        self.in_bool = self.kind.is_corrector();
+        self.r_bool = false;
+        self.s_bool = false;
+        self.ld_bool = false;
+        self.q = false;
+        self.et_ms = 0;
+        self.cv = 0;
+        self.err_real = 0.0;
+        self.out_real = 0.0;
+        self.integral_accum = 0.0;
+        self.prev_err = 0.0;
+        self.has_prev_sample = false;
+        self.prev_in = false;
+        self.running = false;
+    }
+
     pub fn new(name: impl Into<String>, kind: StandardFbKind) -> Self {
         let mut inst = Self {
             name: name.into(),

@@ -383,4 +383,11 @@ impl TagTable {
             t.value = Some(t.initial_value.clone());
         }
     }
+
+    /// Resets all shared Function Block instance states and accumulators.
+    pub fn reset_fbs(&mut self) {
+        for fb in &mut self.fbs {
+            fb.reset();
+        }
+    }
 }

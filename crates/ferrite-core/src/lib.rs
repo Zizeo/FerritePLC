@@ -167,4 +167,20 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_fb_instance_and_tag_table_reset() -> Result<(), Box<dyn std::error::Error>> {
+        let mut table = TagTable::new();
+        let mut fb = FbInstance::new("Timer_1", StandardFbKind::Ton);
+        fb.et_ms = 4500;
+        fb.q = true;
+        fb.in_bool = true;
+        table.register_fb(fb);
+
+        assert_eq!(table.get_fb("Timer_1").map(|f| f.et_ms), Some(4500));
+        table.reset_fbs();
+        assert_eq!(table.get_fb("Timer_1").map(|f| f.et_ms), Some(0));
+        assert_eq!(table.get_fb("Timer_1").map(|f| f.q), Some(false));
+        Ok(())
+    }
 }
