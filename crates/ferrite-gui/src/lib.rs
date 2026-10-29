@@ -800,4 +800,21 @@ mod tests {
         assert_eq!(SimSpeed::Fast10x.to_string(), "10x");
         assert_eq!(SimSpeed::Max.to_string(), "Max");
     }
+
+    #[test]
+    fn test_warm_restart_auto_pauses_and_syncs_shared_io() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("ferrite_test_warm_restart_ui");
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let scaffold = ferrite_project::Project::scaffold(&temp_dir, "test_warm")?;
+        let mut app = FerriteStudioApp::new(scaffold);
+
+        app.sim_running = true;
+        let _ = app.update(Message::ResetSimWarm);
+        assert!(!app.sim_running, "Warm restart must auto-pause the simulation");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }

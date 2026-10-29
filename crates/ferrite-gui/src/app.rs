@@ -1031,8 +1031,21 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::ResetSimWarm => {
+                self.sim_running = false;
                 if let Some(rt) = &mut self.runtime {
                     let _ = rt.warm_restart();
+                    if let Ok(mut snap) = self.shared_io.write() {
+                        for tag in rt.tags.tags() {
+                            if let Ok(v) = rt.read_value(&tag.name) {
+                                snap.values.insert(tag.name.clone(), v);
+                            }
+                        }
+                    }
+                    if self.modbus_server.is_some()
+                        && let Ok(mut pi_lock) = self.modbus_shared_pi.write()
+                    {
+                        *pi_lock = rt.process_image.clone();
+                    }
                 } else {
                     self.recompile_runtime();
                 }
@@ -1040,8 +1053,8 @@ impl FerriteStudioApp {
                 self.status_banner = self
                     .ui_lang
                     .tr(
-                        "Warm restart performed (retain memory preserved).",
-                        "Redémarrage à chaud effectué (mémoire rémanente conservée).",
+                        "Warm restart performed (simulation paused, retain memory preserved).",
+                        "Redémarrage à chaud effectué (simulation en pause, mémoire rémanente conservée).",
                     )
                     .to_string();
                 Task::none()
