@@ -139,14 +139,17 @@ impl PlcRuntime {
                 tag: "Tank_Temp".to_string(),
                 condition: AlarmCondition::High { limit: 70.0 },
                 severity: AlarmSeverity::Critical,
-                message: "Process tank temperature exceeded critical threshold (70.0°C)".to_string(),
+                message: "Process tank temperature exceeded critical threshold (70.0°C)"
+                    .to_string(),
             }));
         }
         if tags.get_tag("Overpressure_Fault").is_some() {
             alarms.push(ActiveAlarm::new(AlarmDefinition {
                 id: "ALM_OVERPRESSURE".to_string(),
                 tag: "Overpressure_Fault".to_string(),
-                condition: AlarmCondition::Digital { trigger_value: true },
+                condition: AlarmCondition::Digital {
+                    trigger_value: true,
+                },
                 severity: AlarmSeverity::Major,
                 message: "Vessel overpressure safety fault detected".to_string(),
             }));
@@ -155,7 +158,9 @@ impl PlcRuntime {
             alarms.push(ActiveAlarm::new(AlarmDefinition {
                 id: "ALM_TEMP_WARNING".to_string(),
                 tag: "High_Temp_Alarm".to_string(),
-                condition: AlarmCondition::Digital { trigger_value: true },
+                condition: AlarmCondition::Digital {
+                    trigger_value: true,
+                },
                 severity: AlarmSeverity::Warning,
                 message: "High temperature warning active".to_string(),
             }));
@@ -191,7 +196,11 @@ impl PlcRuntime {
     }
 
     /// Sets a simulated input or tag value prior to the next scan cycle.
-    pub fn set_stimulus(&mut self, symbol_or_addr: &str, val: IecValue) -> Result<(), RuntimeError> {
+    pub fn set_stimulus(
+        &mut self,
+        symbol_or_addr: &str,
+        val: IecValue,
+    ) -> Result<(), RuntimeError> {
         let trimmed = symbol_or_addr.trim();
         if trimmed.starts_with('%') {
             let addr: DirectAddress = trimmed.parse()?;
@@ -232,9 +241,10 @@ impl PlcRuntime {
             return Ok(());
         }
         if let Some(tag) = self.tags.get_tag(trimmed)
-            && let Some(addr) = tag.address {
-                self.process_image.force(addr, &val)?;
-            }
+            && let Some(addr) = tag.address
+        {
+            self.process_image.force(addr, &val)?;
+        }
         self.tags.force_tag(trimmed, val)?;
         Ok(())
     }
@@ -248,9 +258,10 @@ impl PlcRuntime {
             return Ok(());
         }
         if let Some(tag) = self.tags.get_tag(trimmed)
-            && let Some(addr) = tag.address {
-                self.process_image.unforce(addr)?;
-            }
+            && let Some(addr) = tag.address
+        {
+            self.process_image.unforce(addr)?;
+        }
         self.tags.unforce_tag(trimmed)?;
         Ok(())
     }
@@ -259,15 +270,16 @@ impl PlcRuntime {
     pub fn read_value(&self, symbol: &str) -> Result<IecValue, RuntimeError> {
         let trimmed = symbol.trim();
         if let Some(id) = self.tags.tag_id(trimmed)
-            && let Some(tag) = self.tags.get_tag_by_id(id) {
-                if tag.forced.is_some() {
-                    return Ok(tag.current_value().clone());
-                }
-                if let Some(addr) = tag.address {
-                    return Ok(self.process_image.read(addr, tag.data_type)?);
-                }
+            && let Some(tag) = self.tags.get_tag_by_id(id)
+        {
+            if tag.forced.is_some() {
                 return Ok(tag.current_value().clone());
             }
+            if let Some(addr) = tag.address {
+                return Ok(self.process_image.read(addr, tag.data_type)?);
+            }
+            return Ok(tag.current_value().clone());
+        }
         if trimmed.starts_with('%') {
             let addr: DirectAddress = trimmed.parse()?;
             let ty = match addr.width {
@@ -278,9 +290,10 @@ impl PlcRuntime {
             return Ok(self.process_image.read(addr, ty)?);
         }
         if let Some((inst, pin)) = trimmed.split_once('.')
-            && let Some(fb) = self.tags.get_fb(inst) {
-                return Ok(fb.read_pin(pin)?);
-            }
+            && let Some(fb) = self.tags.get_fb(inst)
+        {
+            return Ok(fb.read_pin(pin)?);
+        }
         Err(CoreError::UnknownSymbol(trimmed.to_string()).into())
     }
 
@@ -353,14 +366,19 @@ impl PlcRuntime {
             return Some(false);
         }
         let expr = ferrite_lang_st::parse_st_expression(trimmed, pou_name).ok()?;
-                let val = expr.evaluate_with_resolver(&|sym| {
-            if let Ok(v) = self.read_value(sym) {
-                Ok(v)
-            } else {
-                let scoped = format!("{pou_name}.{sym}");
-                self.read_value(&scoped)
-            }
-        }, pou_name).ok()?;
+        let val = expr
+            .evaluate_with_resolver(
+                &|sym| {
+                    if let Ok(v) = self.read_value(sym) {
+                        Ok(v)
+                    } else {
+                        let scoped = format!("{pou_name}.{sym}");
+                        self.read_value(&scoped)
+                    }
+                },
+                pou_name,
+            )
+            .ok()?;
         val.as_bool().ok()
     }
 
@@ -462,11 +480,14 @@ impl PlcRuntime {
                         break;
                     }
                 }
-                Breakpoint::Pou(id) => {
-                    if self.tasks.iter().any(|t| t.pous.iter().any(|p| p.id() == *id)) {
-                        hit_breakpoint = Some(bp.clone());
-                        break;
-                    }
+                Breakpoint::Pou(id)
+                    if self
+                        .tasks
+                        .iter()
+                        .any(|t| t.pous.iter().any(|p| p.id() == *id)) =>
+                {
+                    hit_breakpoint = Some(bp.clone());
+                    break;
                 }
                 _ => {}
             }
@@ -501,7 +522,10 @@ impl PlcRuntime {
     }
 
     /// Executes an automated headless test scenario from `sim/scenarios.toml`.
-    pub fn run_scenario(&mut self, scenario: &SimScenario) -> Result<ScenarioReport, ScenarioError> {
+    pub fn run_scenario(
+        &mut self,
+        scenario: &SimScenario,
+    ) -> Result<ScenarioReport, ScenarioError> {
         let mut assertions_verified = 0usize;
 
         for scan_idx in 1..=scenario.total_scans {
@@ -529,11 +553,12 @@ impl PlcRuntime {
                 if step.scan == scan_idx {
                     for (sym, expected) in &step.expect {
                         let actual =
-                            self.read_value(sym).map_err(|source| ScenarioError::Runtime {
-                                scenario: scenario.name.clone(),
-                                scan: scan_idx,
-                                source,
-                            })?;
+                            self.read_value(sym)
+                                .map_err(|source| ScenarioError::Runtime {
+                                    scenario: scenario.name.clone(),
+                                    scan: scan_idx,
+                                    source,
+                                })?;
                         let coerced_expected = expected
                             .coerce_to(actual.iec_type())
                             .unwrap_or_else(|_| expected.clone());
@@ -582,7 +607,9 @@ impl PlcRuntime {
             let tag_name = &alarm.definition.tag;
             let val = if let Some(t) = self.tags.get_tag(tag_name) {
                 if let Some(addr) = t.address {
-                    self.process_image.read(addr, t.data_type).unwrap_or_else(|_| t.current_value().clone())
+                    self.process_image
+                        .read(addr, t.data_type)
+                        .unwrap_or_else(|_| t.current_value().clone())
                 } else {
                     t.current_value().clone()
                 }
@@ -747,7 +774,12 @@ mod tests {
         // Scan with Tank_Level back to 80 -> cleared / removed from active alarms
         runtime.set_stimulus("Tank_Level", IecValue::Int(80))?;
         runtime.step_scan()?;
-        assert!(runtime.active_alarms().iter().all(|a| a.definition.id != "ALM_TANK_HIGH"));
+        assert!(
+            runtime
+                .active_alarms()
+                .iter()
+                .all(|a| a.definition.id != "ALM_TANK_HIGH")
+        );
 
         // Check journal has records
         assert!(runtime.alarm_journal().len() >= 3);
@@ -782,11 +814,17 @@ mod tests {
             entry.retain = true;
         }
         // Initially it should be default
-        assert_ne!(runtime2.tags.get_tag_value("Tank_Level"), Some(&IecValue::Int(78)));
+        assert_ne!(
+            runtime2.tags.get_tag_value("Tank_Level"),
+            Some(&IecValue::Int(78))
+        );
 
         // Load retain snapshot
         runtime2.load_retain_snapshot(&snap_path)?;
-        assert_eq!(runtime2.tags.get_tag_value("Tank_Level"), Some(&IecValue::Int(78)));
+        assert_eq!(
+            runtime2.tags.get_tag_value("Tank_Level"),
+            Some(&IecValue::Int(78))
+        );
         assert_eq!(runtime2.process_image.read_marker_word(10)?, 78);
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -878,7 +916,8 @@ mod tests {
     }
 
     #[test]
-    fn test_runtime_warm_vs_cold_restart_and_unforce_all() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_runtime_warm_vs_cold_restart_and_unforce_all() -> Result<(), Box<dyn std::error::Error>>
+    {
         let temp_dir = env::temp_dir().join("ferrite_plc_restart_test");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
@@ -919,9 +958,18 @@ mod tests {
         let _ = runtime.force("Start_Button", IecValue::Bool(true));
         let _ = runtime.force("Fast_Recipe_Mode", IecValue::Bool(true));
 
-        assert_eq!(runtime.evaluate_expression_bool("Start_Button AND Fast_Recipe_Mode", "main"), Some(true));
-        assert_eq!(runtime.evaluate_expression_bool("Start_Button AND NOT Fast_Recipe_Mode", "main"), Some(false));
-        assert_eq!(runtime.evaluate_expression_bool("Invalid Syntax &^%", "main"), None);
+        assert_eq!(
+            runtime.evaluate_expression_bool("Start_Button AND Fast_Recipe_Mode", "main"),
+            Some(true)
+        );
+        assert_eq!(
+            runtime.evaluate_expression_bool("Start_Button AND NOT Fast_Recipe_Mode", "main"),
+            Some(false)
+        );
+        assert_eq!(
+            runtime.evaluate_expression_bool("Invalid Syntax &^%", "main"),
+            None
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

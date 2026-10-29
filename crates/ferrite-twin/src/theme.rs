@@ -1,4 +1,4 @@
-use egui::{vec2, Color32, CornerRadius, FontId, Frame, Margin, Response, Stroke, Ui};
+use egui::{Color32, CornerRadius, FontId, Frame, Margin, Response, Stroke, Ui, vec2};
 
 /// Obsidian industrial design tokens for FerritePLC Digital Twin.
 pub struct TwinTheme;
@@ -40,7 +40,10 @@ impl TwinTheme {
 
     /// Renders an industrial pill badge.
     pub fn badge(ui: &mut Ui, text: &str, bg_color: Color32, text_color: Color32) -> Response {
-        let (rect, response) = ui.allocate_exact_size(vec2(text.len() as f32 * 7.5 + 14.0, 18.0), egui::Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(
+            vec2(text.len() as f32 * 7.5 + 14.0, 18.0),
+            egui::Sense::hover(),
+        );
         let painter = ui.painter();
         painter.rect_filled(rect, 4.0, bg_color);
         painter.text(

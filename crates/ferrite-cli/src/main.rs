@@ -156,15 +156,17 @@ fn main() -> Result<()> {
                 target_dir.display()
             );
             println!("  - Manifest: {}/FerriteProject.fplc", target_dir.display());
-            println!("  - POUs:     main_safety (LD), batch_seq (SFC), cip_clean (SFC), math_pid (ST), pump_ctrl (FBD)");
+            println!(
+                "  - POUs:     main_safety (LD), batch_seq (SFC), cip_clean (SFC), math_pid (ST), pump_ctrl (FBD)"
+            );
         }
         Some(Commands::Save { path }) => {
             let project = Project::load(&path)
                 .with_context(|| format!("Failed to load project from {}", path.display()))?;
             let root = project.root_dir.clone();
-            project
-                .save(&root)
-                .with_context(|| format!("Failed to atomically save project at {}", root.display()))?;
+            project.save(&root).with_context(|| {
+                format!("Failed to atomically save project at {}", root.display())
+            })?;
             println!(
                 "Atomically saved project '{}' at {}",
                 project.manifest.name,
@@ -207,8 +209,9 @@ fn main() -> Result<()> {
         Some(Commands::ImportPlcopen { input, target_dir }) => {
             let xml = std::fs::read_to_string(&input)
                 .with_context(|| format!("Failed to read XML file {}", input.display()))?;
-            let project = Project::import_plcopen_xml(&xml, &target_dir)
-                .with_context(|| format!("Failed to import PLCopen XML into {}", target_dir.display()))?;
+            let project = Project::import_plcopen_xml(&xml, &target_dir).with_context(|| {
+                format!("Failed to import PLCopen XML into {}", target_dir.display())
+            })?;
             println!(
                 "Successfully imported PLCopen project '{}' into {}",
                 project.manifest.name,
@@ -456,42 +459,45 @@ fn tui_loop(
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if event::poll(timeout)?
             && let Event::Key(key) = event::read()?
-                && key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break,
-                        KeyCode::Char(' ') => running = !running,
-                        KeyCode::Char('s') => {
-                            let _ = runtime.step_scan();
-                        }
-                        KeyCode::Down => {
-                            if tag_count > 0 {
-                                selected_idx = (selected_idx + 1) % tag_count;
-                                table_state.select(Some(selected_idx));
-                            }
-                        }
-                        KeyCode::Up => {
-                            if tag_count > 0 {
-                                selected_idx = if selected_idx == 0 {
-                                    tag_count - 1
-                                } else {
-                                    selected_idx - 1
-                                };
-                                table_state.select(Some(selected_idx));
-                            }
-                        }
-                        KeyCode::Enter | KeyCode::Char('t') => {
-                            if let Some(tag) = runtime.tags.tags().get(selected_idx).cloned()
-                                && tag.data_type == IecType::Bool && !tag.read_only_outside_sfc {
-                                    let cur = runtime
-                                        .read_value(&tag.name)
-                                        .and_then(|v| Ok(v.as_bool()?))
-                                        .unwrap_or(false);
-                                    let _ = runtime.set_stimulus(&tag.name, IecValue::Bool(!cur));
-                                }
-                        }
-                        _ => {}
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => break,
+                KeyCode::Char(' ') => running = !running,
+                KeyCode::Char('s') => {
+                    let _ = runtime.step_scan();
+                }
+                KeyCode::Down => {
+                    if tag_count > 0 {
+                        selected_idx = (selected_idx + 1) % tag_count;
+                        table_state.select(Some(selected_idx));
                     }
                 }
+                KeyCode::Up => {
+                    if tag_count > 0 {
+                        selected_idx = if selected_idx == 0 {
+                            tag_count - 1
+                        } else {
+                            selected_idx - 1
+                        };
+                        table_state.select(Some(selected_idx));
+                    }
+                }
+                KeyCode::Enter | KeyCode::Char('t') => {
+                    if let Some(tag) = runtime.tags.tags().get(selected_idx).cloned()
+                        && tag.data_type == IecType::Bool
+                        && !tag.read_only_outside_sfc
+                    {
+                        let cur = runtime
+                            .read_value(&tag.name)
+                            .and_then(|v| Ok(v.as_bool()?))
+                            .unwrap_or(false);
+                        let _ = runtime.set_stimulus(&tag.name, IecValue::Bool(!cur));
+                    }
+                }
+                _ => {}
+            }
+        }
 
         if last_tick.elapsed() >= tick_rate {
             if running {

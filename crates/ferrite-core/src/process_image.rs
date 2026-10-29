@@ -157,8 +157,7 @@ impl ProcessImage {
             AccessWidth::Bit => {
                 let bit_mask = 1u8 << addr.bit;
                 mask_slice[offset] |= bit_mask;
-                slice[offset] =
-                    (slice[offset] & !bit_mask) | (force_val_slice[offset] & bit_mask);
+                slice[offset] = (slice[offset] & !bit_mask) | (force_val_slice[offset] & bit_mask);
             }
             AccessWidth::Byte | AccessWidth::Word | AccessWidth::DWord => {
                 let len = addr.byte_len();
@@ -198,9 +197,8 @@ impl ProcessImage {
 
     /// Returns the total count of forced bits across all memory areas (%I, %Q, %M).
     pub fn active_forces_count(&self) -> usize {
-        let count_bits = |slice: &[u8]| -> usize {
-            slice.iter().map(|b| b.count_ones() as usize).sum()
-        };
+        let count_bits =
+            |slice: &[u8]| -> usize { slice.iter().map(|b| b.count_ones() as usize).sum() };
         count_bits(&self.force_mask_inputs)
             + count_bits(&self.force_mask_outputs)
             + count_bits(&self.force_mask_markers)

@@ -239,11 +239,20 @@ impl std::fmt::Display for SfcValidationError {
             Self::InvalidAlternation { element_id, reason } => {
                 write!(f, "Alternation violation at '{element_id}': {reason}")
             }
-            Self::OrphanElement { element_id, is_step } => {
+            Self::OrphanElement {
+                element_id,
+                is_step,
+            } => {
                 let kind = if *is_step { "Step" } else { "Transition" };
-                write!(f, "Orphan {kind} '{element_id}' is disconnected from any link")
+                write!(
+                    f,
+                    "Orphan {kind} '{element_id}' is disconnected from any link"
+                )
             }
-            Self::UnclosedAndBranch { transition_id, reason } => {
+            Self::UnclosedAndBranch {
+                transition_id,
+                reason,
+            } => {
                 write!(
                     f,
                     "Unclosed AND divergence at transition '{transition_id}': {reason}"
@@ -583,7 +592,11 @@ impl SfcProgram {
         for tree in &report.trees {
             let mut tree_steps: Vec<usize> = Vec::new();
             for sid in &tree.step_ids {
-                if let Some(pos) = self.steps.iter().position(|s| &s.id == sid || &s.name == sid) {
+                if let Some(pos) = self
+                    .steps
+                    .iter()
+                    .position(|s| &s.id == sid || &s.name == sid)
+                {
                     tree_steps.push(pos);
                 }
             }
@@ -604,7 +617,12 @@ impl SfcProgram {
                     if let Some(step) = self.steps.get(s_idx) {
                         let mut w = 180;
                         if !step.actions.is_empty() {
-                            let max_act_len = step.actions.iter().map(|a| a.target.len()).max().unwrap_or(0);
+                            let max_act_len = step
+                                .actions
+                                .iter()
+                                .map(|a| a.target.len())
+                                .max()
+                                .unwrap_or(0);
                             let target_w = (max_act_len as i32 * 8 + 20).max(110);
                             w += 14 + 26 + target_w;
                         }
@@ -620,7 +638,11 @@ impl SfcProgram {
             // Also check transitions in this tree
             for tr in &self.transitions {
                 if tree.transition_ids.contains(&tr.id) {
-                    let rec_chars = if tr.receptivity.is_empty() { 4 } else { tr.receptivity.len() };
+                    let rec_chars = if tr.receptivity.is_empty() {
+                        4
+                    } else {
+                        tr.receptivity.len()
+                    };
                     let rec_w = 80 + 10 + (rec_chars as i32 * 8) + 20;
                     let req_w = ((rec_w + 60 + 19) / 20) * 20;
                     for row in &tree_rows {
@@ -694,7 +716,11 @@ impl SfcProgram {
                     .map(|s| s.actions.len())
                     .max()
                     .unwrap_or(0);
-                let step_h = 60.max(if max_acts > 0 { 10 + (max_acts as i32 * 25) } else { 60 });
+                let step_h = 60.max(if max_acts > 0 {
+                    10 + (max_acts as i32 * 25)
+                } else {
+                    60
+                });
                 y += ((step_h + 60 + 19) / 20) * 20;
 
                 if !trans_in_row.is_empty() {
@@ -709,7 +735,10 @@ impl SfcProgram {
                             } else if c_idx < max_cols {
                                 current_tree_x + col_offsets[c_idx] + 50
                             } else {
-                                current_tree_x + col_offsets[max_cols - 1] + 50 + ((c_idx - max_cols + 1) as i32 * 280)
+                                current_tree_x
+                                    + col_offsets[max_cols - 1]
+                                    + 50
+                                    + ((c_idx - max_cols + 1) as i32 * 280)
                             };
                             tr.grid_pos = Some((x, y));
                         }
@@ -805,20 +834,18 @@ impl SfcProgram {
 
                 // Allow SFC actions (`in_sfc = true`) to set, reset, or force step states of other SFC programs
                 let kind = if act.target.contains(":=") || act.target.contains('(') {
-                    let stmts =
-                        parse_st_statements(&act.target, &self.name).map_err(|source| {
-                            SfcError::St {
-                                pou: self.name.clone(),
-                                source,
-                            }
-                        })?;
+                    let stmts = parse_st_statements(&act.target, &self.name).map_err(|source| {
+                        SfcError::St {
+                            pou: self.name.clone(),
+                            source,
+                        }
+                    })?;
                     for s in &stmts {
-                        s.validate(tags, &self.name, true).map_err(|source| {
-                            SfcError::Ir {
+                        s.validate(tags, &self.name, true)
+                            .map_err(|source| SfcError::Ir {
                                 pou: self.name.clone(),
                                 source,
-                            }
-                        })?;
+                            })?;
                     }
                     CompiledActionKind::Statements(stmts)
                 } else {
@@ -887,7 +914,10 @@ impl SfcProgram {
             let mut from_indices = Vec::with_capacity(tr.from_steps.len());
             for fs in &tr.from_steps {
                 let trimmed = fs.trim();
-                let cleaned = trimmed.strip_prefix('X').or_else(|| trimmed.strip_prefix('x')).unwrap_or(trimmed);
+                let cleaned = trimmed
+                    .strip_prefix('X')
+                    .or_else(|| trimmed.strip_prefix('x'))
+                    .unwrap_or(trimmed);
                 let idx = step_map
                     .get(trimmed)
                     .or_else(|| step_map.get(cleaned))
@@ -901,7 +931,10 @@ impl SfcProgram {
             let mut to_indices = Vec::with_capacity(tr.to_steps.len());
             for ts in &tr.to_steps {
                 let trimmed = ts.trim();
-                let cleaned = trimmed.strip_prefix('X').or_else(|| trimmed.strip_prefix('x')).unwrap_or(trimmed);
+                let cleaned = trimmed
+                    .strip_prefix('X')
+                    .or_else(|| trimmed.strip_prefix('x'))
+                    .unwrap_or(trimmed);
                 let idx = step_map
                     .get(trimmed)
                     .or_else(|| step_map.get(cleaned))
@@ -918,10 +951,12 @@ impl SfcProgram {
                     source,
                 }
             })?;
-            let rty = expr.infer_type(tags, &self.name).map_err(|source| SfcError::Ir {
-                pou: self.name.clone(),
-                source,
-            })?;
+            let rty = expr
+                .infer_type(tags, &self.name)
+                .map_err(|source| SfcError::Ir {
+                    pou: self.name.clone(),
+                    source,
+                })?;
             if rty != IecType::Bool {
                 return Err(SfcError::Ir {
                     pou: self.name.clone(),
@@ -1106,12 +1141,14 @@ impl ExecutablePou for CompiledSfcPou {
                     continue;
                 }
                 let enabled = match tr.convergence {
-                    ConvergenceKind::And => {
-                        tr.from_indices.iter().all(|&s_idx| self.steps[s_idx].active)
-                    }
-                    ConvergenceKind::Or => {
-                        tr.from_indices.iter().any(|&s_idx| self.steps[s_idx].active)
-                    }
+                    ConvergenceKind::And => tr
+                        .from_indices
+                        .iter()
+                        .all(|&s_idx| self.steps[s_idx].active),
+                    ConvergenceKind::Or => tr
+                        .from_indices
+                        .iter()
+                        .any(|&s_idx| self.steps[s_idx].active),
                 };
                 // If this transition is part of an exclusive OR divergence, skip if its upstream step was already claimed
                 let already_claimed = tr.divergence == DivergenceKind::Or
@@ -1121,10 +1158,7 @@ impl ExecutablePou for CompiledSfcPou {
                         .any(|&s_idx| self.clear_scratch[s_idx]);
 
                 if enabled && !already_claimed {
-                    let cond = tr
-                        .receptivity
-                        .evaluate(ctx, self.id.as_str())?
-                        .as_bool()?;
+                    let cond = tr.receptivity.evaluate(ctx, self.id.as_str())?.as_bool()?;
                     if cond {
                         self.fired_scratch[t_idx] = true;
                         if tr.divergence == DivergenceKind::Or {
@@ -1672,26 +1706,36 @@ mod tests {
         invalid_tree.steps[2].kind = StepKind::Normal; // X10 is no longer Initial
         let report2 = validate_sfc_topology(&invalid_tree);
         assert!(!report2.is_valid);
-        assert!(report2
-            .errors
-            .iter()
-            .any(|e| matches!(e, SfcValidationError::MissingInitialStepInTree { .. })));
+        assert!(
+            report2
+                .errors
+                .iter()
+                .any(|e| matches!(e, SfcValidationError::MissingInitialStepInTree { .. }))
+        );
 
         // 3. Dangling reference in a transition
         let mut dangling_tree = multi_tree_prog.clone();
         dangling_tree.transitions[0].to_steps = vec!["999".to_string()];
         let report3 = validate_sfc_topology(&dangling_tree);
         assert!(!report3.is_valid);
-        assert!(report3
-            .errors
-            .iter()
-            .any(|e| matches!(e, SfcValidationError::DanglingStepReference { .. })));
+        assert!(
+            report3
+                .errors
+                .iter()
+                .any(|e| matches!(e, SfcValidationError::DanglingStepReference { .. }))
+        );
 
         // 4. Spawning an unconnected orphan step does not create a fake parallel tree
         let mut with_orphan = multi_tree_prog.clone();
-        with_orphan.steps.push(SfcStep::new("99", "OrphanStep", StepKind::Normal));
+        with_orphan
+            .steps
+            .push(SfcStep::new("99", "OrphanStep", StepKind::Normal));
         let report4 = validate_sfc_topology(&with_orphan);
-        assert_eq!(report4.trees.len(), 2, "Orphan step must not be counted as a parallel tree");
+        assert_eq!(
+            report4.trees.len(),
+            2,
+            "Orphan step must not be counted as a parallel tree"
+        );
         assert!(report4.warnings.iter().any(|w| w.contains("is an orphan")));
 
         // 5. Spawning an unconnected orphan transition does not create a fake parallel tree
@@ -1706,7 +1750,11 @@ mod tests {
             grid_pos: None,
         });
         let report5 = validate_sfc_topology(&with_orphan_tr);
-        assert_eq!(report5.trees.len(), 2, "Orphan transition must not be counted as a parallel tree");
+        assert_eq!(
+            report5.trees.len(),
+            2,
+            "Orphan transition must not be counted as a parallel tree"
+        );
     }
 
     #[test]
@@ -1860,7 +1908,8 @@ mod tests {
     }
 
     #[test]
-    fn test_sfc_auto_sort_layout_multi_tree_and_divergence() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_sfc_auto_sort_layout_multi_tree_and_divergence()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut prog = SfcProgram {
             name: "multi_auto_sort".to_string(),
             comment: String::new(),
@@ -1975,7 +2024,8 @@ mod tests {
     }
 
     #[test]
-    fn test_sfc_auto_sort_expands_columns_for_actions_and_text() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_sfc_auto_sort_expands_columns_for_actions_and_text()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut prog = SfcProgram {
             name: "wide_actions_sort".to_string(),
             comment: String::new(),
@@ -1994,27 +2044,38 @@ mod tests {
                 },
                 SfcStep::new("2", "Branch_B", StepKind::Normal),
             ],
-            transitions: vec![
-                SfcTransition {
-                    id: "T1".to_string(),
-                    from_steps: vec!["0".to_string()],
-                    to_steps: vec!["1".to_string(), "2".to_string()],
-                    receptivity: "TRUE".to_string(),
-                    convergence: ConvergenceKind::And,
-                    divergence: DivergenceKind::And,
-                    grid_pos: None,
-                },
-            ],
+            transitions: vec![SfcTransition {
+                id: "T1".to_string(),
+                from_steps: vec!["0".to_string()],
+                to_steps: vec!["1".to_string(), "2".to_string()],
+                receptivity: "TRUE".to_string(),
+                convergence: ConvergenceKind::And,
+                divergence: DivergenceKind::And,
+                grid_pos: None,
+            }],
         };
 
         prog.assign_default_grid_positions();
 
-        let s1 = prog.steps.iter().find(|s| s.id == "1").and_then(|s| s.grid_pos).unwrap_or((0, 0));
-        let s2 = prog.steps.iter().find(|s| s.id == "2").and_then(|s| s.grid_pos).unwrap_or((0, 0));
+        let s1 = prog
+            .steps
+            .iter()
+            .find(|s| s.id == "1")
+            .and_then(|s| s.grid_pos)
+            .unwrap_or((0, 0));
+        let s2 = prog
+            .steps
+            .iter()
+            .find(|s| s.id == "2")
+            .and_then(|s| s.grid_pos)
+            .unwrap_or((0, 0));
 
         // Column 0 must be expanded significantly beyond 280 to accommodate the 32-character action text
         let col_gap = s2.0 - s1.0;
-        assert!(col_gap >= 500, "Expected column gap >= 500 to fit actions, got {col_gap}");
+        assert!(
+            col_gap >= 500,
+            "Expected column gap >= 500 to fit actions, got {col_gap}"
+        );
 
         Ok(())
     }
@@ -2040,17 +2101,15 @@ mod tests {
                     ..Default::default()
                 },
             ],
-            transitions: vec![
-                SfcTransition {
-                    id: "T0".to_string(),
-                    from_steps: vec!["0".to_string()],
-                    to_steps: vec!["1".to_string()],
-                    receptivity: "TRUE".to_string(),
-                    convergence: ConvergenceKind::And,
-                    divergence: DivergenceKind::And,
-                    ..Default::default()
-                },
-            ],
+            transitions: vec![SfcTransition {
+                id: "T0".to_string(),
+                from_steps: vec!["0".to_string()],
+                to_steps: vec!["1".to_string()],
+                receptivity: "TRUE".to_string(),
+                convergence: ConvergenceKind::And,
+                divergence: DivergenceKind::And,
+                ..Default::default()
+            }],
         };
         let mut tags = TagTable::new();
         sfc.register_introspection_symbols(&mut tags)?;

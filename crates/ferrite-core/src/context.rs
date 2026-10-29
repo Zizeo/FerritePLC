@@ -188,9 +188,10 @@ impl<'a> ScanContext<'a> {
             return Ok(self.process_image.read(addr, default_ty)?);
         }
         if let Some((inst, pin)) = trimmed.split_once('.')
-            && let Some(fb) = self.tags.get_fb(inst) {
-                return Ok(fb.read_pin(pin)?);
-            }
+            && let Some(fb) = self.tags.get_fb(inst)
+        {
+            return Ok(fb.read_pin(pin)?);
+        }
         Err(CoreError::UnknownSymbol(trimmed.to_string()).into())
     }
 
@@ -213,19 +214,22 @@ impl<'a> ScanContext<'a> {
             for idx in 0..count {
                 let id = TagId(idx);
                 if let Some(t) = self.tags.get_tag_by_id(id)
-                    && t.address == Some(addr) && t.forced.is_none()
-                        && let Ok(coerced) = val.coerce_to(t.data_type)
-                            && let Some(tm) = self.tags.get_tag_mut_by_id(id) {
-                                tm.value = Some(coerced);
-                            }
+                    && t.address == Some(addr)
+                    && t.forced.is_none()
+                    && let Ok(coerced) = val.coerce_to(t.data_type)
+                    && let Some(tm) = self.tags.get_tag_mut_by_id(id)
+                {
+                    tm.value = Some(coerced);
+                }
             }
             return Ok(());
         }
         if let Some((inst, pin)) = trimmed.split_once('.')
-            && let Some(fb) = self.tags.get_fb_mut(inst) {
-                fb.write_pin(pin, &val)?;
-                return Ok(());
-            }
+            && let Some(fb) = self.tags.get_fb_mut(inst)
+        {
+            fb.write_pin(pin, &val)?;
+            return Ok(());
+        }
         Err(CoreError::UnknownSymbol(trimmed.to_string()).into())
     }
 

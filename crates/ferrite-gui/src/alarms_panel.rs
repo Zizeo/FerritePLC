@@ -26,11 +26,18 @@ pub fn render_alarms_panel<'a>(
         .into();
     };
 
-    let active_count = runtime.alarms.iter().filter(|a| a.state.is_active()).count();
+    let active_count = runtime
+        .alarms
+        .iter()
+        .filter(|a| a.state.is_active())
+        .count();
     let unack_count = runtime
         .alarms
         .iter()
-        .filter(|a| a.state == AlarmState::ActiveUnacknowledged || a.state == AlarmState::ClearedUnacknowledged)
+        .filter(|a| {
+            a.state == AlarmState::ActiveUnacknowledged
+                || a.state == AlarmState::ClearedUnacknowledged
+        })
         .count();
 
     // Toolbar Header
@@ -41,7 +48,9 @@ pub fn render_alarms_panel<'a>(
                 .color(StudioTheme::ACCENT_ROSE),
         )
         .padding([3, 8])
-        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.957, 0.247, 0.369, 0.15)))
+        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+            0.957, 0.247, 0.369, 0.15,
+        )))
     } else {
         container(
             text(lang.tr("[OK] All Acknowledged", "[OK] Tout Acquitté"))
@@ -49,13 +58,17 @@ pub fn render_alarms_panel<'a>(
                 .color(StudioTheme::ACCENT_EMERALD),
         )
         .padding([3, 8])
-        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15)))
+        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+            0.063, 0.725, 0.506, 0.15,
+        )))
     };
 
     let toolbar = row![
         text("ISA-18.2 Alarm Management").size(15),
         unack_badge,
-        text(format!("({active_count} Active)")).size(12).color(StudioTheme::TEXT_SECONDARY),
+        text(format!("({active_count} Active)"))
+            .size(12)
+            .color(StudioTheme::TEXT_SECONDARY),
         iced::widget::Space::with_width(Length::Fill),
         button(text(lang.tr("Acknowledge All", "Tout Acquitter")).size(12))
             .on_press(Message::AcknowledgeAllAlarms)
@@ -68,12 +81,27 @@ pub fn render_alarms_panel<'a>(
     // Left card: Active Alarms
     let mut active_list = column![
         row![
-            text("Severity").size(11).color(StudioTheme::TEXT_MUTED).width(50),
+            text("Severity")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(50),
             text("ID").size(11).color(StudioTheme::TEXT_MUTED).width(90),
-            text("Tag").size(11).color(StudioTheme::TEXT_MUTED).width(110),
-            text("State").size(11).color(StudioTheme::TEXT_MUTED).width(70),
-            text("Message").size(11).color(StudioTheme::TEXT_MUTED).width(Length::Fill),
-            text("Action").size(11).color(StudioTheme::TEXT_MUTED).width(60),
+            text("Tag")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(110),
+            text("State")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(70),
+            text("Message")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(Length::Fill),
+            text("Action")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(60),
         ]
         .spacing(8)
     ]
@@ -110,7 +138,9 @@ pub fn render_alarms_panel<'a>(
             text(alarm.definition.id.clone()).size(11).width(90),
             text(alarm.definition.tag.clone()).size(11).width(110),
             text(state_txt).size(11).width(70),
-            text(alarm.definition.message.clone()).size(11).width(Length::Fill),
+            text(alarm.definition.message.clone())
+                .size(11)
+                .width(Length::Fill),
             ack_btn,
         ]
         .spacing(8)
@@ -144,11 +174,23 @@ pub fn render_alarms_panel<'a>(
     // Right card: Sequence of Events (SOE) Journal
     let mut journal_list = column![
         row![
-            text("Time").size(11).color(StudioTheme::TEXT_MUTED).width(70),
-            text("Severity").size(11).color(StudioTheme::TEXT_MUTED).width(50),
+            text("Time")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(70),
+            text("Severity")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(50),
             text("ID").size(11).color(StudioTheme::TEXT_MUTED).width(80),
-            text("State").size(11).color(StudioTheme::TEXT_MUTED).width(80),
-            text("Event").size(11).color(StudioTheme::TEXT_MUTED).width(Length::Fill),
+            text("State")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(80),
+            text("Event")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(Length::Fill),
         ]
         .spacing(8)
     ]
@@ -170,7 +212,9 @@ pub fn render_alarms_panel<'a>(
             };
 
             let row_item = row![
-                text(format!("T+{}ms", record.timestamp_ms)).size(11).width(70),
+                text(format!("T+{}ms", record.timestamp_ms))
+                    .size(11)
+                    .width(70),
                 text(sev_txt).size(11).color(sev_color).width(50),
                 text(record.alarm_id.clone()).size(11).width(80),
                 text(format!("{:?}", record.state)).size(11).width(80),
@@ -185,7 +229,11 @@ pub fn render_alarms_panel<'a>(
 
     let journal_card = container(
         column![
-            text(lang.tr("Sequence of Events (SOE) Journal", "Journal Chronologique d'Événements (SOE)")).size(13),
+            text(lang.tr(
+                "Sequence of Events (SOE) Journal",
+                "Journal Chronologique d'Événements (SOE)"
+            ))
+            .size(13),
             scrollable(journal_list).height(160),
         ]
         .spacing(10),
@@ -196,7 +244,9 @@ pub fn render_alarms_panel<'a>(
 
     column![
         toolbar,
-        row![active_card, journal_card].spacing(16).width(Length::Fill),
+        row![active_card, journal_card]
+            .spacing(16)
+            .width(Length::Fill),
     ]
     .spacing(12)
     .into()

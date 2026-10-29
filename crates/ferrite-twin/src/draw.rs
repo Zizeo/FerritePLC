@@ -1,10 +1,6 @@
-use egui::{
-    pos2, Color32, FontId, Rect, Stroke, StrokeKind,
-};
+use egui::{Color32, FontId, Rect, Stroke, StrokeKind, pos2};
 
-use crate::model::{
-    ActuatorKind, CanvasElement, ElementKind, ResizeHandle, ShapeType,
-};
+use crate::model::{ActuatorKind, CanvasElement, ElementKind, ResizeHandle, ShapeType};
 
 /// Renders a single equipment canvas element with its real-time active state and animations.
 pub fn draw_canvas_element(
@@ -38,11 +34,21 @@ pub fn draw_canvas_element(
     match elem.element_type {
         ElementKind::BasicShape(ShapeType::Rectangle) => {
             painter.rect_filled(rect, 0.0, display_color);
-            painter.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, Color32::WHITE), StrokeKind::Inside);
+            painter.rect_stroke(
+                rect,
+                0.0,
+                Stroke::new(1.0_f32, Color32::WHITE),
+                StrokeKind::Inside,
+            );
         }
         ElementKind::BasicShape(ShapeType::RoundedRect) => {
             painter.rect_filled(rect, 8.0, display_color);
-            painter.rect_stroke(rect, 8.0, Stroke::new(1.0_f32, Color32::WHITE), StrokeKind::Inside);
+            painter.rect_stroke(
+                rect,
+                8.0,
+                Stroke::new(1.0_f32, Color32::WHITE),
+                StrokeKind::Inside,
+            );
         }
         ElementKind::BasicShape(ShapeType::Circle) => {
             let radius = rect.width().min(rect.height()) * 0.5;
@@ -67,7 +73,12 @@ pub fn draw_canvas_element(
                 display_color
             };
             painter.rect_filled(rect, 6.0, fill);
-            painter.rect_stroke(rect, 6.0, Stroke::new(2.0_f32, Color32::WHITE), StrokeKind::Inside);
+            painter.rect_stroke(
+                rect,
+                6.0,
+                Stroke::new(2.0_f32, Color32::WHITE),
+                StrokeKind::Inside,
+            );
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -89,7 +100,11 @@ pub fn draw_canvas_element(
             } else {
                 rect.min.x + 16.0
             };
-            let knob_col = if is_active { Color32::GREEN } else { Color32::GRAY };
+            let knob_col = if is_active {
+                Color32::GREEN
+            } else {
+                Color32::GRAY
+            };
             painter.circle_filled(pos2(knob_x, rect.center().y), 12.0, knob_col);
             painter.circle_stroke(
                 pos2(knob_x, rect.center().y),

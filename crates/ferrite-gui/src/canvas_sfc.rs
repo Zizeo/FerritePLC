@@ -2,15 +2,20 @@ use std::collections::HashSet;
 
 use iced::border::Radius;
 use iced::mouse;
-use iced::widget::canvas::{self, event, Frame, Geometry, Path, Stroke};
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input, Space};
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Point, Rectangle, Renderer, Size, Theme};
+use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, event};
+use iced::widget::{
+    Space, button, column, container, pick_list, row, scrollable, text, text_input,
+};
+use iced::{
+    Alignment, Background, Border, Color, Element, Length, Padding, Point, Rectangle, Renderer,
+    Size, Theme,
+};
 
 use ferrite_core::IecValue;
 pub use ferrite_lang_sfc::compute_sfc_step_rows;
 use ferrite_lang_sfc::{
-    validate_sfc_topology, ActionQualifier, ConvergenceKind, DivergenceKind, SfcProgram, SfcStep,
-    SfcTransition, SfcValidationError, SfcValidationReport, StepKind,
+    ActionQualifier, ConvergenceKind, DivergenceKind, SfcProgram, SfcStep, SfcTransition,
+    SfcValidationError, SfcValidationReport, StepKind, validate_sfc_topology,
 };
 use ferrite_runtime::PlcRuntime;
 
@@ -255,8 +260,14 @@ pub fn evaluate_receptivity(rt: &PlcRuntime, pou_name: &str, receptivity: &str) 
 fn draw_arrowhead(frame: &mut Frame, tip: Point, dir: (f32, f32), color: Color) {
     let len = 8.0;
     let width = 5.0;
-    let p1 = Point::new(tip.x - dir.0 * len - dir.1 * width, tip.y - dir.1 * len + dir.0 * width);
-    let p2 = Point::new(tip.x - dir.0 * len + dir.1 * width, tip.y - dir.1 * len - dir.0 * width);
+    let p1 = Point::new(
+        tip.x - dir.0 * len - dir.1 * width,
+        tip.y - dir.1 * len + dir.0 * width,
+    );
+    let p2 = Point::new(
+        tip.x - dir.0 * len + dir.1 * width,
+        tip.y - dir.1 * len - dir.0 * width,
+    );
     let path = Path::new(|b| {
         b.move_to(tip);
         b.line_to(p1);
@@ -289,8 +300,16 @@ impl<'a> SfcCanvasProgram<'a> {
             let (gx, gy) = snap_to_grid(current_x, current_y);
             return (gx as f32, gy as f32);
         }
-        let fallback_idx = self.program.steps.iter().position(|s| s.id == step.id).unwrap_or(0);
-        let fallback_pos = (60 + (fallback_idx as i32 % 3) * 260, 40 + (fallback_idx as i32 / 3) * 220);
+        let fallback_idx = self
+            .program
+            .steps
+            .iter()
+            .position(|s| s.id == step.id)
+            .unwrap_or(0);
+        let fallback_pos = (
+            60 + (fallback_idx as i32 % 3) * 260,
+            40 + (fallback_idx as i32 / 3) * 220,
+        );
         let (gx, gy) = step.grid_pos.unwrap_or(fallback_pos);
         (gx as f32, gy as f32)
     }
@@ -307,8 +326,16 @@ impl<'a> SfcCanvasProgram<'a> {
             let (gx, gy) = snap_to_grid(current_x, current_y);
             return (gx as f32, gy as f32);
         }
-        let fallback_idx = self.program.transitions.iter().position(|t| t.id == tr.id).unwrap_or(0);
-        let fallback_pos = (110 + (fallback_idx as i32 % 3) * 260, 140 + (fallback_idx as i32 / 3) * 220);
+        let fallback_idx = self
+            .program
+            .transitions
+            .iter()
+            .position(|t| t.id == tr.id)
+            .unwrap_or(0);
+        let fallback_pos = (
+            110 + (fallback_idx as i32 % 3) * 260,
+            140 + (fallback_idx as i32 / 3) * 220,
+        );
         let (gx, gy) = tr.grid_pos.unwrap_or(fallback_pos);
         (gx as f32, gy as f32)
     }
@@ -362,7 +389,9 @@ impl<'a> SfcCanvasProgram<'a> {
             let in_vertical_span = sy + STEP_HEIGHT >= sp.y - 20.0 && sy <= tr_out.y + 20.0;
             if in_vertical_span {
                 let in_same_tree = match tree_elements {
-                    Some((s_ids, _)) => s_ids.iter().any(|id| id == &step_elem.id || id == &step_elem.name),
+                    Some((s_ids, _)) => s_ids
+                        .iter()
+                        .any(|id| id == &step_elem.id || id == &step_elem.name),
                     None => true,
                 };
                 if in_same_tree {
@@ -398,7 +427,10 @@ impl<'a> SfcCanvasProgram<'a> {
         if !obstacle_to_left {
             for trans_elem in &self.program.transitions {
                 let (tx, ty) = self.trans_pos(trans_elem, state);
-                if ty + TRANS_HEIGHT >= sp.y - 20.0 && ty <= tr_out.y + 20.0 && tx < min_elem_x - 10.0 {
+                if ty + TRANS_HEIGHT >= sp.y - 20.0
+                    && ty <= tr_out.y + 20.0
+                    && tx < min_elem_x - 10.0
+                {
                     obstacle_to_left = true;
                     break;
                 }
@@ -506,7 +538,10 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         };
                         return (
                             event::Status::Captured,
-                            Some(Message::SfcSelectElements(self.pou_name.to_string(), vec![key])),
+                            Some(Message::SfcSelectElements(
+                                self.pou_name.to_string(),
+                                vec![key],
+                            )),
                         );
                     }
                 }
@@ -531,7 +566,10 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         };
                         return (
                             event::Status::Captured,
-                            Some(Message::SfcSelectElements(self.pou_name.to_string(), vec![key])),
+                            Some(Message::SfcSelectElements(
+                                self.pou_name.to_string(),
+                                vec![key],
+                            )),
                         );
                     }
                 }
@@ -545,7 +583,10 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 };
                 (
                     event::Status::Captured,
-                    Some(Message::SfcSelectElements(self.pou_name.to_string(), Vec::new())),
+                    Some(Message::SfcSelectElements(
+                        self.pou_name.to_string(),
+                        Vec::new(),
+                    )),
                 )
             }
 
@@ -557,13 +598,19 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     if cursor_pos.distance(in_p) <= PORT_CLICK_RADIUS {
                         return (
                             event::Status::Captured,
-                            Some(Message::SfcDisconnectStepInput(self.pou_name.to_string(), step.id.clone())),
+                            Some(Message::SfcDisconnectStepInput(
+                                self.pou_name.to_string(),
+                                step.id.clone(),
+                            )),
                         );
                     }
                     if cursor_pos.distance(out_p) <= PORT_CLICK_RADIUS {
                         return (
                             event::Status::Captured,
-                            Some(Message::SfcDisconnectStepOutput(self.pou_name.to_string(), step.id.clone())),
+                            Some(Message::SfcDisconnectStepOutput(
+                                self.pou_name.to_string(),
+                                step.id.clone(),
+                            )),
                         );
                     }
                 }
@@ -574,13 +621,19 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     if cursor_pos.distance(in_p) <= PORT_CLICK_RADIUS {
                         return (
                             event::Status::Captured,
-                            Some(Message::SfcDisconnectTransitionInput(self.pou_name.to_string(), tr.id.clone())),
+                            Some(Message::SfcDisconnectTransitionInput(
+                                self.pou_name.to_string(),
+                                tr.id.clone(),
+                            )),
                         );
                     }
                     if cursor_pos.distance(out_p) <= PORT_CLICK_RADIUS {
                         return (
                             event::Status::Captured,
-                            Some(Message::SfcDisconnectTransitionOutput(self.pou_name.to_string(), tr.id.clone())),
+                            Some(Message::SfcDisconnectTransitionOutput(
+                                self.pou_name.to_string(),
+                                tr.id.clone(),
+                            )),
                         );
                     }
                 }
@@ -643,7 +696,11 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     DragState::None => {}
                 }
 
-                if let DragState::BoxSelecting { start_pt, current_pt } = &state.drag {
+                if let DragState::BoxSelecting {
+                    start_pt,
+                    current_pt,
+                } = &state.drag
+                {
                     let min_x = start_pt.x.min(current_pt.x);
                     let max_x = start_pt.x.max(current_pt.x);
                     let min_y = start_pt.y.min(current_pt.y);
@@ -652,13 +709,21 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     let mut selected = Vec::new();
                     for step in &self.program.steps {
                         let (sx, sy) = self.step_pos(step, state);
-                        if sx < max_x && sx + STEP_WIDTH > min_x && sy < max_y && sy + STEP_HEIGHT > min_y {
+                        if sx < max_x
+                            && sx + STEP_WIDTH > min_x
+                            && sy < max_y
+                            && sy + STEP_HEIGHT > min_y
+                        {
                             selected.push(SfcElementKey::Step(step.id.clone()));
                         }
                     }
                     for tr in &self.program.transitions {
                         let (tx, ty) = self.trans_pos(tr, state);
-                        if tx < max_x && tx + TRANS_WIDTH > min_x && ty < max_y && ty + TRANS_HEIGHT > min_y {
+                        if tx < max_x
+                            && tx + TRANS_WIDTH > min_x
+                            && ty < max_y
+                            && ty + TRANS_HEIGHT > min_y
+                        {
                             selected.push(SfcElementKey::Transition(tr.id.clone()));
                         }
                     }
@@ -690,13 +755,16 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                     || cursor_pos.distance(out_p) <= PORT_DROP_RADIUS
                                     || inside_box
                                 {
-                                    state.hover_port = Some(PortHover::TransitionInput(tr.id.clone(), in_p));
+                                    state.hover_port =
+                                        Some(PortHover::TransitionInput(tr.id.clone(), in_p));
                                     break;
                                 }
                             }
                             if state.hover_port.is_none() {
                                 for step in &self.program.steps {
-                                    if step.id == src_id { continue; }
+                                    if step.id == src_id {
+                                        continue;
+                                    }
                                     let in_p = self.step_in_port(step, state);
                                     let (sx, sy) = self.step_pos(step, state);
                                     let inside_box = cursor_pos.x >= sx - 12.0
@@ -704,7 +772,8 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                         && cursor_pos.y >= sy - 12.0
                                         && cursor_pos.y <= sy + STEP_HEIGHT + 12.0;
                                     if cursor_pos.distance(in_p) <= PORT_DROP_RADIUS || inside_box {
-                                        state.hover_port = Some(PortHover::StepInput(step.id.clone(), in_p));
+                                        state.hover_port =
+                                            Some(PortHover::StepInput(step.id.clone(), in_p));
                                         break;
                                     }
                                 }
@@ -723,21 +792,26 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                     || cursor_pos.distance(in_p) <= PORT_DROP_RADIUS
                                     || inside_box
                                 {
-                                    state.hover_port = Some(PortHover::TransitionOutput(tr.id.clone(), out_p));
+                                    state.hover_port =
+                                        Some(PortHover::TransitionOutput(tr.id.clone(), out_p));
                                     break;
                                 }
                             }
                             if state.hover_port.is_none() {
                                 for step in &self.program.steps {
-                                    if step.id == src_id { continue; }
+                                    if step.id == src_id {
+                                        continue;
+                                    }
                                     let out_p = self.step_out_port(step, state);
                                     let (sx, sy) = self.step_pos(step, state);
                                     let inside_box = cursor_pos.x >= sx - 12.0
                                         && cursor_pos.x <= sx + STEP_WIDTH + 12.0
                                         && cursor_pos.y >= sy - 12.0
                                         && cursor_pos.y <= sy + STEP_HEIGHT + 12.0;
-                                    if cursor_pos.distance(out_p) <= PORT_DROP_RADIUS || inside_box {
-                                        state.hover_port = Some(PortHover::StepOutput(step.id.clone(), out_p));
+                                    if cursor_pos.distance(out_p) <= PORT_DROP_RADIUS || inside_box
+                                    {
+                                        state.hover_port =
+                                            Some(PortHover::StepOutput(step.id.clone(), out_p));
                                         break;
                                     }
                                 }
@@ -756,13 +830,16 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                     || cursor_pos.distance(out_p) <= PORT_DROP_RADIUS
                                     || inside_box
                                 {
-                                    state.hover_port = Some(PortHover::StepInput(step.id.clone(), in_p));
+                                    state.hover_port =
+                                        Some(PortHover::StepInput(step.id.clone(), in_p));
                                     break;
                                 }
                             }
                             if state.hover_port.is_none() {
                                 for tr in &self.program.transitions {
-                                    if tr.id == src_id { continue; }
+                                    if tr.id == src_id {
+                                        continue;
+                                    }
                                     let in_p = self.trans_in_port(tr, state);
                                     let (tx, ty) = self.trans_pos(tr, state);
                                     let inside_box = cursor_pos.x >= tx - 12.0
@@ -770,7 +847,8 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                         && cursor_pos.y >= ty - 12.0
                                         && cursor_pos.y <= ty + TRANS_HEIGHT + 12.0;
                                     if cursor_pos.distance(in_p) <= PORT_DROP_RADIUS || inside_box {
-                                        state.hover_port = Some(PortHover::TransitionInput(tr.id.clone(), in_p));
+                                        state.hover_port =
+                                            Some(PortHover::TransitionInput(tr.id.clone(), in_p));
                                         break;
                                     }
                                 }
@@ -789,21 +867,26 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                     || cursor_pos.distance(in_p) <= PORT_DROP_RADIUS
                                     || inside_box
                                 {
-                                    state.hover_port = Some(PortHover::StepOutput(step.id.clone(), out_p));
+                                    state.hover_port =
+                                        Some(PortHover::StepOutput(step.id.clone(), out_p));
                                     break;
                                 }
                             }
                             if state.hover_port.is_none() {
                                 for tr in &self.program.transitions {
-                                    if tr.id == src_id { continue; }
+                                    if tr.id == src_id {
+                                        continue;
+                                    }
                                     let out_p = self.trans_out_port(tr, state);
                                     let (tx, ty) = self.trans_pos(tr, state);
                                     let inside_box = cursor_pos.x >= tx - 12.0
                                         && cursor_pos.x <= tx + TRANS_WIDTH + 12.0
                                         && cursor_pos.y >= ty - 12.0
                                         && cursor_pos.y <= ty + TRANS_HEIGHT + 12.0;
-                                    if cursor_pos.distance(out_p) <= PORT_DROP_RADIUS || inside_box {
-                                        state.hover_port = Some(PortHover::TransitionOutput(tr.id.clone(), out_p));
+                                    if cursor_pos.distance(out_p) <= PORT_DROP_RADIUS || inside_box
+                                    {
+                                        state.hover_port =
+                                            Some(PortHover::TransitionOutput(tr.id.clone(), out_p));
                                         break;
                                     }
                                 }
@@ -832,12 +915,14 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         for tr in &self.program.transitions {
                             let in_p = self.trans_in_port(tr, state);
                             if cursor_pos.distance(in_p) <= PORT_CLICK_RADIUS {
-                                state.hover_port = Some(PortHover::TransitionInput(tr.id.clone(), in_p));
+                                state.hover_port =
+                                    Some(PortHover::TransitionInput(tr.id.clone(), in_p));
                                 break;
                             }
                             let out_p = self.trans_out_port(tr, state);
                             if cursor_pos.distance(out_p) <= PORT_CLICK_RADIUS {
-                                state.hover_port = Some(PortHover::TransitionOutput(tr.id.clone(), out_p));
+                                state.hover_port =
+                                    Some(PortHover::TransitionOutput(tr.id.clone(), out_p));
                                 break;
                             }
                         }
@@ -887,13 +972,17 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                             Some(Message::SfcConnectPorts {
                                                 pou_name: self.pou_name.to_string(),
                                                 source: SfcPortSource::StepOutput(src_step),
-                                                target: SfcPortTarget::TransitionInput(tr.id.clone()),
+                                                target: SfcPortTarget::TransitionInput(
+                                                    tr.id.clone(),
+                                                ),
                                             }),
                                         );
                                     }
                                 }
                                 for step in &self.program.steps {
-                                    if step.id == src_step { continue; }
+                                    if step.id == src_step {
+                                        continue;
+                                    }
                                     let in_p = self.step_in_port(step, state);
                                     let (sx, sy) = self.step_pos(step, state);
                                     let inside_box = cursor_pos.x >= sx - 12.0
@@ -930,20 +1019,25 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                             Some(Message::SfcConnectPorts {
                                                 pou_name: self.pou_name.to_string(),
                                                 source: SfcPortSource::StepInput(target_step),
-                                                target: SfcPortTarget::TransitionOutput(tr.id.clone()),
+                                                target: SfcPortTarget::TransitionOutput(
+                                                    tr.id.clone(),
+                                                ),
                                             }),
                                         );
                                     }
                                 }
                                 for step in &self.program.steps {
-                                    if step.id == target_step { continue; }
+                                    if step.id == target_step {
+                                        continue;
+                                    }
                                     let out_p = self.step_out_port(step, state);
                                     let (sx, sy) = self.step_pos(step, state);
                                     let inside_box = cursor_pos.x >= sx - 12.0
                                         && cursor_pos.x <= sx + STEP_WIDTH + 12.0
                                         && cursor_pos.y >= sy - 12.0
                                         && cursor_pos.y <= sy + STEP_HEIGHT + 12.0;
-                                    if cursor_pos.distance(out_p) <= PORT_DROP_RADIUS || inside_box {
+                                    if cursor_pos.distance(out_p) <= PORT_DROP_RADIUS || inside_box
+                                    {
                                         return (
                                             event::Status::Captured,
                                             Some(Message::SfcConnectSteps {
@@ -979,7 +1073,9 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                     }
                                 }
                                 for tr in &self.program.transitions {
-                                    if tr.id == src_trans { continue; }
+                                    if tr.id == src_trans {
+                                        continue;
+                                    }
                                     let in_p = self.trans_in_port(tr, state);
                                     let (tx, ty) = self.trans_pos(tr, state);
                                     let inside_box = cursor_pos.x >= tx - 12.0
@@ -1015,21 +1111,26 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                             event::Status::Captured,
                                             Some(Message::SfcConnectPorts {
                                                 pou_name: self.pou_name.to_string(),
-                                                source: SfcPortSource::TransitionInput(target_trans),
+                                                source: SfcPortSource::TransitionInput(
+                                                    target_trans,
+                                                ),
                                                 target: SfcPortTarget::StepOutput(step.id.clone()),
                                             }),
                                         );
                                     }
                                 }
                                 for tr in &self.program.transitions {
-                                    if tr.id == target_trans { continue; }
+                                    if tr.id == target_trans {
+                                        continue;
+                                    }
                                     let out_p = self.trans_out_port(tr, state);
                                     let (tx, ty) = self.trans_pos(tr, state);
                                     let inside_box = cursor_pos.x >= tx - 12.0
                                         && cursor_pos.x <= tx + TRANS_WIDTH + 12.0
                                         && cursor_pos.y >= ty - 12.0
                                         && cursor_pos.y <= ty + TRANS_HEIGHT + 12.0;
-                                    if cursor_pos.distance(out_p) <= PORT_DROP_RADIUS || inside_box {
+                                    if cursor_pos.distance(out_p) <= PORT_DROP_RADIUS || inside_box
+                                    {
                                         return (
                                             event::Status::Captured,
                                             Some(Message::SfcConnectTransitions {
@@ -1048,7 +1149,10 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         let selected = state.selected_elements.clone();
                         (
                             event::Status::Captured,
-                            Some(Message::SfcSelectElements(self.pou_name.to_string(), selected)),
+                            Some(Message::SfcSelectElements(
+                                self.pou_name.to_string(),
+                                selected,
+                            )),
                         )
                     }
                     DragState::None => (event::Status::Ignored, None),
@@ -1058,7 +1162,9 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
                 if matches!(
                     key,
-                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete | iced::keyboard::key::Named::Backspace)
+                    iced::keyboard::Key::Named(
+                        iced::keyboard::key::Named::Delete | iced::keyboard::key::Named::Backspace
+                    )
                 ) {
                     (
                         event::Status::Captured,
@@ -1092,7 +1198,11 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
         let dot_color = Color::from_rgba(1.0, 1.0, 1.0, 0.05);
         for x in (0..width as i32).step_by(20) {
             for y in (0..height as i32).step_by(20) {
-                frame.fill_rectangle(Point::new(x as f32, y as f32), Size::new(1.5, 1.5), dot_color);
+                frame.fill_rectangle(
+                    Point::new(x as f32, y as f32),
+                    Size::new(1.5, 1.5),
+                    dot_color,
+                );
             }
         }
 
@@ -1137,13 +1247,17 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 // Central wire from step down to horizontal bar
                 frame.stroke(
                     &Path::line(sp, Point::new(sp.x, bar_y)),
-                    Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0),
+                    Stroke::default()
+                        .with_color(COLOR_INACTIVE_STEP)
+                        .with_width(2.0),
                 );
 
                 // Single horizontal bar
                 frame.stroke(
                     &Path::line(Point::new(bar_left, bar_y), Point::new(bar_right, bar_y)),
-                    Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.5),
+                    Stroke::default()
+                        .with_color(COLOR_INACTIVE_STEP)
+                        .with_width(2.5),
                 );
 
                 // Branch wires from bar down to each transition
@@ -1151,7 +1265,9 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     let tp = self.trans_in_port(tr, state);
                     frame.stroke(
                         &Path::line(Point::new(tp.x, bar_y), tp),
-                        Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0),
+                        Stroke::default()
+                            .with_color(COLOR_INACTIVE_STEP)
+                            .with_width(2.0),
                     );
                 }
             }
@@ -1196,20 +1312,26 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     let tp = self.trans_out_port(tr, state);
                     frame.stroke(
                         &Path::line(tp, Point::new(tp.x, bar_y)),
-                        Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0),
+                        Stroke::default()
+                            .with_color(COLOR_INACTIVE_STEP)
+                            .with_width(2.0),
                     );
                 }
 
                 // Single horizontal bar
                 frame.stroke(
                     &Path::line(Point::new(bar_left, bar_y), Point::new(bar_right, bar_y)),
-                    Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.5),
+                    Stroke::default()
+                        .with_color(COLOR_INACTIVE_STEP)
+                        .with_width(2.5),
                 );
 
                 // Central wire from bar into step, with arrowhead
                 frame.stroke(
                     &Path::line(Point::new(sp.x, bar_y), sp),
-                    Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0),
+                    Stroke::default()
+                        .with_color(COLOR_INACTIVE_STEP)
+                        .with_width(2.0),
                 );
                 draw_arrowhead(&mut frame, sp, (0.0, 1.0), COLOR_INACTIVE_STEP);
             }
@@ -1221,16 +1343,15 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             let tr_out = self.trans_out_port(tr, state);
 
             // Incoming wires from source steps -> transition
-            let from_steps: Vec<&SfcStep> = tr
-                .from_steps
-                .iter()
-                .filter_map(|sid| {
-                    self.program
-                        .steps
-                        .iter()
-                        .find(|s| &s.id == sid || &s.name == sid || sid == &format!("X{}", s.id))
-                })
-                .collect();
+            let from_steps: Vec<&SfcStep> =
+                tr.from_steps
+                    .iter()
+                    .filter_map(|sid| {
+                        self.program.steps.iter().find(|s| {
+                            &s.id == sid || &s.name == sid || sid == &format!("X{}", s.id)
+                        })
+                    })
+                    .collect();
 
             if from_steps.len() >= 2 {
                 let is_or = tr.convergence == ConvergenceKind::Or;
@@ -1249,37 +1370,79 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 let bar_left = min_x - 14.0;
                 let bar_right = max_x + 14.0;
 
-                let wire_stroke = Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.5);
+                let wire_stroke = Stroke::default()
+                    .with_color(COLOR_INACTIVE_STEP)
+                    .with_width(2.5);
                 if is_or {
                     // IEC 60848 OR Convergence: Single horizontal bar!
-                    frame.stroke(&Path::line(Point::new(bar_left, bar_y), Point::new(bar_right, bar_y)), wire_stroke);
+                    frame.stroke(
+                        &Path::line(Point::new(bar_left, bar_y), Point::new(bar_right, bar_y)),
+                        wire_stroke,
+                    );
 
                     // Drop wires from each step to single line
                     for s in &from_steps {
                         let sp = self.step_out_port(s, state);
-                        frame.stroke(&Path::line(sp, Point::new(sp.x, bar_y)), Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0));
+                        frame.stroke(
+                            &Path::line(sp, Point::new(sp.x, bar_y)),
+                            Stroke::default()
+                                .with_color(COLOR_INACTIVE_STEP)
+                                .with_width(2.0),
+                        );
                     }
                     // Center wire from single line into transition
-                    frame.stroke(&Path::line(Point::new(tr_in.x, bar_y), tr_in), Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0));
+                    frame.stroke(
+                        &Path::line(Point::new(tr_in.x, bar_y), tr_in),
+                        Stroke::default()
+                            .with_color(COLOR_INACTIVE_STEP)
+                            .with_width(2.0),
+                    );
                 } else {
                     // IEC 60848 AND Convergence: Double horizontal lines!
-                    frame.stroke(&Path::line(Point::new(bar_left, bar_y - 2.5), Point::new(bar_right, bar_y - 2.5)), wire_stroke);
-                    frame.stroke(&Path::line(Point::new(bar_left, bar_y + 2.5), Point::new(bar_right, bar_y + 2.5)), wire_stroke);
+                    frame.stroke(
+                        &Path::line(
+                            Point::new(bar_left, bar_y - 2.5),
+                            Point::new(bar_right, bar_y - 2.5),
+                        ),
+                        wire_stroke,
+                    );
+                    frame.stroke(
+                        &Path::line(
+                            Point::new(bar_left, bar_y + 2.5),
+                            Point::new(bar_right, bar_y + 2.5),
+                        ),
+                        wire_stroke,
+                    );
 
                     // Drop wires from each step to top line
                     for s in &from_steps {
                         let sp = self.step_out_port(s, state);
-                        frame.stroke(&Path::line(sp, Point::new(sp.x, bar_y - 2.5)), Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0));
+                        frame.stroke(
+                            &Path::line(sp, Point::new(sp.x, bar_y - 2.5)),
+                            Stroke::default()
+                                .with_color(COLOR_INACTIVE_STEP)
+                                .with_width(2.0),
+                        );
                     }
                     // Center wire from bottom line into transition
-                    frame.stroke(&Path::line(Point::new(tr_in.x, bar_y + 2.5), tr_in), Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0));
+                    frame.stroke(
+                        &Path::line(Point::new(tr_in.x, bar_y + 2.5), tr_in),
+                        Stroke::default()
+                            .with_color(COLOR_INACTIVE_STEP)
+                            .with_width(2.0),
+                    );
                 }
             } else if let Some(s) = from_steps.first() {
                 // 1-to-1 link (if not already handled by OR Divergence)
                 if !handled_step_out_wires.contains(&(s.id.clone(), tr.id.clone())) {
                     let sp = self.step_out_port(s, state);
                     if (sp.x - tr_in.x).abs() < 2.0 {
-                        frame.stroke(&Path::line(sp, tr_in), Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0));
+                        frame.stroke(
+                            &Path::line(sp, tr_in),
+                            Stroke::default()
+                                .with_color(COLOR_INACTIVE_STEP)
+                                .with_width(2.0),
+                        );
                     } else {
                         let mid_y = (sp.y + tr_in.y) * 0.5;
                         let p1 = Point::new(sp.x, mid_y);
@@ -1290,22 +1453,26 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                             b.line_to(p2);
                             b.line_to(tr_in);
                         });
-                        frame.stroke(&path, Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0));
+                        frame.stroke(
+                            &path,
+                            Stroke::default()
+                                .with_color(COLOR_INACTIVE_STEP)
+                                .with_width(2.0),
+                        );
                     }
                 }
             }
 
             // Outgoing wires from transition -> destination steps
-            let to_steps: Vec<&SfcStep> = tr
-                .to_steps
-                .iter()
-                .filter_map(|sid| {
-                    self.program
-                        .steps
-                        .iter()
-                        .find(|s| &s.id == sid || &s.name == sid || sid == &format!("X{}", s.id))
-                })
-                .collect();
+            let to_steps: Vec<&SfcStep> =
+                tr.to_steps
+                    .iter()
+                    .filter_map(|sid| {
+                        self.program.steps.iter().find(|s| {
+                            &s.id == sid || &s.name == sid || sid == &format!("X{}", s.id)
+                        })
+                    })
+                    .collect();
 
             if to_steps.len() >= 2 {
                 let is_or = tr.divergence == DivergenceKind::Or;
@@ -1324,32 +1491,69 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 let bar_left = min_x - 14.0;
                 let bar_right = max_x + 14.0;
 
-                let wire_stroke = Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.5);
+                let wire_stroke = Stroke::default()
+                    .with_color(COLOR_INACTIVE_STEP)
+                    .with_width(2.5);
                 if is_or {
                     // IEC 60848 OR Divergence: Single horizontal bar!
-                    frame.stroke(&Path::line(Point::new(bar_left, bar_y), Point::new(bar_right, bar_y)), wire_stroke);
+                    frame.stroke(
+                        &Path::line(Point::new(bar_left, bar_y), Point::new(bar_right, bar_y)),
+                        wire_stroke,
+                    );
 
                     // Central wire from transition into single line
-                    frame.stroke(&Path::line(tr_out, Point::new(tr_out.x, bar_y)), Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0));
+                    frame.stroke(
+                        &Path::line(tr_out, Point::new(tr_out.x, bar_y)),
+                        Stroke::default()
+                            .with_color(COLOR_INACTIVE_STEP)
+                            .with_width(2.0),
+                    );
 
                     // Drop wires from single line to each target step, with arrowhead
                     for s in &to_steps {
                         let sp = self.step_in_port(s, state);
-                        frame.stroke(&Path::line(Point::new(sp.x, bar_y), sp), Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0));
+                        frame.stroke(
+                            &Path::line(Point::new(sp.x, bar_y), sp),
+                            Stroke::default()
+                                .with_color(COLOR_INACTIVE_STEP)
+                                .with_width(2.0),
+                        );
                         draw_arrowhead(&mut frame, sp, (0.0, 1.0), COLOR_INACTIVE_STEP);
                     }
                 } else {
                     // IEC 60848 AND Divergence: Double horizontal lines!
-                    frame.stroke(&Path::line(Point::new(bar_left, bar_y - 2.5), Point::new(bar_right, bar_y - 2.5)), wire_stroke);
-                    frame.stroke(&Path::line(Point::new(bar_left, bar_y + 2.5), Point::new(bar_right, bar_y + 2.5)), wire_stroke);
+                    frame.stroke(
+                        &Path::line(
+                            Point::new(bar_left, bar_y - 2.5),
+                            Point::new(bar_right, bar_y - 2.5),
+                        ),
+                        wire_stroke,
+                    );
+                    frame.stroke(
+                        &Path::line(
+                            Point::new(bar_left, bar_y + 2.5),
+                            Point::new(bar_right, bar_y + 2.5),
+                        ),
+                        wire_stroke,
+                    );
 
                     // Central wire from transition into top line
-                    frame.stroke(&Path::line(tr_out, Point::new(tr_out.x, bar_y - 2.5)), Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0));
+                    frame.stroke(
+                        &Path::line(tr_out, Point::new(tr_out.x, bar_y - 2.5)),
+                        Stroke::default()
+                            .with_color(COLOR_INACTIVE_STEP)
+                            .with_width(2.0),
+                    );
 
                     // Drop wires from bottom line to each target step, with arrowhead
                     for s in &to_steps {
                         let sp = self.step_in_port(s, state);
-                        frame.stroke(&Path::line(Point::new(sp.x, bar_y + 2.5), sp), Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0));
+                        frame.stroke(
+                            &Path::line(Point::new(sp.x, bar_y + 2.5), sp),
+                            Stroke::default()
+                                .with_color(COLOR_INACTIVE_STEP)
+                                .with_width(2.0),
+                        );
                         draw_arrowhead(&mut frame, sp, (0.0, 1.0), COLOR_INACTIVE_STEP);
                     }
                 }
@@ -1359,7 +1563,12 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     let sp = self.step_in_port(s, state);
                     if sp.y >= tr_out.y {
                         if (sp.x - tr_out.x).abs() < 2.0 {
-                            frame.stroke(&Path::line(tr_out, sp), Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0));
+                            frame.stroke(
+                                &Path::line(tr_out, sp),
+                                Stroke::default()
+                                    .with_color(COLOR_INACTIVE_STEP)
+                                    .with_width(2.0),
+                            );
                         } else {
                             let mid_y = (tr_out.y + sp.y) * 0.5;
                             let p1 = Point::new(tr_out.x, mid_y);
@@ -1370,13 +1579,19 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                 b.line_to(p2);
                                 b.line_to(sp);
                             });
-                            frame.stroke(&path, Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(2.0));
+                            frame.stroke(
+                                &path,
+                                Stroke::default()
+                                    .with_color(COLOR_INACTIVE_STEP)
+                                    .with_width(2.0),
+                            );
                         }
                         draw_arrowhead(&mut frame, sp, (0.0, 1.0), COLOR_INACTIVE_STEP);
                     } else {
                         // Loopback link towards a previous step:
                         // Route horizontally to the clear left edge before going up to avoid clipping states
-                        let side_x = self.compute_sfc_loopback_side_x(sp, tr_out, &tr.id, &s.id, state);
+                        let side_x =
+                            self.compute_sfc_loopback_side_x(sp, tr_out, &tr.id, &s.id, state);
                         let top_y = (sp.y - 12.0).max(6.0);
                         let bottom_y = tr_out.y + 12.0;
                         let p1 = Point::new(tr_out.x, bottom_y);
@@ -1391,7 +1606,12 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                             b.line_to(p4);
                             b.line_to(sp);
                         });
-                        frame.stroke(&path, Stroke::default().with_color(COLOR_ACTIVE_STEP).with_width(1.8));
+                        frame.stroke(
+                            &path,
+                            Stroke::default()
+                                .with_color(COLOR_ACTIVE_STEP)
+                                .with_width(1.8),
+                        );
                         draw_arrowhead(&mut frame, sp, (0.0, 1.0), COLOR_ACTIVE_STEP);
                     }
                 }
@@ -1408,11 +1628,19 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
 
             let is_selected = self.selected == Some(&SfcElementKey::Step(step.id.clone()))
                 || state.selected.as_ref() == Some(&SfcElementKey::Step(step.id.clone()))
-                || self.selected_elements.contains(&SfcElementKey::Step(step.id.clone()))
-                || state.selected_elements.contains(&SfcElementKey::Step(step.id.clone()));
+                || self
+                    .selected_elements
+                    .contains(&SfcElementKey::Step(step.id.clone()))
+                || state
+                    .selected_elements
+                    .contains(&SfcElementKey::Step(step.id.clone()));
 
             let (tree_id, has_error, _err_msg) = if let Some(ref report) = self.validation_report {
-                let t_id = report.trees.iter().find(|t| t.step_ids.contains(&step.id)).map(|t| t.tree_id);
+                let t_id = report
+                    .trees
+                    .iter()
+                    .find(|t| t.step_ids.contains(&step.id))
+                    .map(|t| t.tree_id);
                 let mut err = None;
                 for e in &report.errors {
                     match e {
@@ -1428,9 +1656,10 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                 break;
                             }
                         }
-                        SfcValidationError::OrphanElement { element_id, is_step }
-                            if *is_step && element_id == &step.id =>
-                        {
+                        SfcValidationError::OrphanElement {
+                            element_id,
+                            is_step,
+                        } if *is_step && element_id == &step.id => {
                             err = Some("Unlinked Step");
                             break;
                         }
@@ -1459,11 +1688,17 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 COLOR_STEP_BG
             };
 
-            frame.fill_rectangle(Point::new(x, y), Size::new(STEP_WIDTH, STEP_HEIGHT), bg_color);
+            frame.fill_rectangle(
+                Point::new(x, y),
+                Size::new(STEP_WIDTH, STEP_HEIGHT),
+                bg_color,
+            );
             frame.stroke_rectangle(
                 Point::new(x, y),
                 Size::new(STEP_WIDTH, STEP_HEIGHT),
-                Stroke::default().with_color(border_color).with_width(if is_selected || has_error { 2.5 } else { 2.0 }),
+                Stroke::default()
+                    .with_color(border_color)
+                    .with_width(if is_selected || has_error { 2.5 } else { 2.0 }),
             );
 
             // Error halo outline
@@ -1471,7 +1706,9 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 frame.stroke_rectangle(
                     Point::new(x - 2.0, y - 2.0),
                     Size::new(STEP_WIDTH + 4.0, STEP_HEIGHT + 4.0),
-                    Stroke::default().with_color(Color::from_rgba(1.0, 0.3, 0.3, 0.4)).with_width(2.0),
+                    Stroke::default()
+                        .with_color(Color::from_rgba(1.0, 0.3, 0.3, 0.4))
+                        .with_width(2.0),
                 );
             }
 
@@ -1506,7 +1743,12 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     ..Default::default()
                 });
             } else if let Some(tid) = tree_id
-                && self.validation_report.as_ref().map(|r| r.trees.len()).unwrap_or(0) > 1
+                && self
+                    .validation_report
+                    .as_ref()
+                    .map(|r| r.trees.len())
+                    .unwrap_or(0)
+                    > 1
             {
                 frame.fill_text(canvas::Text {
                     content: format!("T{}", tid + 1),
@@ -1550,18 +1792,27 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             if !step.actions.is_empty() {
                 let wire_start = Point::new(x + STEP_WIDTH, y + STEP_HEIGHT * 0.5);
                 let wire_end = Point::new(x + STEP_WIDTH + 14.0, y + STEP_HEIGHT * 0.5);
-                frame.stroke(&Path::line(wire_start, wire_end), Stroke::default().with_color(border_color).with_width(1.5));
+                frame.stroke(
+                    &Path::line(wire_start, wire_end),
+                    Stroke::default().with_color(border_color).with_width(1.5),
+                );
 
                 let act_x = wire_end.x;
                 let start_act_y = y + 4.0;
                 let mut act_y = start_act_y;
                 for act in &step.actions {
                     let qual_str = SfcActionQualifierWrapper(act.qualifier).to_string();
-                    frame.fill_rectangle(Point::new(act_x, act_y), Size::new(26.0, 22.0), COLOR_ACTION_BG);
+                    frame.fill_rectangle(
+                        Point::new(act_x, act_y),
+                        Size::new(26.0, 22.0),
+                        COLOR_ACTION_BG,
+                    );
                     frame.stroke_rectangle(
                         Point::new(act_x, act_y),
                         Size::new(26.0, 22.0),
-                        Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(1.0),
+                        Stroke::default()
+                            .with_color(COLOR_INACTIVE_STEP)
+                            .with_width(1.0),
                     );
                     frame.fill_text(canvas::Text {
                         content: qual_str,
@@ -1578,11 +1829,17 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         act.target.clone()
                     };
                     let target_w = (target_text.len() as f32 * 7.5 + 20.0).max(110.0);
-                    frame.fill_rectangle(Point::new(act_x + 26.0, act_y), Size::new(target_w, 22.0), COLOR_STEP_BG);
+                    frame.fill_rectangle(
+                        Point::new(act_x + 26.0, act_y),
+                        Size::new(target_w, 22.0),
+                        COLOR_STEP_BG,
+                    );
                     frame.stroke_rectangle(
                         Point::new(act_x + 26.0, act_y),
                         Size::new(target_w, 22.0),
-                        Stroke::default().with_color(COLOR_INACTIVE_STEP).with_width(1.0),
+                        Stroke::default()
+                            .with_color(COLOR_INACTIVE_STEP)
+                            .with_width(1.0),
                     );
                     frame.fill_text(canvas::Text {
                         content: target_text,
@@ -1613,11 +1870,27 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             let in_p = self.step_in_port(step, state);
             let out_p = self.step_out_port(step, state);
 
-            let is_in_hovered = state.hover_port.as_ref() == Some(&PortHover::StepInput(step.id.clone(), in_p));
-            let is_out_hovered = state.hover_port.as_ref() == Some(&PortHover::StepOutput(step.id.clone(), out_p));
+            let is_in_hovered =
+                state.hover_port.as_ref() == Some(&PortHover::StepInput(step.id.clone(), in_p));
+            let is_out_hovered =
+                state.hover_port.as_ref() == Some(&PortHover::StepOutput(step.id.clone(), out_p));
 
-            frame.fill(&Path::circle(in_p, if is_in_hovered { 6.0 } else { PORT_RADIUS }), if is_in_hovered { COLOR_STEP_DROP } else { border_color });
-            frame.fill(&Path::circle(out_p, if is_out_hovered { 6.0 } else { PORT_RADIUS }), if is_out_hovered { COLOR_STEP_DROP } else { border_color });
+            frame.fill(
+                &Path::circle(in_p, if is_in_hovered { 6.0 } else { PORT_RADIUS }),
+                if is_in_hovered {
+                    COLOR_STEP_DROP
+                } else {
+                    border_color
+                },
+            );
+            frame.fill(
+                &Path::circle(out_p, if is_out_hovered { 6.0 } else { PORT_RADIUS }),
+                if is_out_hovered {
+                    COLOR_STEP_DROP
+                } else {
+                    border_color
+                },
+            );
         }
 
         // 5. Render Transitions
@@ -1625,11 +1898,19 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             let (x, y) = self.trans_pos(tr, state);
             let is_selected = self.selected == Some(&SfcElementKey::Transition(tr.id.clone()))
                 || state.selected.as_ref() == Some(&SfcElementKey::Transition(tr.id.clone()))
-                || self.selected_elements.contains(&SfcElementKey::Transition(tr.id.clone()))
-                || state.selected_elements.contains(&SfcElementKey::Transition(tr.id.clone()));
+                || self
+                    .selected_elements
+                    .contains(&SfcElementKey::Transition(tr.id.clone()))
+                || state
+                    .selected_elements
+                    .contains(&SfcElementKey::Transition(tr.id.clone()));
 
             let (tree_id, has_error, _err_msg) = if let Some(ref report) = self.validation_report {
-                let t_id = report.trees.iter().find(|t| t.transition_ids.contains(&tr.id)).map(|t| t.tree_id);
+                let t_id = report
+                    .trees
+                    .iter()
+                    .find(|t| t.transition_ids.contains(&tr.id))
+                    .map(|t| t.tree_id);
                 let mut err = None;
                 for e in &report.errors {
                     match e {
@@ -1651,9 +1932,10 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                                 break;
                             }
                         }
-                        SfcValidationError::OrphanElement { element_id, is_step }
-                            if !*is_step && element_id == &tr.id =>
-                        {
+                        SfcValidationError::OrphanElement {
+                            element_id,
+                            is_step,
+                        } if !*is_step && element_id == &tr.id => {
                             err = Some("Unlinked Transition");
                             break;
                         }
@@ -1678,23 +1960,38 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             // Error halo around transition crossbar
             if has_error {
                 frame.stroke(
-                    &Path::line(Point::new(x - 3.0, cy), Point::new(x + TRANS_WIDTH + 3.0, cy)),
-                    Stroke::default().with_color(Color::from_rgba(1.0, 0.3, 0.3, 0.4)).with_width(6.0),
+                    &Path::line(
+                        Point::new(x - 3.0, cy),
+                        Point::new(x + TRANS_WIDTH + 3.0, cy),
+                    ),
+                    Stroke::default()
+                        .with_color(Color::from_rgba(1.0, 0.3, 0.3, 0.4))
+                        .with_width(6.0),
                 );
             }
 
             // Authentic IEC 60848 transition crossbar
             frame.stroke(
                 &Path::line(Point::new(x, cy), Point::new(x + TRANS_WIDTH, cy)),
-                Stroke::default().with_color(color).with_width(if is_selected || has_error { 4.0 } else { 3.2 }),
+                Stroke::default()
+                    .with_color(color)
+                    .with_width(if is_selected || has_error { 4.0 } else { 3.2 }),
             );
 
             // Receptivity text
-            let rec_text = if tr.receptivity.is_empty() { "TRUE" } else { &tr.receptivity };
+            let rec_text = if tr.receptivity.is_empty() {
+                "TRUE"
+            } else {
+                &tr.receptivity
+            };
             frame.fill_text(canvas::Text {
                 content: format!("[ {} ]", rec_text),
                 position: Point::new(x + TRANS_WIDTH + 6.0, cy - 6.0),
-                color: if has_error { Color::from_rgb(1.0, 0.4, 0.4) } else { Color::from_rgb(1.0, 210.0 / 255.0, 120.0 / 255.0) },
+                color: if has_error {
+                    Color::from_rgb(1.0, 0.4, 0.4)
+                } else {
+                    Color::from_rgb(1.0, 210.0 / 255.0, 120.0 / 255.0)
+                },
                 size: iced::Pixels(11.5),
                 font: iced::Font::MONOSPACE,
                 ..Default::default()
@@ -1704,7 +2001,12 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             let tid_str = if has_error {
                 format!("{} ⚠", tr.id)
             } else if let Some(tid) = tree_id
-                && self.validation_report.as_ref().map(|r| r.trees.len()).unwrap_or(0) > 1
+                && self
+                    .validation_report
+                    .as_ref()
+                    .map(|r| r.trees.len())
+                    .unwrap_or(0)
+                    > 1
             {
                 format!("{} T{}", tr.id, tid + 1)
             } else {
@@ -1714,7 +2016,11 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             frame.fill_text(canvas::Text {
                 content: tid_str,
                 position: Point::new(x - 8.0, cy - 6.0),
-                color: if has_error { Color::from_rgb(1.0, 0.35, 0.35) } else { COLOR_INACTIVE_STEP },
+                color: if has_error {
+                    Color::from_rgb(1.0, 0.35, 0.35)
+                } else {
+                    COLOR_INACTIVE_STEP
+                },
                 size: iced::Pixels(10.5),
                 font: iced::Font::MONOSPACE,
                 horizontal_alignment: iced::alignment::Horizontal::Right,
@@ -1725,28 +2031,59 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             let in_p = self.trans_in_port(tr, state);
             let out_p = self.trans_out_port(tr, state);
 
-            let is_in_hovered = state.hover_port.as_ref() == Some(&PortHover::TransitionInput(tr.id.clone(), in_p));
-            let is_out_hovered = state.hover_port.as_ref() == Some(&PortHover::TransitionOutput(tr.id.clone(), out_p));
+            let is_in_hovered =
+                state.hover_port.as_ref() == Some(&PortHover::TransitionInput(tr.id.clone(), in_p));
+            let is_out_hovered = state.hover_port.as_ref()
+                == Some(&PortHover::TransitionOutput(tr.id.clone(), out_p));
 
-            frame.fill(&Path::circle(in_p, if is_in_hovered { 6.0 } else { PORT_RADIUS }), if is_in_hovered { COLOR_STEP_DROP } else { color });
-            frame.fill(&Path::circle(out_p, if is_out_hovered { 6.0 } else { PORT_RADIUS }), if is_out_hovered { COLOR_STEP_DROP } else { color });
+            frame.fill(
+                &Path::circle(in_p, if is_in_hovered { 6.0 } else { PORT_RADIUS }),
+                if is_in_hovered {
+                    COLOR_STEP_DROP
+                } else {
+                    color
+                },
+            );
+            frame.fill(
+                &Path::circle(out_p, if is_out_hovered { 6.0 } else { PORT_RADIUS }),
+                if is_out_hovered {
+                    COLOR_STEP_DROP
+                } else {
+                    color
+                },
+            );
         }
 
         // 6. Active Wire Dragging Elastic Rubber-Band
-        if let DragState::DraggingWire { start_pt, current_pt, .. } = state.drag {
-            let snap_pt = state.hover_port.as_ref().map(|h| match h {
-                PortHover::StepInput(_, p)
-                | PortHover::StepOutput(_, p)
-                | PortHover::TransitionInput(_, p)
-                | PortHover::TransitionOutput(_, p) => *p,
-            }).unwrap_or(current_pt);
-            let wire_stroke = Stroke::default().with_color(COLOR_STEP_DROP).with_width(2.2);
+        if let DragState::DraggingWire {
+            start_pt,
+            current_pt,
+            ..
+        } = state.drag
+        {
+            let snap_pt = state
+                .hover_port
+                .as_ref()
+                .map(|h| match h {
+                    PortHover::StepInput(_, p)
+                    | PortHover::StepOutput(_, p)
+                    | PortHover::TransitionInput(_, p)
+                    | PortHover::TransitionOutput(_, p) => *p,
+                })
+                .unwrap_or(current_pt);
+            let wire_stroke = Stroke::default()
+                .with_color(COLOR_STEP_DROP)
+                .with_width(2.2);
             frame.stroke(&Path::line(start_pt, snap_pt), wire_stroke);
             frame.fill(&Path::circle(snap_pt, 5.0), COLOR_STEP_DROP);
         }
 
         // 7. Active Box Selection Rubber-Band
-        if let DragState::BoxSelecting { start_pt, current_pt } = state.drag {
+        if let DragState::BoxSelecting {
+            start_pt,
+            current_pt,
+        } = state.drag
+        {
             let min_x = start_pt.x.min(current_pt.x);
             let max_x = start_pt.x.max(current_pt.x);
             let min_y = start_pt.y.min(current_pt.y);
@@ -1759,7 +2096,9 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             frame.stroke_rectangle(
                 Point::new(min_x, min_y),
                 Size::new(w, h),
-                Stroke::default().with_color(COLOR_STEP_DROP).with_width(1.5),
+                Stroke::default()
+                    .with_color(COLOR_STEP_DROP)
+                    .with_width(1.5),
             );
         }
 
@@ -1829,14 +2168,10 @@ fn render_step_inspector<'a>(
         .style(sfc_input_style)
         .width(160);
 
-    let kind_picker = pick_list(
-        &ALL_STEP_KINDS[..],
-        Some(SfcStepKindWrapper(step.kind)),
-        {
-            let p = p_name.clone();
-            move |w| Message::SfcStepKindChanged(p.clone(), s_idx, w.0)
-        },
-    )
+    let kind_picker = pick_list(&ALL_STEP_KINDS[..], Some(SfcStepKindWrapper(step.kind)), {
+        let p = p_name.clone();
+        move |w| Message::SfcStepKindChanged(p.clone(), s_idx, w.0)
+    })
     .width(90)
     .style(StudioTheme::styled_pick_list);
 
@@ -1846,7 +2181,10 @@ fn render_step_inspector<'a>(
         .padding([4, 8]);
 
     let discon_btn = button(text("Disconnect").size(11))
-        .on_press(Message::SfcDisconnectAll(p_name.clone(), SfcElementKey::Step(step.id.clone())))
+        .on_press(Message::SfcDisconnectAll(
+            p_name.clone(),
+            SfcElementKey::Step(step.id.clone()),
+        ))
         .style(sfc_subtle_button)
         .padding([4, 8]);
 
@@ -1884,7 +2222,9 @@ fn render_step_inspector<'a>(
             .width(140);
 
         let mut act_row = row![
-            text(format!("Action #{}:", a_idx + 1)).size(11).color(StudioTheme::TEXT_MUTED),
+            text(format!("Action #{}:", a_idx + 1))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED),
             qual_picker,
             target_input,
         ]
@@ -1915,7 +2255,9 @@ fn render_step_inspector<'a>(
 
         let act_card = container(act_row)
             .padding([2, 6])
-            .style(StudioTheme::subtle_badge_style(Color::from_rgba(0.25, 0.45, 0.65, 0.18)));
+            .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+                0.25, 0.45, 0.65, 0.18,
+            )));
 
         step_row = step_row.push(act_card);
     }
@@ -1998,7 +2340,10 @@ fn render_transition_inspector<'a>(
     .style(StudioTheme::styled_pick_list);
 
     let discon_btn = button(text("Disconnect").size(11))
-        .on_press(Message::SfcDisconnectAll(p_name.clone(), SfcElementKey::Transition(tr.id.clone())))
+        .on_press(Message::SfcDisconnectAll(
+            p_name.clone(),
+            SfcElementKey::Transition(tr.id.clone()),
+        ))
         .style(sfc_subtle_button)
         .padding([4, 8]);
 
@@ -2102,21 +2447,21 @@ pub fn render_sfc_editor<'a>(
             .align_y(Alignment::Center),
         )
         .padding([4, 8])
-        .style(StudioTheme::subtle_badge_style(Color::from_rgba(0.2, 0.4, 0.6, 0.15)))
+        .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+            0.2, 0.4, 0.6, 0.15,
+        )))
         .into()
     } else if let Some(insp) = inspector_elem {
         let deselect_btn = button(text("Close [x]").size(11))
             .on_press(Message::SfcSelectElement(pou_name.to_string(), None))
             .style(StudioTheme::ghost_button)
             .padding([4, 8]);
-        let scrollable_insp = scrollable(
-            container(insp).padding(Padding {
-                top: 2.0,
-                right: 8.0,
-                bottom: 12.0,
-                left: 2.0,
-            }),
-        )
+        let scrollable_insp = scrollable(container(insp).padding(Padding {
+            top: 2.0,
+            right: 8.0,
+            bottom: 12.0,
+            left: 2.0,
+        }))
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new()
                 .width(5)
@@ -2141,7 +2486,9 @@ pub fn render_sfc_editor<'a>(
             bottom: 4.0,
             left: 8.0,
         })
-        .style(StudioTheme::subtle_badge_style(Color::from_rgba(0.2, 0.4, 0.6, 0.15)))
+        .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+            0.2, 0.4, 0.6, 0.15,
+        )))
         .into()
     } else {
         // Toolbar buttons
@@ -2186,22 +2533,37 @@ pub fn render_sfc_editor<'a>(
             .padding([4, 8]);
 
         let tree_badge = container(
-            text(format!("{tree_count} Parallel Tree{}", if tree_count == 1 { "" } else { "s" }))
-                .size(11)
-                .color(COLOR_ACTIVE_STEP),
+            text(format!(
+                "{tree_count} Parallel Tree{}",
+                if tree_count == 1 { "" } else { "s" }
+            ))
+            .size(11)
+            .color(COLOR_ACTIVE_STEP),
         )
         .padding([3, 8])
-        .style(StudioTheme::subtle_badge_style(Color::from_rgba(0.18, 0.835, 0.45, 0.15)));
+        .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+            0.18, 0.835, 0.45, 0.15,
+        )));
 
         let status_badge: Option<Element<'a, Message>> = if !validation_report.is_valid {
             Some(
                 container(
-                    text(format!("{} error{}", validation_report.errors.len(), if validation_report.errors.len() == 1 { "" } else { "s" }))
-                        .size(11)
-                        .color(Color::from_rgb(1.0, 0.4, 0.4)),
+                    text(format!(
+                        "{} error{}",
+                        validation_report.errors.len(),
+                        if validation_report.errors.len() == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ))
+                    .size(11)
+                    .color(Color::from_rgb(1.0, 0.4, 0.4)),
                 )
                 .padding([3, 8])
-                .style(StudioTheme::subtle_badge_style(Color::from_rgba(1.0, 0.2, 0.2, 0.15)))
+                .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+                    1.0, 0.2, 0.2, 0.15,
+                )))
                 .into(),
             )
         } else {
@@ -2238,7 +2600,12 @@ pub fn render_sfc_editor<'a>(
         .steps
         .iter()
         .filter_map(|s| s.grid_pos.map(|p| p.0 + 360))
-        .chain(program.transitions.iter().filter_map(|t| t.grid_pos.map(|p| p.0 + 360)))
+        .chain(
+            program
+                .transitions
+                .iter()
+                .filter_map(|t| t.grid_pos.map(|p| p.0 + 360)),
+        )
         .max()
         .unwrap_or(1600)
         .max(1800) as f32;
@@ -2247,7 +2614,12 @@ pub fn render_sfc_editor<'a>(
         .steps
         .iter()
         .filter_map(|s| s.grid_pos.map(|p| p.1 + 300))
-        .chain(program.transitions.iter().filter_map(|t| t.grid_pos.map(|p| p.1 + 300)))
+        .chain(
+            program
+                .transitions
+                .iter()
+                .filter_map(|t| t.grid_pos.map(|p| p.1 + 300)),
+        )
         .max()
         .unwrap_or(1200)
         .max(1400) as f32;
@@ -2281,8 +2653,11 @@ pub fn render_sfc_editor<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ferrite_lang_sfc::{
+        ActionQualifier, ConvergenceKind, DivergenceKind, SfcAction, SfcProgram, SfcStep,
+        SfcTransition, StepKind,
+    };
     use iced::widget::canvas::Program;
-    use ferrite_lang_sfc::{ActionQualifier, ConvergenceKind, DivergenceKind, SfcAction, SfcProgram, SfcStep, SfcTransition, StepKind};
 
     #[test]
     fn test_snap_to_grid() {
@@ -2318,7 +2693,10 @@ mod tests {
         let out_p = canvas.step_out_port(&canvas.program.steps[0], &state);
 
         assert_eq!(in_p, Point::new(60.0 + STEP_WIDTH * 0.5, 40.0));
-        assert_eq!(out_p, Point::new(60.0 + STEP_WIDTH * 0.5, 40.0 + STEP_HEIGHT));
+        assert_eq!(
+            out_p,
+            Point::new(60.0 + STEP_WIDTH * 0.5, 40.0 + STEP_HEIGHT)
+        );
 
         // Hit testing within PORT_HIT_DIST
         assert!(Point::new(150.0, 102.0).distance(out_p) <= PORT_HIT_DIST);
@@ -2481,7 +2859,9 @@ mod tests {
             );
             assert_eq!(status, event::Status::Captured);
             assert!(msg.is_none());
-            assert!(matches!(state.drag, DragState::DraggingWire { source: SfcPortSource::StepInput(ref id), .. } if id == "X1"));
+            assert!(
+                matches!(state.drag, DragState::DraggingWire { source: SfcPortSource::StepInput(ref id), .. } if id == "X1")
+            );
 
             // B. Releasing cursor anywhere inside Transition T1 body connects successfully
             let (tx, ty) = canvas.trans_pos(&sfc_ref.transitions[0], &state);
@@ -2510,7 +2890,9 @@ mod tests {
                 bounds,
                 mouse::Cursor::Available(step_out),
             );
-            assert!(matches!(state.drag, DragState::DraggingWire { source: SfcPortSource::StepOutput(ref id), .. } if id == "X1"));
+            assert!(
+                matches!(state.drag, DragState::DraggingWire { source: SfcPortSource::StepOutput(ref id), .. } if id == "X1")
+            );
             let (_, msg) = canvas.update(
                 &mut state,
                 canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
@@ -2534,7 +2916,9 @@ mod tests {
                 bounds,
                 mouse::Cursor::Available(trans_in),
             );
-            assert!(matches!(state.drag, DragState::DraggingWire { source: SfcPortSource::TransitionInput(ref id), .. } if id == "T1"));
+            assert!(
+                matches!(state.drag, DragState::DraggingWire { source: SfcPortSource::TransitionInput(ref id), .. } if id == "T1")
+            );
 
             // E. Releasing cursor inside Step X1 body connects TransitionInput -> StepOutput
             let (sx, sy) = canvas.step_pos(&sfc_ref.steps[0], &state);
@@ -2699,17 +3083,15 @@ mod tests {
                     grid_pos: Some((340, 440)),
                 },
             ],
-            transitions: vec![
-                SfcTransition {
-                    id: "T_Return".to_string(),
-                    from_steps: vec!["2".to_string()],
-                    to_steps: vec!["0".to_string()],
-                    receptivity: "Cycle_Done".to_string(),
-                    convergence: ConvergenceKind::And,
-                    divergence: DivergenceKind::And,
-                    grid_pos: Some((390, 560)),
-                },
-            ],
+            transitions: vec![SfcTransition {
+                id: "T_Return".to_string(),
+                from_steps: vec!["2".to_string()],
+                to_steps: vec!["0".to_string()],
+                receptivity: "Cycle_Done".to_string(),
+                convergence: ConvergenceKind::And,
+                divergence: DivergenceKind::And,
+                grid_pos: Some((390, 560)),
+            }],
         };
 
         let canvas = SfcCanvasProgram {
@@ -2819,7 +3201,12 @@ mod tests {
         };
         let step1_in = canvas.step_in_port(&program.steps[1], &state);
         let event = canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
-        let (_, msg) = canvas.update(&mut state, event, bounds, mouse::Cursor::Available(step1_in));
+        let (_, msg) = canvas.update(
+            &mut state,
+            event,
+            bounds,
+            mouse::Cursor::Available(step1_in),
+        );
 
         assert!(
             matches!(
@@ -2880,17 +3267,15 @@ mod tests {
                     grid_pos: Some((160, 240)),
                 },
             ],
-            transitions: vec![
-                SfcTransition {
-                    id: "T_OrConv".to_string(),
-                    from_steps: vec!["0".to_string(), "1".to_string()],
-                    to_steps: vec!["2".to_string()],
-                    receptivity: "TRUE".to_string(),
-                    convergence: ConvergenceKind::Or,
-                    divergence: DivergenceKind::And,
-                    grid_pos: Some((210, 140)),
-                },
-            ],
+            transitions: vec![SfcTransition {
+                id: "T_OrConv".to_string(),
+                from_steps: vec!["0".to_string(), "1".to_string()],
+                to_steps: vec!["2".to_string()],
+                receptivity: "TRUE".to_string(),
+                convergence: ConvergenceKind::Or,
+                divergence: DivergenceKind::And,
+                grid_pos: Some((210, 140)),
+            }],
         };
 
         // Render editor without panic or errors
@@ -2918,17 +3303,15 @@ mod tests {
                     grid_pos: Some((300, 100)),
                 },
             ],
-            transitions: vec![
-                SfcTransition {
-                    id: "T1".to_string(),
-                    from_steps: vec!["1".to_string()],
-                    to_steps: vec!["2".to_string()],
-                    receptivity: "TRUE".to_string(),
-                    convergence: ConvergenceKind::And,
-                    divergence: DivergenceKind::And,
-                    grid_pos: Some((200, 100)),
-                },
-            ],
+            transitions: vec![SfcTransition {
+                id: "T1".to_string(),
+                from_steps: vec!["1".to_string()],
+                to_steps: vec!["2".to_string()],
+                receptivity: "TRUE".to_string(),
+                convergence: ConvergenceKind::And,
+                divergence: DivergenceKind::And,
+                grid_pos: Some((200, 100)),
+            }],
         };
 
         let canvas = SfcCanvasProgram {
@@ -2951,21 +3334,37 @@ mod tests {
             mouse::Cursor::Available(Point::new(10.0, 10.0)),
         );
         assert_eq!(status, iced::widget::canvas::event::Status::Captured);
-        assert!(matches!(msg, Some(Message::SfcSelectElements(ref p, ref list)) if p == "test_marquee" && list.is_empty()));
+        assert!(
+            matches!(msg, Some(Message::SfcSelectElements(ref p, ref list)) if p == "test_marquee" && list.is_empty())
+        );
         assert!(matches!(state.drag, DragState::BoxSelecting { .. }));
 
         // 2. Drag rectangle covering (10, 10) to (450, 250), which bounds Step 1, T1, and Step 2
         let (status, _) = canvas.update(
             &mut state,
-            canvas::Event::Mouse(mouse::Event::CursorMoved { position: Point::new(450.0, 250.0) }),
+            canvas::Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(450.0, 250.0),
+            }),
             bounds,
             mouse::Cursor::Available(Point::new(450.0, 250.0)),
         );
         assert_eq!(status, iced::widget::canvas::event::Status::Captured);
         assert_eq!(state.selected_elements.len(), 3);
-        assert!(state.selected_elements.contains(&SfcElementKey::Step("1".to_string())));
-        assert!(state.selected_elements.contains(&SfcElementKey::Step("2".to_string())));
-        assert!(state.selected_elements.contains(&SfcElementKey::Transition("T1".to_string())));
+        assert!(
+            state
+                .selected_elements
+                .contains(&SfcElementKey::Step("1".to_string()))
+        );
+        assert!(
+            state
+                .selected_elements
+                .contains(&SfcElementKey::Step("2".to_string()))
+        );
+        assert!(
+            state
+                .selected_elements
+                .contains(&SfcElementKey::Transition("T1".to_string()))
+        );
 
         // 3. Release mouse -> emits SfcSelectElements with all 3 items
         let (status, release_msg) = canvas.update(
@@ -2986,21 +3385,28 @@ mod tests {
                 modifiers: iced::keyboard::Modifiers::default(),
                 text: None,
                 modified_key: iced::keyboard::key::Key::Named(iced::keyboard::key::Named::Delete),
-                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Delete),
+                physical_key: iced::keyboard::key::Physical::Code(
+                    iced::keyboard::key::Code::Delete,
+                ),
             }),
             bounds,
             mouse::Cursor::Available(Point::new(450.0, 250.0)),
         );
         assert_eq!(status, iced::widget::canvas::event::Status::Captured);
-        assert!(matches!(del_msg, Some(Message::SfcRequestDeleteSelected(ref p)) if p == "test_marquee"));
+        assert!(
+            matches!(del_msg, Some(Message::SfcRequestDeleteSelected(ref p)) if p == "test_marquee")
+        );
     }
 
     #[test]
-    fn test_sfc_multi_branch_manual_div_conv_and_delete_modal() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_sfc_multi_branch_manual_div_conv_and_delete_modal()
+    -> Result<(), Box<dyn std::error::Error>> {
         use crate::app::FerriteStudioApp;
         use crate::resolve_or_scaffold_project;
 
-        let now_nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+        let now_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
         let temp_dir = std::env::temp_dir().join(format!("fplc_div_conv_{now_nanos}"));
         let mut project = resolve_or_scaffold_project(Some(&temp_dir))?;
 
@@ -3008,13 +3414,34 @@ mod tests {
             name: "seq_test".to_string(),
             comment: "".to_string(),
             steps: vec![
-                SfcStep { id: "1".into(), name: "Step_1".into(), kind: StepKind::Initial, actions: vec![], grid_pos: Some((100, 100)) },
-                SfcStep { id: "2".into(), name: "Step_2".into(), kind: StepKind::Normal, actions: vec![], grid_pos: Some((260, 100)) },
-                SfcStep { id: "3".into(), name: "Step_3".into(), kind: StepKind::Normal, actions: vec![], grid_pos: Some((420, 100)) },
+                SfcStep {
+                    id: "1".into(),
+                    name: "Step_1".into(),
+                    kind: StepKind::Initial,
+                    actions: vec![],
+                    grid_pos: Some((100, 100)),
+                },
+                SfcStep {
+                    id: "2".into(),
+                    name: "Step_2".into(),
+                    kind: StepKind::Normal,
+                    actions: vec![],
+                    grid_pos: Some((260, 100)),
+                },
+                SfcStep {
+                    id: "3".into(),
+                    name: "Step_3".into(),
+                    kind: StepKind::Normal,
+                    actions: vec![],
+                    grid_pos: Some((420, 100)),
+                },
             ],
             transitions: vec![],
         };
-        project.pous.insert("seq_test".to_string(), ferrite_project::PouSource::Sfc(sfc_pou));
+        project.pous.insert(
+            "seq_test".to_string(),
+            ferrite_project::PouSource::Sfc(sfc_pou),
+        );
 
         let mut app = FerriteStudioApp::new(project);
 
@@ -3032,7 +3459,11 @@ mod tests {
         // 2. Add manual AND Convergence with 3 branches
         let _ = app.update(Message::SfcAddAndConvergence("seq_test".to_string()));
         if let Some(ferrite_project::PouSource::Sfc(sfc)) = app.project.pous.get("seq_test") {
-            let conv_tr = sfc.transitions.iter().find(|t| t.convergence == ConvergenceKind::And).ok_or("AND convergence transition must exist")?;
+            let conv_tr = sfc
+                .transitions
+                .iter()
+                .find(|t| t.convergence == ConvergenceKind::And)
+                .ok_or("AND convergence transition must exist")?;
             assert_eq!(conv_tr.from_steps.len(), 3);
             assert!(conv_tr.from_steps.contains(&"1".to_string()));
             assert!(conv_tr.from_steps.contains(&"2".to_string()));
@@ -3050,7 +3481,11 @@ mod tests {
         ));
         let _ = app.update(Message::SfcAddOrDivergence("seq_test".to_string()));
         if let Some(ferrite_project::PouSource::Sfc(sfc)) = app.project.pous.get("seq_test") {
-            let div_tr = sfc.transitions.iter().find(|t| t.divergence == DivergenceKind::Or).ok_or("OR divergence transition must exist")?;
+            let div_tr = sfc
+                .transitions
+                .iter()
+                .find(|t| t.divergence == DivergenceKind::Or)
+                .ok_or("OR divergence transition must exist")?;
             assert_eq!(div_tr.to_steps.len(), 3);
             assert!(div_tr.to_steps.contains(&"1".to_string()));
             assert!(div_tr.to_steps.contains(&"2".to_string()));
@@ -3060,14 +3495,18 @@ mod tests {
         // 4. Test delete: single-item selection deletes immediately without confirmation modal
         let _ = app.update(Message::SfcSelectElements(
             "seq_test".to_string(),
-            vec![
-                SfcElementKey::Step("2".to_string()),
-            ],
+            vec![SfcElementKey::Step("2".to_string())],
         ));
         let _ = app.update(Message::SfcRequestDeleteSelected("seq_test".to_string()));
-        assert!(app.sfc_delete_modal.is_none(), "Single-element delete must not prompt confirmation modal");
+        assert!(
+            app.sfc_delete_modal.is_none(),
+            "Single-element delete must not prompt confirmation modal"
+        );
         if let Some(ferrite_project::PouSource::Sfc(sfc)) = app.project.pous.get("seq_test") {
-            assert!(!sfc.steps.iter().any(|s| s.id == "2"), "Single-element must be deleted immediately");
+            assert!(
+                !sfc.steps.iter().any(|s| s.id == "2"),
+                "Single-element must be deleted immediately"
+            );
             for tr in &sfc.transitions {
                 assert!(!tr.from_steps.contains(&"2".to_string()));
                 assert!(!tr.to_steps.contains(&"2".to_string()));
@@ -3083,7 +3522,10 @@ mod tests {
             ],
         ));
         let _ = app.update(Message::SfcRequestDeleteSelected("seq_test".to_string()));
-        assert!(app.sfc_delete_modal.is_some(), "Multi-element delete must prompt confirmation modal");
+        assert!(
+            app.sfc_delete_modal.is_some(),
+            "Multi-element delete must prompt confirmation modal"
+        );
 
         // Cancel does not delete
         let _ = app.update(Message::SfcCancelDeleteSelected);
@@ -3160,24 +3602,30 @@ mod tests {
         assert!(step_inspector.is_some());
 
         // 2. Verify render_transition_inspector renders horizontal inspector without error
-        let trans_inspector = render_transition_inspector("test_actions", &program, "1", UiLanguage::En);
+        let trans_inspector =
+            render_transition_inspector("test_actions", &program, "1", UiLanguage::En);
         assert!(trans_inspector.is_some());
 
         // 3. Verify render_sfc_editor renders full view with Step inspector (horizontal scrollable with bottom padding)
         let sel_step_key = SfcElementKey::Step("10".to_string());
-        let _elem_step = render_sfc_editor(&program, None, UiLanguage::En, Some(&sel_step_key), &[]);
+        let _elem_step =
+            render_sfc_editor(&program, None, UiLanguage::En, Some(&sel_step_key), &[]);
 
         // 4. Verify render_sfc_editor renders full view with Transition inspector
         let sel_trans_key = SfcElementKey::Transition("1".to_string());
-        let _elem_trans = render_sfc_editor(&program, None, UiLanguage::En, Some(&sel_trans_key), &[]);
+        let _elem_trans =
+            render_sfc_editor(&program, None, UiLanguage::En, Some(&sel_trans_key), &[]);
     }
 
     #[test]
-    fn test_sfc_disconnect_wires_via_ports_and_elements() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_sfc_disconnect_wires_via_ports_and_elements() -> Result<(), Box<dyn std::error::Error>>
+    {
         use crate::app::FerriteStudioApp;
         use crate::resolve_or_scaffold_project;
 
-        let now_nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+        let now_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
         let temp_dir = std::env::temp_dir().join(format!("fplc_discon_{now_nanos}"));
         let mut project = resolve_or_scaffold_project(Some(&temp_dir))?;
 
@@ -3185,40 +3633,61 @@ mod tests {
             name: "discon_test".to_string(),
             comment: "".to_string(),
             steps: vec![
-                SfcStep { id: "1".into(), name: "Step_1".into(), kind: StepKind::Initial, actions: vec![], grid_pos: Some((100, 100)) },
-                SfcStep { id: "2".into(), name: "Step_2".into(), kind: StepKind::Normal, actions: vec![], grid_pos: Some((100, 300)) },
-            ],
-            transitions: vec![
-                SfcTransition {
-                    id: "T1".into(),
-                    from_steps: vec!["1".into()],
-                    to_steps: vec!["2".into()],
-                    receptivity: "TRUE".into(),
-                    convergence: ConvergenceKind::And,
-                    divergence: DivergenceKind::And,
-                    grid_pos: Some((150, 200)),
+                SfcStep {
+                    id: "1".into(),
+                    name: "Step_1".into(),
+                    kind: StepKind::Initial,
+                    actions: vec![],
+                    grid_pos: Some((100, 100)),
+                },
+                SfcStep {
+                    id: "2".into(),
+                    name: "Step_2".into(),
+                    kind: StepKind::Normal,
+                    actions: vec![],
+                    grid_pos: Some((100, 300)),
                 },
             ],
+            transitions: vec![SfcTransition {
+                id: "T1".into(),
+                from_steps: vec!["1".into()],
+                to_steps: vec!["2".into()],
+                receptivity: "TRUE".into(),
+                convergence: ConvergenceKind::And,
+                divergence: DivergenceKind::And,
+                grid_pos: Some((150, 200)),
+            }],
         };
-        project.pous.insert("discon_test".to_string(), ferrite_project::PouSource::Sfc(sfc_pou));
+        project.pous.insert(
+            "discon_test".to_string(),
+            ferrite_project::PouSource::Sfc(sfc_pou),
+        );
 
         let mut app = FerriteStudioApp::new(project);
 
         // 1. Disconnect Step 1 Output -> T1.from_steps should be cleared
-        let _ = app.update(Message::SfcDisconnectStepOutput("discon_test".to_string(), "1".to_string()));
+        let _ = app.update(Message::SfcDisconnectStepOutput(
+            "discon_test".to_string(),
+            "1".to_string(),
+        ));
         if let Some(ferrite_project::PouSource::Sfc(sfc)) = app.project.pous.get("discon_test") {
             assert!(!sfc.transitions[0].from_steps.contains(&"1".to_string()));
             assert_eq!(sfc.transitions[0].to_steps, vec!["2".to_string()]);
         }
 
         // 2. Disconnect Step 2 Input -> T1.to_steps should be cleared
-        let _ = app.update(Message::SfcDisconnectStepInput("discon_test".to_string(), "2".to_string()));
+        let _ = app.update(Message::SfcDisconnectStepInput(
+            "discon_test".to_string(),
+            "2".to_string(),
+        ));
         if let Some(ferrite_project::PouSource::Sfc(sfc)) = app.project.pous.get("discon_test") {
             assert!(sfc.transitions[0].to_steps.is_empty());
         }
 
         // Reconnect them and test SfcDisconnectAll
-        if let Some(ferrite_project::PouSource::Sfc(sfc_mut)) = app.project.pous.get_mut("discon_test") {
+        if let Some(ferrite_project::PouSource::Sfc(sfc_mut)) =
+            app.project.pous.get_mut("discon_test")
+        {
             sfc_mut.transitions[0].from_steps = vec!["1".to_string()];
             sfc_mut.transitions[0].to_steps = vec!["2".to_string()];
         }
@@ -3236,23 +3705,33 @@ mod tests {
     }
 
     #[test]
-    fn test_sfc_step_id_numeric_increment_no_accumulated_x() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_sfc_step_id_numeric_increment_no_accumulated_x()
+    -> Result<(), Box<dyn std::error::Error>> {
         use crate::app::FerriteStudioApp;
         use crate::resolve_or_scaffold_project;
 
-        let now_nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+        let now_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
         let temp_dir = std::env::temp_dir().join(format!("fplc_step_id_{now_nanos}"));
         let mut project = resolve_or_scaffold_project(Some(&temp_dir))?;
 
         let sfc_pou = SfcProgram {
             name: "id_test".to_string(),
             comment: "".to_string(),
-            steps: vec![
-                SfcStep { id: "0".into(), name: "Step_0".into(), kind: StepKind::Initial, actions: vec![], grid_pos: Some((60, 40)) },
-            ],
+            steps: vec![SfcStep {
+                id: "0".into(),
+                name: "Step_0".into(),
+                kind: StepKind::Initial,
+                actions: vec![],
+                grid_pos: Some((60, 40)),
+            }],
             transitions: vec![],
         };
-        project.pous.insert("id_test".to_string(), ferrite_project::PouSource::Sfc(sfc_pou));
+        project.pous.insert(
+            "id_test".to_string(),
+            ferrite_project::PouSource::Sfc(sfc_pou),
+        );
 
         let mut app = FerriteStudioApp::new(project);
 
@@ -3270,7 +3749,11 @@ mod tests {
 
             // Verify none of them has "XX"
             for step in &sfc.steps {
-                assert!(!step.id.contains("XX"), "Step id {} contains multiple Xs!", step.id);
+                assert!(
+                    !step.id.contains("XX"),
+                    "Step id {} contains multiple Xs!",
+                    step.id
+                );
             }
         }
 
@@ -3283,7 +3766,9 @@ mod tests {
         use crate::app::FerriteStudioApp;
         use crate::resolve_or_scaffold_project;
 
-        let now_nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+        let now_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
         let temp_dir = std::env::temp_dir().join(format!("fplc_io_filter_{now_nanos}"));
         let project = resolve_or_scaffold_project(Some(&temp_dir))?;
 
@@ -3296,7 +3781,9 @@ mod tests {
         assert_eq!(app.io_filter_area, None);
 
         // 2. Select an area like Input -> disables SFC filter
-        let _ = app.update(Message::IoFilterAreaSelected(Some(ferrite_core::MemoryArea::Input)));
+        let _ = app.update(Message::IoFilterAreaSelected(Some(
+            ferrite_core::MemoryArea::Input,
+        )));
         assert!(!app.io_filter_sfc);
         assert_eq!(app.io_filter_area, Some(ferrite_core::MemoryArea::Input));
 

@@ -159,8 +159,12 @@ impl TagTable {
         let time_id = self.register_tag(time_entry)?;
 
         // Register short aliases if not already taken by an earlier SFC POU
-        self.tag_index.entry(short_state_sym.clone()).or_insert(state_id);
-        self.tag_index.entry(short_time_sym.clone()).or_insert(time_id);
+        self.tag_index
+            .entry(short_state_sym.clone())
+            .or_insert(state_id);
+        self.tag_index
+            .entry(short_time_sym.clone())
+            .or_insert(time_id);
 
         if !step_id.starts_with('X') && !step_id.starts_with('x') {
             self.tag_index
@@ -303,15 +307,16 @@ impl TagTable {
             });
         }
         if let Some((inst, pin)) = symbol.split_once('.')
-            && let Some(fb) = self.get_fb(inst) {
-                if let Some(ty) = fb.kind.pin_type(pin) {
-                    return Ok(ty);
-                }
-                return Err(CoreError::UnknownFbPin {
-                    instance: inst.to_string(),
-                    pin: pin.to_string(),
-                });
+            && let Some(fb) = self.get_fb(inst)
+        {
+            if let Some(ty) = fb.kind.pin_type(pin) {
+                return Ok(ty);
             }
+            return Err(CoreError::UnknownFbPin {
+                instance: inst.to_string(),
+                pin: pin.to_string(),
+            });
+        }
         Err(CoreError::UnknownSymbol(symbol.to_string()))
     }
 

@@ -820,10 +820,34 @@ mod tests {
     fn test_st_iec_math_functions() -> Result<(), Box<dyn std::error::Error>> {
         let mut img = ProcessImage::default();
         let mut tags = TagTable::default();
-        tags.register_tag(TagEntry::new("Val_In", IecType::Real, None, IecValue::Real(16.0), ""))?;
-        tags.register_tag(TagEntry::new("Val_Out", IecType::Real, None, IecValue::Real(0.0), ""))?;
-        tags.register_tag(TagEntry::new("Val_Clamped", IecType::Real, None, IecValue::Real(0.0), ""))?;
-        tags.register_tag(TagEntry::new("Val_Max", IecType::Real, None, IecValue::Real(0.0), ""))?;
+        tags.register_tag(TagEntry::new(
+            "Val_In",
+            IecType::Real,
+            None,
+            IecValue::Real(16.0),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Val_Out",
+            IecType::Real,
+            None,
+            IecValue::Real(0.0),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Val_Clamped",
+            IecType::Real,
+            None,
+            IecValue::Real(0.0),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Val_Max",
+            IecType::Real,
+            None,
+            IecValue::Real(0.0),
+            "",
+        ))?;
 
         let st_src = r#"
         PROGRAM math_test

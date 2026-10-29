@@ -20,11 +20,12 @@ pub fn delete_fbd_block(program: &mut FbdProgram, idx: usize) {
     for blk in &mut program.blocks {
         for src in blk.inputs.values_mut() {
             if let FbdInputSource::Link { from_block, .. } = src
-                && *from_block == removed_id {
-                    *src = FbdInputSource::Value {
-                        expr: "FALSE".to_string(),
-                    };
-                }
+                && *from_block == removed_id
+            {
+                *src = FbdInputSource::Value {
+                    expr: "FALSE".to_string(),
+                };
+            }
         }
     }
 }
@@ -38,7 +39,10 @@ fn is_input_energized(rt: &PlcRuntime, src: &FbdInputSource) -> bool {
                 expr.trim().eq_ignore_ascii_case("true")
             }
         }
-        FbdInputSource::Link { from_block, from_pin } => {
+        FbdInputSource::Link {
+            from_block,
+            from_pin,
+        } => {
             let sym = format!("{from_block}.{from_pin}");
             matches!(rt.read_value(&sym), Ok(IecValue::Bool(true)))
         }
@@ -65,13 +69,34 @@ fn operator_symbol(kind: &FbdBlockKind) -> (&str, &'static str) {
         FbdBlockKind::Le => ("\u{2264}", "LE"),
         FbdBlockKind::Eq => ("==", "EQ"),
         FbdBlockKind::Ne => ("\u{2260}", "NE"),
-        FbdBlockKind::StandardFb { fb_type: Some(StandardFbKind::Ton), .. } => ("TON", "TIMER ON"),
-        FbdBlockKind::StandardFb { fb_type: Some(StandardFbKind::Tof), .. } => ("TOF", "TIMER OFF"),
-        FbdBlockKind::StandardFb { fb_type: Some(StandardFbKind::Tp), .. } => ("TP", "PULSE"),
-        FbdBlockKind::StandardFb { fb_type: Some(StandardFbKind::Ctu), .. } => ("CTU", "COUNT UP"),
-        FbdBlockKind::StandardFb { fb_type: Some(StandardFbKind::Ctd), .. } => ("CTD", "COUNT DOWN"),
-        FbdBlockKind::StandardFb { fb_type: Some(StandardFbKind::PidMixed), .. } => ("PID", "CORRECTOR"),
-        FbdBlockKind::StandardFb { fb_type: Some(StandardFbKind::Pi), .. } => ("PI", "CORRECTOR"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::Ton),
+            ..
+        } => ("TON", "TIMER ON"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::Tof),
+            ..
+        } => ("TOF", "TIMER OFF"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::Tp),
+            ..
+        } => ("TP", "PULSE"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::Ctu),
+            ..
+        } => ("CTU", "COUNT UP"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::Ctd),
+            ..
+        } => ("CTD", "COUNT DOWN"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::PidMixed),
+            ..
+        } => ("PID", "CORRECTOR"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::Pi),
+            ..
+        } => ("PI", "CORRECTOR"),
         FbdBlockKind::StandardFb { instance, .. } => (instance.as_str(), "FB"),
         FbdBlockKind::Composite { type_name } => (type_name.as_str(), "COMPOSITE"),
     }
@@ -89,16 +114,16 @@ fn render_single_block_card<'a>(
 
     // Block Header
     let blk_header = row![
-        container(
-            text(&blk.id).size(12).color(StudioTheme::ACCENT_CYAN)
-        )
-        .padding([3, 8])
-        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.220, 0.741, 0.973, 0.12))),
-        container(
-            text(op_desc).size(11).color(StudioTheme::TEXT_MUTED)
-        )
-        .padding([3, 7])
-        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.05))),
+        container(text(&blk.id).size(12).color(StudioTheme::ACCENT_CYAN))
+            .padding([3, 8])
+            .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                0.220, 0.741, 0.973, 0.12
+            ))),
+        container(text(op_desc).size(11).color(StudioTheme::TEXT_MUTED))
+            .padding([3, 7])
+            .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                1.0, 1.0, 1.0, 0.05
+            ))),
         iced::widget::Space::with_width(Length::Fill),
         button(text("x").size(10.5))
             .on_press(Message::FbdRemoveBlock(p_blk.clone(), b_idx))
@@ -124,7 +149,10 @@ fn render_single_block_card<'a>(
             let pin_n = pin_name.clone();
             let expr_str = match src {
                 FbdInputSource::Value { expr } => expr.clone(),
-                FbdInputSource::Link { from_block, from_pin } => format!("{from_block}.{from_pin}"),
+                FbdInputSource::Link {
+                    from_block,
+                    from_pin,
+                } => format!("{from_block}.{from_pin}"),
             };
 
             let is_energized = runtime.is_some_and(|rt| is_input_energized(rt, src));
@@ -147,7 +175,10 @@ fn render_single_block_card<'a>(
 
             let in_row = row![
                 in_dot,
-                text(pin_name).size(10.5).color(StudioTheme::TEXT_SECONDARY).width(36),
+                text(pin_name)
+                    .size(10.5)
+                    .color(StudioTheme::TEXT_SECONDARY)
+                    .width(36),
                 text_input("Source", &expr_str)
                     .on_input({
                         let p = p_blk.clone();
@@ -178,7 +209,7 @@ fn render_single_block_card<'a>(
             text(op_desc).size(9.5).color(StudioTheme::TEXT_MUTED),
         ]
         .spacing(2)
-        .align_x(Alignment::Center)
+        .align_x(Alignment::Center),
     )
     .width(Length::Fixed(72.0))
     .height(Length::Fixed(64.0))
@@ -233,7 +264,10 @@ fn render_single_block_card<'a>(
                         background: Some(Background::Color(dot_color)),
                         ..Default::default()
                     }),
-                text(pin_name).size(10.5).color(StudioTheme::TEXT_SECONDARY).width(30),
+                text(pin_name)
+                    .size(10.5)
+                    .color(StudioTheme::TEXT_SECONDARY)
+                    .width(30),
                 text_input("Target", target)
                     .on_input({
                         let p = p_blk.clone();
@@ -268,7 +302,7 @@ fn render_single_block_card<'a>(
                 .style(StudioTheme::canvas_container_style)
                 .width(Length::Fill),
         ]
-        .spacing(8)
+        .spacing(8),
     )
     .padding(10)
     .style(StudioTheme::card_style)
@@ -287,7 +321,10 @@ pub fn render_fbd_editor<'a>(
     let header = row![
         text(format!(
             "{} — {}",
-            lang.tr("Function Block Diagram", "Diagramme Blocs Fonctionnels (FBD)"),
+            lang.tr(
+                "Function Block Diagram",
+                "Diagramme Blocs Fonctionnels (FBD)"
+            ),
             program.name
         ))
         .size(18),
@@ -371,7 +408,9 @@ pub fn render_fbd_editor<'a>(
             row![card0, card1].spacing(12).width(Length::Fill)
         } else {
             let empty_placeholder = iced::widget::Space::with_width(Length::FillPortion(1));
-            row![card0, empty_placeholder].spacing(12).width(Length::Fill)
+            row![card0, empty_placeholder]
+                .spacing(12)
+                .width(Length::Fill)
         };
 
         blocks_column = blocks_column.push(grid_row);
@@ -404,10 +443,15 @@ mod tests {
                 FbdBlock {
                     id: "B".to_string(),
                     kind: FbdBlockKind::Or,
-                    inputs: [("IN1".to_string(), FbdInputSource::Link {
-                        from_block: "A".to_string(),
-                        from_pin: "OUT".to_string(),
-                    })].into_iter().collect(),
+                    inputs: [(
+                        "IN1".to_string(),
+                        FbdInputSource::Link {
+                            from_block: "A".to_string(),
+                            from_pin: "OUT".to_string(),
+                        },
+                    )]
+                    .into_iter()
+                    .collect(),
                     outputs: HashMap::new(),
                 },
             ],
@@ -425,4 +469,3 @@ mod tests {
         assert_eq!(program.blocks.len(), 1);
     }
 }
-

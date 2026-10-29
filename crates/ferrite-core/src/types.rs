@@ -159,11 +159,9 @@ impl IecValue {
                 }
                 Ok(Self::String(s.clone()))
             }
-            (Self::String(s), IecType::Time) => {
-                parse_iec_time_literal(s)
-                    .map(Self::Time)
-                    .ok_or_else(|| CoreError::InvalidLiteral(s.clone()))
-            }
+            (Self::String(s), IecType::Time) => parse_iec_time_literal(s)
+                .map(Self::Time)
+                .ok_or_else(|| CoreError::InvalidLiteral(s.clone())),
             _ => Err(CoreError::TypeMismatch {
                 expected: target,
                 actual: self.iec_type(),
@@ -224,9 +222,10 @@ impl IecValue {
             return Ok(Self::String(trimmed[1..trimmed.len() - 1].to_string()));
         }
         if trimmed.contains('.')
-            && let Ok(r) = trimmed.parse::<f32>() {
-                return Ok(Self::Real(r));
-            }
+            && let Ok(r) = trimmed.parse::<f32>()
+        {
+            return Ok(Self::Real(r));
+        }
         if let Ok(i) = trimmed.parse::<i16>() {
             return Ok(Self::Int(i));
         }
@@ -251,14 +250,16 @@ pub fn parse_iec_time_literal(raw: &str) -> Option<u64> {
     }
     if let Some(s_str) = body.strip_suffix('S')
         && let Ok(secs) = s_str.trim().parse::<f64>()
-            && secs >= 0.0 {
-                return Some((secs * 1000.0).round() as u64);
-            }
+        && secs >= 0.0
+    {
+        return Some((secs * 1000.0).round() as u64);
+    }
     if let Some(m_str) = body.strip_suffix('M')
         && let Ok(mins) = m_str.trim().parse::<f64>()
-            && mins >= 0.0 {
-                return Some((mins * 60_000.0).round() as u64);
-            }
+        && mins >= 0.0
+    {
+        return Some((mins * 60_000.0).round() as u64);
+    }
     if upper.starts_with("T#") || upper.starts_with("TIME#") {
         return body.trim().parse::<u64>().ok();
     }

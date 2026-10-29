@@ -1,8 +1,6 @@
 use std::time::Instant;
 
-use egui::{
-    pos2, Color32, Pos2, RichText, Ui,
-};
+use egui::{Color32, Pos2, RichText, Ui, pos2};
 use ferrite_core::types::IecValue;
 use serde::{Deserialize, Serialize};
 
@@ -271,18 +269,30 @@ impl DigitalTwinWorkspace {
         // Header Control Bar
         ui.horizontal(|ui| {
             TwinTheme::badge(ui, "TWIN", TwinTheme::BG_SURFACE, TwinTheme::ACCENT_CYAN);
-            ui.heading(RichText::new("Plant Mimic & HMI Canvas").strong().color(TwinTheme::TEXT_PRIMARY));
+            ui.heading(
+                RichText::new("Plant Mimic & HMI Canvas")
+                    .strong()
+                    .color(TwinTheme::TEXT_PRIMARY),
+            );
             ui.add_space(16.0);
 
             ui.checkbox(&mut self.snap_to_grid, "Snap (10px)");
             ui.add_space(8.0);
 
-            if ui.button("× Clear").on_hover_text("Remove all equipment from canvas").clicked() {
+            if ui
+                .button("× Clear")
+                .on_hover_text("Remove all equipment from canvas")
+                .clicked()
+            {
                 self.elements.clear();
                 self.selected_id = None;
             }
 
-            if ui.button("↺ Reset Plant").on_hover_text("Load starter plant mimic").clicked() {
+            if ui
+                .button("↺ Reset Plant")
+                .on_hover_text("Load starter plant mimic")
+                .clicked()
+            {
                 *self = Self::with_starter_plant();
             }
 
@@ -332,15 +342,31 @@ impl DigitalTwinWorkspace {
 
             // Group 1: Operator Controls
             TwinTheme::card_frame().show(ui, |ui| {
-                ui.strong(RichText::new("Operator Controls").color(TwinTheme::ACCENT_CYAN).size(11.0));
+                ui.strong(
+                    RichText::new("Operator Controls")
+                        .color(TwinTheme::ACCENT_CYAN)
+                        .size(11.0),
+                );
                 ui.add_space(2.0);
-                if ui.button("[PB] Push Button").on_hover_text("Momentary pushbutton (ReadWrite)").clicked() {
+                if ui
+                    .button("[PB] Push Button")
+                    .on_hover_text("Momentary pushbutton (ReadWrite)")
+                    .clicked()
+                {
                     self.spawn_element(ElementKind::PushButton);
                 }
-                if ui.button("[SW] Toggle Switch").on_hover_text("Maintained selector switch (ReadWrite)").clicked() {
+                if ui
+                    .button("[SW] Toggle Switch")
+                    .on_hover_text("Maintained selector switch (ReadWrite)")
+                    .clicked()
+                {
                     self.spawn_element(ElementKind::Switch);
                 }
-                if ui.button("[LED] Indicator Lamp").on_hover_text("Status beacon / pilot lamp").clicked() {
+                if ui
+                    .button("[LED] Indicator Lamp")
+                    .on_hover_text("Status beacon / pilot lamp")
+                    .clicked()
+                {
                     self.spawn_element(ElementKind::IndicatorLed);
                 }
             });
@@ -349,15 +375,31 @@ impl DigitalTwinWorkspace {
 
             // Group 2: Piping & Vessels
             TwinTheme::card_frame().show(ui, |ui| {
-                ui.strong(RichText::new("Piping & Vessels").color(TwinTheme::ACCENT_CYAN).size(11.0));
+                ui.strong(
+                    RichText::new("Piping & Vessels")
+                        .color(TwinTheme::ACCENT_CYAN)
+                        .size(11.0),
+                );
                 ui.add_space(2.0);
-                if ui.button("[TK] Storage Tank").on_hover_text("Liquid storage / process tank with level gauge").clicked() {
+                if ui
+                    .button("[TK] Storage Tank")
+                    .on_hover_text("Liquid storage / process tank with level gauge")
+                    .clicked()
+                {
                     self.spawn_element(ElementKind::Tank);
                 }
-                if ui.button("[XV] Solenoid Valve").on_hover_text("Discrete open/closed flow valve").clicked() {
+                if ui
+                    .button("[XV] Solenoid Valve")
+                    .on_hover_text("Discrete open/closed flow valve")
+                    .clicked()
+                {
                     self.spawn_element(ElementKind::Valve);
                 }
-                if ui.button("[━] Process Pipe").on_hover_text("Fluid pipe line with flow animation").clicked() {
+                if ui
+                    .button("[━] Process Pipe")
+                    .on_hover_text("Fluid pipe line with flow animation")
+                    .clicked()
+                {
                     self.spawn_element(ElementKind::Pipe);
                 }
             });
@@ -366,15 +408,31 @@ impl DigitalTwinWorkspace {
 
             // Group 3: Actuators & Motors
             TwinTheme::card_frame().show(ui, |ui| {
-                ui.strong(RichText::new("Actuators & Motors").color(TwinTheme::ACCENT_CYAN).size(11.0));
+                ui.strong(
+                    RichText::new("Actuators & Motors")
+                        .color(TwinTheme::ACCENT_CYAN)
+                        .size(11.0),
+                );
                 ui.add_space(2.0);
-                if ui.button("[P] Centrifugal Pump").on_hover_text("Impeller pump with rotation animation").clicked() {
+                if ui
+                    .button("[P] Centrifugal Pump")
+                    .on_hover_text("Impeller pump with rotation animation")
+                    .clicked()
+                {
                     self.spawn_element(ElementKind::Actuator(ActuatorKind::CentrifugalPump));
                 }
-                if ui.button("[M] Agitator Mixer").on_hover_text("Tank mixer with oscillation animation").clicked() {
+                if ui
+                    .button("[M] Agitator Mixer")
+                    .on_hover_text("Tank mixer with oscillation animation")
+                    .clicked()
+                {
                     self.spawn_element(ElementKind::Actuator(ActuatorKind::AgitatorMixer));
                 }
-                if ui.button("[MOT] Electric Motor").on_hover_text("AC induction motor drive").clicked() {
+                if ui
+                    .button("[MOT] Electric Motor")
+                    .on_hover_text("AC induction motor drive")
+                    .clicked()
+                {
                     self.spawn_element(ElementKind::Actuator(ActuatorKind::ElectricMotor));
                 }
             });
@@ -383,7 +441,11 @@ impl DigitalTwinWorkspace {
 
             // Group 4: Basic Shapes
             TwinTheme::card_frame().show(ui, |ui| {
-                ui.strong(RichText::new("Geometric Primitives").color(TwinTheme::TEXT_MUTED).size(11.0));
+                ui.strong(
+                    RichText::new("Geometric Primitives")
+                        .color(TwinTheme::TEXT_MUTED)
+                        .size(11.0),
+                );
                 ui.add_space(2.0);
                 if ui.button("■ Rectangle").clicked() {
                     self.spawn_element(ElementKind::BasicShape(ShapeType::Rectangle));
@@ -475,7 +537,8 @@ impl DigitalTwinWorkspace {
 
                 // Check blinking rule
                 if let Some(ref blink) = binding.blink
-                    && blink.enabled && is_active == blink.trigger_state
+                    && blink.enabled
+                    && is_active == blink.trigger_state
                 {
                     let phase = (elapsed_ms / blink.interval_ms).is_multiple_of(2);
                     is_active = phase;
@@ -498,11 +561,7 @@ impl DigitalTwinWorkspace {
         if response.secondary_clicked()
             && let Some(pos) = mouse_pos
         {
-            let hit_elem = self
-                .elements
-                .iter()
-                .rev()
-                .find(|e| e.rect().contains(pos));
+            let hit_elem = self.elements.iter().rev().find(|e| e.rect().contains(pos));
             if let Some(e) = hit_elem {
                 self.selected_id = Some(e.id);
                 self.context_menu = Some((pos, e.id));
@@ -519,10 +578,18 @@ impl DigitalTwinWorkspace {
                 .show(ui.ctx(), |ui| {
                     TwinTheme::card_frame().show(ui, |ui| {
                         ui.set_min_width(160.0);
-                        if ui.button("× Delete").on_hover_text("Remove element from canvas").clicked() {
+                        if ui
+                            .button("× Delete")
+                            .on_hover_text("Remove element from canvas")
+                            .clicked()
+                        {
                             context_action = Some(("delete".to_string(), elem_id));
                         }
-                        if ui.button("+ Duplicate").on_hover_text("Clone with new ID").clicked() {
+                        if ui
+                            .button("+ Duplicate")
+                            .on_hover_text("Clone with new ID")
+                            .clicked()
+                        {
                             context_action = Some(("duplicate".to_string(), elem_id));
                         }
                         ui.separator();
@@ -581,11 +648,7 @@ impl DigitalTwinWorkspace {
             }
 
             if !handle_grabbed {
-                let hit_elem = self
-                    .elements
-                    .iter()
-                    .rev()
-                    .find(|e| e.rect().contains(pos));
+                let hit_elem = self.elements.iter().rev().find(|e| e.rect().contains(pos));
 
                 if let Some(e) = hit_elem {
                     self.selected_id = Some(e.id);
@@ -613,9 +676,8 @@ impl DigitalTwinWorkspace {
                                 }
                             }
                             ElementKind::Switch => {
-                                let curr = io_snapshot
-                                    .get_bool(&binding.variable_id)
-                                    .unwrap_or(false);
+                                let curr =
+                                    io_snapshot.get_bool(&binding.variable_id).unwrap_or(false);
                                 if let Ok(mut io) = shared_io_handle.write() {
                                     io.request_write(&binding.variable_id, IecValue::Bool(!curr));
                                 }
@@ -870,7 +932,12 @@ impl DigitalTwinWorkspace {
     /// 3. Sidebar Properties Inspector for the selected element
     fn render_inspector(&mut self, ui: &mut Ui, shared_io_handle: &SharedIoHandle) {
         ui.horizontal(|ui| {
-            TwinTheme::badge(ui, "INSPECTOR", TwinTheme::BG_SURFACE, TwinTheme::ACCENT_CYAN);
+            TwinTheme::badge(
+                ui,
+                "INSPECTOR",
+                TwinTheme::BG_SURFACE,
+                TwinTheme::ACCENT_CYAN,
+            );
             ui.strong(RichText::new("Properties").color(TwinTheme::TEXT_PRIMARY));
         });
         ui.add_space(4.0);
@@ -926,7 +993,11 @@ impl DigitalTwinWorkspace {
 
                 // --- Transform Controls ---
                 TwinTheme::card_frame().show(ui, |ui| {
-                    ui.strong(RichText::new("Transform & Geometry").color(TwinTheme::TEXT_PRIMARY).size(11.5));
+                    ui.strong(
+                        RichText::new("Transform & Geometry")
+                            .color(TwinTheme::TEXT_PRIMARY)
+                            .size(11.5),
+                    );
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Label:").color(TwinTheme::TEXT_MUTED));
@@ -981,7 +1052,11 @@ impl DigitalTwinWorkspace {
 
                 // --- I/O Variable Linker ---
                 TwinTheme::card_frame().show(ui, |ui| {
-                    ui.strong(RichText::new("PLC Variable Binding").color(TwinTheme::TEXT_PRIMARY).size(11.5));
+                    ui.strong(
+                        RichText::new("PLC Variable Binding")
+                            .color(TwinTheme::TEXT_PRIMARY)
+                            .size(11.5),
+                    );
                     ui.add_space(2.0);
 
                     let mut is_bound = elem.binding.is_some();
@@ -1095,7 +1170,11 @@ impl DigitalTwinWorkspace {
                         });
 
                         ui.separator();
-                        ui.strong(RichText::new("Blinking & Alarm Rule").color(TwinTheme::TEXT_PRIMARY).size(11.5));
+                        ui.strong(
+                            RichText::new("Blinking & Alarm Rule")
+                                .color(TwinTheme::TEXT_PRIMARY)
+                                .size(11.5),
+                        );
                         let mut blink_enabled = binding.blink.as_ref().is_some_and(|b| b.enabled);
                         if ui.checkbox(&mut blink_enabled, "Enable Blinking").changed() {
                             if blink_enabled {

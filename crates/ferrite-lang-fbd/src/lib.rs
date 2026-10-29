@@ -63,7 +63,10 @@ pub enum FbdInputSource {
     /// Reads a global symbol, direct address (`%IW0`), Grafcet symbol (`X1.state`), or literal (`80.0`, `T#500ms`, `TRUE`).
     Value { expr: String },
     /// Connects to an output pin of another block in the FBD network.
-    Link { from_block: String, from_pin: String },
+    Link {
+        from_block: String,
+        from_pin: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,36 +120,35 @@ impl FbdProgram {
 
         for blk in &self.blocks {
             if let FbdBlockKind::StandardFb { instance, .. } = &blk.kind
-                && tags.get_fb(instance).is_none() {
-                    return Err(FbdError::Ir {
+                && tags.get_fb(instance).is_none()
+            {
+                return Err(FbdError::Ir {
+                    pou: self.name.clone(),
+                    source: IrError::Core {
                         pou: self.name.clone(),
-                        source: IrError::Core {
-                            pou: self.name.clone(),
-                            source: CoreError::UnknownFbInstance(instance.clone()),
-                        },
-                    });
-                }
+                        source: CoreError::UnknownFbInstance(instance.clone()),
+                    },
+                });
+            }
             if let FbdBlockKind::Composite { type_name } = &blk.kind
-                && !self.composites.iter().any(|c| &c.name == type_name) {
-                    return Err(FbdError::UnknownCompositeFb {
-                        pou: self.name.clone(),
-                        name: type_name.clone(),
-                    });
-                }
+                && !self.composites.iter().any(|c| &c.name == type_name)
+            {
+                return Err(FbdError::UnknownCompositeFb {
+                    pou: self.name.clone(),
+                    name: type_name.clone(),
+                });
+            }
 
             for src in blk.inputs.values() {
                 match src {
                     FbdInputSource::Value { expr } => {
                         if IecValue::parse_literal(expr, None).is_err() {
-                            let _ = SymbolResolver::validate_readable_symbol(
-                                tags,
-                                expr,
-                                &self.name,
-                            )
-                            .map_err(|source| FbdError::Ir {
-                                pou: self.name.clone(),
-                                source,
-                            })?;
+                            let _ =
+                                SymbolResolver::validate_readable_symbol(tags, expr, &self.name)
+                                    .map_err(|source| FbdError::Ir {
+                                        pou: self.name.clone(),
+                                        source,
+                                    })?;
                         }
                     }
                     FbdInputSource::Link { from_block, .. } => {
@@ -162,16 +164,12 @@ impl FbdProgram {
             }
 
             for target_sym in blk.outputs.values() {
-                let _ = SymbolResolver::validate_writable_symbol(
-                    tags,
-                    target_sym,
-                    &self.name,
-                    false,
-                )
-                .map_err(|source| FbdError::Ir {
-                    pou: self.name.clone(),
-                    source,
-                })?;
+                let _ =
+                    SymbolResolver::validate_writable_symbol(tags, target_sym, &self.name, false)
+                        .map_err(|source| FbdError::Ir {
+                        pou: self.name.clone(),
+                        source,
+                    })?;
             }
         }
 
@@ -239,9 +237,7 @@ impl FbdProgram {
             compiled_outputs.sort_by(|a, b| a.1.cmp(&b.1));
 
             let composite_local_fbs = if let FbdBlockKind::Composite { type_name } = &blk.kind {
-                
-                self
-                    .composites
+                self.composites
                     .iter()
                     .find(|c| &c.name == type_name)
                     .cloned()
@@ -271,8 +267,8 @@ impl FbdProgram {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PinSlot {
-    PrimaryOut, // OUT (Real for Correctors, Bool for logic/timers)
-    BoolOut,    // Q, Q1
+    PrimaryOut,  // OUT (Real for Correctors, Bool for logic/timers)
+    BoolOut,     // Q, Q1
     ElapsedTime, // ET
     CountValue,  // CV
     ErrorOut,    // ERR
@@ -338,9 +334,7 @@ impl CompiledFbdPou {
         match src {
             CompiledInputSource::Literal(v) => Ok(v.clone()),
             CompiledInputSource::Symbol(sym) => ctx.read_symbol(sym),
-            CompiledInputSource::Wire { block_idx, pin } => {
-                Ok(blocks[*block_idx].read_slot(*pin))
-            }
+            CompiledInputSource::Wire { block_idx, pin } => Ok(blocks[*block_idx].read_slot(*pin)),
         }
     }
 }

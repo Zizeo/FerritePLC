@@ -34,10 +34,7 @@ pub const ALL_FB_KINDS: [FbKindWrapper; 14] = [
     FbKindWrapper(StandardFbKind::PidMixed),
 ];
 
-pub fn render_symbols_editor<'a>(
-    project: &'a Project,
-    lang: UiLanguage,
-) -> Element<'a, Message> {
+pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Element<'a, Message> {
     // 1. Toolbar Header
     let header = row![
         text(lang.tr(
@@ -65,42 +62,35 @@ pub fn render_symbols_editor<'a>(
     // 2. PLC Scan Configuration Card
     let scan_config_card = container(
         row![
-            text(lang.tr("PLC Scan Configuration:", "Configuration du Cycle API :"))
-                .size(13),
+            text(lang.tr("PLC Scan Configuration:", "Configuration du Cycle API :")).size(13),
             text(lang.tr("Scan Cycle (ms):", "Cycle (ms) :"))
                 .size(12)
                 .color(StudioTheme::TEXT_SECONDARY),
-            text_input(
-                "50",
-                &project.manifest.scan_cycle_ms.to_string(),
-            )
-            .on_input(|s| {
-                if let Ok(ms) = s.parse::<u64>() {
-                    Message::ScanCycleMsChanged(ms)
-                } else {
-                    Message::None
-                }
-            })
-            .width(70)
-            .padding([4, 8])
-            .style(StudioTheme::styled_input),
+            text_input("50", &project.manifest.scan_cycle_ms.to_string(),)
+                .on_input(|s| {
+                    if let Ok(ms) = s.parse::<u64>() {
+                        Message::ScanCycleMsChanged(ms)
+                    } else {
+                        Message::None
+                    }
+                })
+                .width(70)
+                .padding([4, 8])
+                .style(StudioTheme::styled_input),
             text(lang.tr("Watchdog (µs):", "Chien de garde (µs) :"))
                 .size(12)
                 .color(StudioTheme::TEXT_SECONDARY),
-            text_input(
-                "100000",
-                &project.manifest.watchdog_us.to_string(),
-            )
-            .on_input(|s| {
-                if let Ok(us) = s.parse::<u64>() {
-                    Message::WatchdogUsChanged(us)
-                } else {
-                    Message::None
-                }
-            })
-            .width(90)
-            .padding([4, 8])
-            .style(StudioTheme::styled_input),
+            text_input("100000", &project.manifest.watchdog_us.to_string(),)
+                .on_input(|s| {
+                    if let Ok(us) = s.parse::<u64>() {
+                        Message::WatchdogUsChanged(us)
+                    } else {
+                        Message::None
+                    }
+                })
+                .width(90)
+                .padding([4, 8])
+                .style(StudioTheme::styled_input),
         ]
         .spacing(12)
         .align_y(Alignment::Center),
@@ -112,12 +102,30 @@ pub fn render_symbols_editor<'a>(
     // 3. Global Symbolic Tags Table
     let mut tags_table = column![
         row![
-            text(lang.tr("Name", "Nom")).size(11).color(StudioTheme::TEXT_MUTED).width(160),
-            text(lang.tr("IEC Type", "Type CEI")).size(11).color(StudioTheme::TEXT_MUTED).width(100),
-            text(lang.tr("Direct Address (%I/%Q/%M)", "Adresse Directe (%I/%Q/%M)")).size(11).color(StudioTheme::TEXT_MUTED).width(130),
-            text(lang.tr("Initial Value", "Valeur Initiale")).size(11).color(StudioTheme::TEXT_MUTED).width(110),
-            text(lang.tr("Comment", "Commentaire")).size(11).color(StudioTheme::TEXT_MUTED).width(Length::Fill),
-            text("Action").size(11).color(StudioTheme::TEXT_MUTED).width(60),
+            text(lang.tr("Name", "Nom"))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(160),
+            text(lang.tr("IEC Type", "Type CEI"))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(100),
+            text(lang.tr("Direct Address (%I/%Q/%M)", "Adresse Directe (%I/%Q/%M)"))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(130),
+            text(lang.tr("Initial Value", "Valeur Initiale"))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(110),
+            text(lang.tr("Comment", "Commentaire"))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(Length::Fill),
+            text("Action")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(60),
         ]
         .spacing(10)
     ]
@@ -194,10 +202,25 @@ pub fn render_symbols_editor<'a>(
     // 4. Shared Function Block Instances Table
     let mut fb_table = column![
         row![
-            text(lang.tr("Instance Name", "Nom d'Instance")).size(11).color(StudioTheme::TEXT_MUTED).width(160),
-            text(lang.tr("FB Type", "Type FB")).size(11).color(StudioTheme::TEXT_MUTED).width(120),
-            text(lang.tr("Parameters (Kp / Ti / Td / PT)", "Paramètres (Kp / Ti / Td / PT)")).size(11).color(StudioTheme::TEXT_MUTED).width(Length::Fill),
-            text("Action").size(11).color(StudioTheme::TEXT_MUTED).width(60),
+            text(lang.tr("Instance Name", "Nom d'Instance"))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(160),
+            text(lang.tr("FB Type", "Type FB"))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(120),
+            text(lang.tr(
+                "Parameters (Kp / Ti / Td / PT)",
+                "Paramètres (Kp / Ti / Td / PT)"
+            ))
+            .size(11)
+            .color(StudioTheme::TEXT_MUTED)
+            .width(Length::Fill),
+            text("Action")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(60),
         ]
         .spacing(10)
     ]
@@ -213,7 +236,11 @@ pub fn render_symbols_editor<'a>(
                 text("Kp:").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("1.0", &kp_str)
                     .on_input(move |s| {
-                        if let Ok(v) = s.parse::<f32>() { Message::FbGainChanged(idx, v) } else { Message::None }
+                        if let Ok(v) = s.parse::<f32>() {
+                            Message::FbGainChanged(idx, v)
+                        } else {
+                            Message::None
+                        }
                     })
                     .width(65)
                     .padding([3, 6])
@@ -221,7 +248,11 @@ pub fn render_symbols_editor<'a>(
                 text("Ti(s):").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("2.0", &ti_str)
                     .on_input(move |s| {
-                        if let Ok(v) = s.parse::<f32>() { Message::FbTiChanged(idx, v) } else { Message::None }
+                        if let Ok(v) = s.parse::<f32>() {
+                            Message::FbTiChanged(idx, v)
+                        } else {
+                            Message::None
+                        }
                     })
                     .width(65)
                     .padding([3, 6])
@@ -229,12 +260,18 @@ pub fn render_symbols_editor<'a>(
                 text("Td(s):").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("0.5", &td_str)
                     .on_input(move |s| {
-                        if let Ok(v) = s.parse::<f32>() { Message::FbTdChanged(idx, v) } else { Message::None }
+                        if let Ok(v) = s.parse::<f32>() {
+                            Message::FbTdChanged(idx, v)
+                        } else {
+                            Message::None
+                        }
                     })
                     .width(65)
                     .padding([3, 6])
                     .style(StudioTheme::styled_input),
-                text(fb.kind.formula_hint()).size(11).color(StudioTheme::TEXT_MUTED),
+                text(fb.kind.formula_hint())
+                    .size(11)
+                    .color(StudioTheme::TEXT_MUTED),
             ]
             .spacing(8)
             .align_y(Alignment::Center)
@@ -247,7 +284,11 @@ pub fn render_symbols_editor<'a>(
                 text("PT(ms):").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("5000", &pt_str)
                     .on_input(move |s| {
-                        if let Ok(v) = s.parse::<u64>() { Message::FbPtChanged(idx, v) } else { Message::None }
+                        if let Ok(v) = s.parse::<u64>() {
+                            Message::FbPtChanged(idx, v)
+                        } else {
+                            Message::None
+                        }
                     })
                     .width(80)
                     .padding([3, 6])
@@ -255,7 +296,11 @@ pub fn render_symbols_editor<'a>(
                 text("PV:").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("10", &pv_str)
                     .on_input(move |s| {
-                        if let Ok(v) = s.parse::<i16>() { Message::FbPvChanged(idx, v) } else { Message::None }
+                        if let Ok(v) = s.parse::<i16>() {
+                            Message::FbPvChanged(idx, v)
+                        } else {
+                            Message::None
+                        }
                     })
                     .width(60)
                     .padding([3, 6])
@@ -272,11 +317,9 @@ pub fn render_symbols_editor<'a>(
                 .width(160)
                 .padding([4, 8])
                 .style(StudioTheme::styled_input),
-            pick_list(
-                &ALL_FB_KINDS[..],
-                Some(FbKindWrapper(fb.kind)),
-                move |k| Message::FbKindChanged(idx, k.0),
-            )
+            pick_list(&ALL_FB_KINDS[..], Some(FbKindWrapper(fb.kind)), move |k| {
+                Message::FbKindChanged(idx, k.0)
+            },)
             .width(120)
             .style(StudioTheme::styled_pick_list),
             param_view,
@@ -296,7 +339,10 @@ pub fn render_symbols_editor<'a>(
             row![
                 text(format!(
                     "{} ({}) — symbols/fb_instances.toml",
-                    lang.tr("Shared Function Block Instances", "Instances de Blocs Fonctionnels Partagés"),
+                    lang.tr(
+                        "Shared Function Block Instances",
+                        "Instances de Blocs Fonctionnels Partagés"
+                    ),
                     project.fb_instances.instances.len()
                 ))
                 .size(14),

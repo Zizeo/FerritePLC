@@ -687,7 +687,8 @@ impl Project {
         // Triggered automatically when `batch_seq.X6.state` becomes active!
         let cip_sfc_pou = SfcProgram {
             name: "cip_clean".to_string(),
-            comment: "Subordinate Clean-In-Place (CIP) Grafcet controlled by batch_seq.X6.state".to_string(),
+            comment: "Subordinate Clean-In-Place (CIP) Grafcet controlled by batch_seq.X6.state"
+                .to_string(),
             steps: vec![
                 SfcStep {
                     id: "0".to_string(),
@@ -856,7 +857,8 @@ END_PROGRAM
 
         let fbd_pou = FbdProgram {
             name: "pump_ctrl".to_string(),
-            comment: "Pump activation, CIP header OR gate, and temperature/level comparators".to_string(),
+            comment: "Pump activation, CIP header OR gate, and temperature/level comparators"
+                .to_string(),
             composites: vec![],
             blocks: vec![
                 FbdBlock {
@@ -1139,11 +1141,10 @@ END_PROGRAM
 
         let scenarios_path = root_dir.join("sim").join("scenarios.toml");
         let scenarios: ScenariosFile = if scenarios_path.exists() {
-            let raw =
-                fs::read_to_string(&scenarios_path).map_err(|source| ProjectError::Io {
-                    path: scenarios_path.clone(),
-                    source,
-                })?;
+            let raw = fs::read_to_string(&scenarios_path).map_err(|source| ProjectError::Io {
+                path: scenarios_path.clone(),
+                source,
+            })?;
             toml::from_str(&raw).map_err(|e| ProjectError::TomlDe {
                 path: scenarios_path,
                 message: e.to_string(),
@@ -1257,7 +1258,8 @@ END_PROGRAM
                 transitions: vec![],
             }),
             LanguageKind::St => {
-                let src = format!("PROGRAM {name}\n    (* Structured Text routine *)\nEND_PROGRAM\n");
+                let src =
+                    format!("PROGRAM {name}\n    (* Structured Text routine *)\nEND_PROGRAM\n");
                 PouSource::St(StProgram::parse(name, src)?)
             }
             LanguageKind::Fbd => PouSource::Fbd(FbdProgram {
@@ -1274,9 +1276,10 @@ END_PROGRAM
             path: rel_path.clone(),
         });
         if let Some(first_task) = self.manifest.tasks.first_mut()
-            && !first_task.pou_order.contains(&name.to_string()) {
-                first_task.pou_order.push(name.to_string());
-            }
+            && !first_task.pou_order.contains(&name.to_string())
+        {
+            first_task.pou_order.push(name.to_string());
+        }
         self.pous.insert(name.to_string(), pou_src);
         let root = self.root_dir.clone();
         self.save(&root)?;
@@ -1459,7 +1462,8 @@ mod tests {
     }
 
     #[test]
-    fn test_plcopen_tc6_xml_export_and_import_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_plcopen_tc6_xml_export_and_import_roundtrip() -> Result<(), Box<dyn std::error::Error>>
+    {
         let temp_dir = env::temp_dir().join("ferrite_plc_test_plcopen_orig");
         let import_dir = env::temp_dir().join("ferrite_plc_test_plcopen_imported");
         if temp_dir.exists() {
@@ -1479,7 +1483,13 @@ mod tests {
 
         let imported = Project::import_plcopen_xml(&xml, &import_dir)?;
         assert_eq!(imported.manifest.name, "plcopen_plant");
-        assert!(imported.global_tags.tags.iter().any(|t| t.name == "Tank_Level"));
+        assert!(
+            imported
+                .global_tags
+                .tags
+                .iter()
+                .any(|t| t.name == "Tank_Level")
+        );
         assert!(imported.pous.contains_key("math_pid"));
 
         let _ = fs::remove_dir_all(&temp_dir);

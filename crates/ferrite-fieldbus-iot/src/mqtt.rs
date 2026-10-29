@@ -30,7 +30,11 @@ pub struct MqttTopic {
 }
 
 impl MqttTopic {
-    pub fn new(group: impl Into<String>, node: impl Into<String>, device: impl Into<String>) -> Self {
+    pub fn new(
+        group: impl Into<String>,
+        node: impl Into<String>,
+        device: impl Into<String>,
+    ) -> Self {
         Self {
             group_id: group.into(),
             edge_node_id: node.into(),
@@ -71,7 +75,11 @@ impl MqttTelemetryEngine {
     }
 
     /// Generates a full snapshot payload containing all variables in `TagTable`.
-    pub fn build_full_birth_payload(&mut self, tags: &TagTable, timestamp_ms: u64) -> IotTelemetryPayload {
+    pub fn build_full_birth_payload(
+        &mut self,
+        tags: &TagTable,
+        timestamp_ms: u64,
+    ) -> IotTelemetryPayload {
         self.seq = self.seq.saturating_add(1);
         let mut metrics = Vec::new();
 
@@ -95,7 +103,11 @@ impl MqttTelemetryEngine {
     }
 
     /// Generates a delta payload containing only changed tags (Report by Exception / COV).
-    pub fn build_cov_payload(&mut self, tags: &TagTable, timestamp_ms: u64) -> Option<IotTelemetryPayload> {
+    pub fn build_cov_payload(
+        &mut self,
+        tags: &TagTable,
+        timestamp_ms: u64,
+    ) -> Option<IotTelemetryPayload> {
         let mut metrics = Vec::new();
 
         for (idx, tag) in tags.tags().iter().enumerate() {

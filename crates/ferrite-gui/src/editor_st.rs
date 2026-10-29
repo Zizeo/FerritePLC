@@ -23,19 +23,21 @@ pub fn render_st_editor<'a>(
                 UiLanguage::En => format!("Syntax OK ({} statement(s))", stmts.len()),
                 UiLanguage::Fr => format!("Syntaxe OK ({} instruction(s))", stmts.len()),
             };
-            container(
-                text(msg).size(12).color(StudioTheme::ACCENT_EMERALD),
-            )
-            .padding([4, 10])
-            .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15)))
+            container(text(msg).size(12).color(StudioTheme::ACCENT_EMERALD))
+                .padding([4, 10])
+                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                    0.063, 0.725, 0.506, 0.15,
+                )))
         }
-        Err(err) => {
-            container(
-                text(err.to_string()).size(12).color(StudioTheme::ACCENT_ROSE),
-            )
-            .padding([4, 10])
-            .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.957, 0.247, 0.369, 0.15)))
-        }
+        Err(err) => container(
+            text(err.to_string())
+                .size(12)
+                .color(StudioTheme::ACCENT_ROSE),
+        )
+        .padding([4, 10])
+        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+            0.957, 0.247, 0.369, 0.15,
+        ))),
     };
 
     let pou_name = name.to_string();
@@ -88,8 +90,14 @@ pub fn render_st_editor<'a>(
 
                 let tag_row = row![
                     text(&tag.name).size(12).width(160),
-                    text(tag.data_type.to_string()).size(12).color(StudioTheme::TEXT_MUTED).width(90),
-                    text(val_str).size(12).color(StudioTheme::ACCENT_CYAN).width(120),
+                    text(tag.data_type.to_string())
+                        .size(12)
+                        .color(StudioTheme::TEXT_MUTED)
+                        .width(90),
+                    text(val_str)
+                        .size(12)
+                        .color(StudioTheme::ACCENT_CYAN)
+                        .width(120),
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center);
@@ -115,12 +123,8 @@ pub fn render_st_editor<'a>(
         .width(Length::Fill)
         .height(Length::FillPortion(1));
 
-    column![
-        header,
-        editor_container,
-        live_card,
-    ]
-    .spacing(12)
-    .padding(16)
-    .into()
+    column![header, editor_container, live_card,]
+        .spacing(12)
+        .padding(16)
+        .into()
 }

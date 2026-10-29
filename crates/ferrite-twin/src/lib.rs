@@ -14,7 +14,7 @@ pub use workspace::DigitalTwinWorkspace;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui::{pos2, Color32};
+    use egui::{Color32, pos2};
     use ferrite_core::types::{IecType, IecValue};
     use std::sync::{Arc, RwLock};
 
@@ -25,8 +25,10 @@ mod tests {
         // Populate state
         {
             let mut io = shared.write().map_err(|e| e.to_string())?;
-            io.values.insert("Pump_Running".to_string(), IecValue::Bool(true));
-            io.values.insert("Tank_Level".to_string(), IecValue::Real(78.5));
+            io.values
+                .insert("Pump_Running".to_string(), IecValue::Bool(true));
+            io.values
+                .insert("Tank_Level".to_string(), IecValue::Real(78.5));
             io.types.insert("Pump_Running".to_string(), IecType::Bool);
             io.types.insert("Tank_Level".to_string(), IecType::Real);
         }
@@ -88,10 +90,7 @@ mod tests {
         assert_eq!(elem.hit_test_handle(pos2(200.0, 175.0), 8.0), None);
 
         // Verify cursor mappings
-        assert_eq!(
-            ResizeHandle::TopLeft.cursor(),
-            egui::CursorIcon::ResizeNwSe
-        );
+        assert_eq!(ResizeHandle::TopLeft.cursor(), egui::CursorIcon::ResizeNwSe);
         assert_eq!(
             ResizeHandle::BottomRight.cursor(),
             egui::CursorIcon::ResizeNwSe

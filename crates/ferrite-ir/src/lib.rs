@@ -88,7 +88,11 @@ pub enum IrExpr {
 
 impl IrExpr {
     /// Pure, read-only evaluation of an expression using an arbitrary symbol resolver closure.
-    pub fn evaluate_with_resolver<F>(&self, resolver: &F, pou_name: &str) -> Result<IecValue, RuntimeError>
+    pub fn evaluate_with_resolver<F>(
+        &self,
+        resolver: &F,
+        pou_name: &str,
+    ) -> Result<IecValue, RuntimeError>
     where
         F: Fn(&str) -> Result<IecValue, RuntimeError>,
     {
@@ -125,7 +129,10 @@ impl IrExpr {
                 let rv = right.evaluate_with_resolver(resolver, pou_name)?;
                 eval_binary_op(*op, &lv, &rv, pou_name)
             }
-            Self::Call { function_name, args } => {
+            Self::Call {
+                function_name,
+                args,
+            } => {
                 let mut evaluated_args = Vec::with_capacity(args.len());
                 for a in args {
                     evaluated_args.push(a.evaluate_with_resolver(resolver, pou_name)?);
@@ -135,7 +142,11 @@ impl IrExpr {
         }
     }
 
-    pub fn evaluate(&self, ctx: &ScanContext<'_>, pou_name: &str) -> Result<IecValue, RuntimeError> {
+    pub fn evaluate(
+        &self,
+        ctx: &ScanContext<'_>,
+        pou_name: &str,
+    ) -> Result<IecValue, RuntimeError> {
         self.evaluate_with_resolver(&|sym| ctx.read_symbol(sym), pou_name)
     }
 
@@ -146,7 +157,10 @@ impl IrExpr {
                 pou: pou_name.to_string(),
                 source,
             }),
-            Self::Call { function_name, args } => {
+            Self::Call {
+                function_name,
+                args,
+            } => {
                 let upper = function_name.to_ascii_uppercase();
                 match upper.as_str() {
                     "ABS" | "MIN" | "MAX" => {
@@ -740,7 +754,8 @@ impl IrStmt {
     pub fn validate(&self, tags: &TagTable, pou_name: &str, in_sfc: bool) -> Result<(), IrError> {
         match self {
             Self::Assign { target, expr } => {
-                let target_ty = SymbolResolver::validate_writable_symbol(tags, target, pou_name, in_sfc)?;
+                let target_ty =
+                    SymbolResolver::validate_writable_symbol(tags, target, pou_name, in_sfc)?;
                 let expr_ty = expr.infer_type(tags, pou_name)?;
                 if !types_compatible(target_ty, expr_ty) {
                     return Err(IrError::TypeMismatch {
@@ -876,8 +891,9 @@ impl IrStmt {
                             pin: pin.clone(),
                         },
                     })?;
-                    let tty =
-                        SymbolResolver::validate_writable_symbol(tags, target_sym, pou_name, in_sfc)?;
+                    let tty = SymbolResolver::validate_writable_symbol(
+                        tags, target_sym, pou_name, in_sfc,
+                    )?;
                     if !types_compatible(tty, pty) {
                         return Err(IrError::TypeMismatch {
                             pou: pou_name.to_string(),
@@ -917,10 +933,11 @@ impl SymbolResolver {
         symbol: &str,
         pou_name: &str,
     ) -> Result<IecType, IrError> {
-        tags.symbol_type(symbol.trim()).map_err(|source| IrError::Core {
-            pou: pou_name.to_string(),
-            source,
-        })
+        tags.symbol_type(symbol.trim())
+            .map_err(|source| IrError::Core {
+                pou: pou_name.to_string(),
+                source,
+            })
     }
 
     pub fn validate_writable_symbol(
@@ -951,18 +968,19 @@ impl SymbolResolver {
             });
         }
         if let Some((inst, pin)) = trimmed.split_once('.')
-            && let Some(fb) = tags.get_fb(inst) {
-                if let Some(ty) = fb.kind.pin_type(pin) {
-                    return Ok(ty);
-                }
-                return Err(IrError::Core {
-                    pou: pou_name.to_string(),
-                    source: CoreError::UnknownFbPin {
-                        instance: inst.to_string(),
-                        pin: pin.to_string(),
-                    },
-                });
+            && let Some(fb) = tags.get_fb(inst)
+        {
+            if let Some(ty) = fb.kind.pin_type(pin) {
+                return Ok(ty);
             }
+            return Err(IrError::Core {
+                pou: pou_name.to_string(),
+                source: CoreError::UnknownFbPin {
+                    instance: inst.to_string(),
+                    pin: pin.to_string(),
+                },
+            });
+        }
         Err(IrError::Core {
             pou: pou_name.to_string(),
             source: CoreError::UnknownSymbol(trimmed.to_string()),

@@ -84,9 +84,10 @@ impl ActiveAlarm {
             AlarmCondition::Low { limit } => {
                 current_val.as_real().map(|v| v <= *limit).unwrap_or(false)
             }
-            AlarmCondition::Digital { trigger_value } => {
-                current_val.as_bool().map(|v| v == *trigger_value).unwrap_or(false)
-            }
+            AlarmCondition::Digital { trigger_value } => current_val
+                .as_bool()
+                .map(|v| v == *trigger_value)
+                .unwrap_or(false),
         };
 
         let old_state = self.state;

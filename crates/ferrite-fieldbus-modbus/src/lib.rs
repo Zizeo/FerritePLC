@@ -839,7 +839,8 @@ impl ModbusTcpClient {
         let resp_fc = resp_pdu[0];
         if (resp_fc & 0x80) != 0 {
             let exc_code = resp_pdu.get(1).copied().unwrap_or(4);
-            let exc = ModbusException::from_u8(exc_code).unwrap_or(ModbusException::ServerDeviceFailure);
+            let exc =
+                ModbusException::from_u8(exc_code).unwrap_or(ModbusException::ServerDeviceFailure);
             return Err(ModbusError::Exception(exc));
         }
 

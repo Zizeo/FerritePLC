@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use egui::{pos2, vec2, Color32, Pos2, Rect};
+use egui::{Color32, Pos2, Rect, pos2, vec2};
 use ferrite_core::types::{IecType, IecValue};
 use serde::{Deserialize, Serialize};
 
@@ -215,7 +215,8 @@ impl CanvasElement {
             (ResizeHandle::BottomRight, r.right_bottom()),
         ];
         pts.map(|(handle, pt)| {
-            let handle_rect = Rect::from_center_size(pt, vec2(handle_radius * 2.0, handle_radius * 2.0));
+            let handle_rect =
+                Rect::from_center_size(pt, vec2(handle_radius * 2.0, handle_radius * 2.0));
             (handle, pt, handle_rect)
         })
     }

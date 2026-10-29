@@ -87,7 +87,8 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn test_studio_app_initialization_scenarios_and_i18n() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_studio_app_initialization_scenarios_and_i18n() -> Result<(), Box<dyn std::error::Error>>
+    {
         let temp_dir = env::temp_dir().join("ferrite_gui_studio_test");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
@@ -240,14 +241,20 @@ mod tests {
         // 1. Thread-safe SharedIoState operations
         let shared_io: SharedIoHandle = Arc::new(RwLock::new(SharedIoState::default()));
         {
-            let mut io = shared_io.write().map_err(|e| format!("lock poisoned: {e}"))?;
-            io.values.insert("Pump_Running".to_string(), IecValue::Bool(true));
+            let mut io = shared_io
+                .write()
+                .map_err(|e| format!("lock poisoned: {e}"))?;
+            io.values
+                .insert("Pump_Running".to_string(), IecValue::Bool(true));
             io.types.insert("Pump_Running".to_string(), IecType::Bool);
-            io.pending_writes.push(("Manual_Start".to_string(), IecValue::Bool(true)));
+            io.pending_writes
+                .push(("Manual_Start".to_string(), IecValue::Bool(true)));
         }
 
         {
-            let mut io = shared_io.write().map_err(|e| format!("lock poisoned: {e}"))?;
+            let mut io = shared_io
+                .write()
+                .map_err(|e| format!("lock poisoned: {e}"))?;
             assert_eq!(io.values.get("Pump_Running"), Some(&IecValue::Bool(true)));
             let pending = io.take_pending_writes();
             assert_eq!(pending.len(), 1);
@@ -358,8 +365,12 @@ mod tests {
 
         // Queue write from twin to runtime
         {
-            let mut io = app.shared_io.write().map_err(|e| format!("lock poisoned: {e}"))?;
-            io.pending_writes.push(("%IX0.0".to_string(), IecValue::Bool(true)));
+            let mut io = app
+                .shared_io
+                .write()
+                .map_err(|e| format!("lock poisoned: {e}"))?;
+            io.pending_writes
+                .push(("%IX0.0".to_string(), IecValue::Bool(true)));
         }
 
         // Sync shared I/O
@@ -370,7 +381,11 @@ mod tests {
         if let Some(rt) = &app.runtime {
             let addr: ferrite_core::address::DirectAddress = "%IX0.0".parse()?;
             let val = rt.process_image.read(addr, IecType::Bool)?;
-            assert_eq!(val, IecValue::Bool(true), "%IX0.0 must be true after syncing pending writes");
+            assert_eq!(
+                val,
+                IecValue::Bool(true),
+                "%IX0.0 must be true after syncing pending writes"
+            );
         }
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -417,14 +432,18 @@ mod tests {
 
         // Verify theme tokens
         let card = theme::StudioTheme::card_style(&iced::Theme::Dark);
-        assert_eq!(card.background, Some(iced::Background::Color(theme::StudioTheme::BG_ELEVATED)));
+        assert_eq!(
+            card.background,
+            Some(iced::Background::Color(theme::StudioTheme::BG_ELEVATED))
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
 
     #[test]
-    fn test_sfc_step_rows_and_digital_twin_example_sync() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_sfc_step_rows_and_digital_twin_example_sync() -> Result<(), Box<dyn std::error::Error>>
+    {
         let temp_dir = env::temp_dir().join("ferrite_gui_sfc_twin_sync_test");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
@@ -444,7 +463,13 @@ mod tests {
             let s2_name = &batch_sfc.steps[rows[1][1]].name;
             assert!(s1_name.contains("Fill") || s1_name.contains("Dose"));
             assert!(s2_name.contains("Fill") || s2_name.contains("Dose"));
-            let _element = canvas_sfc::render_sfc_editor(batch_sfc, app.runtime.as_ref(), app.ui_lang, None, &[]);
+            let _element = canvas_sfc::render_sfc_editor(
+                batch_sfc,
+                app.runtime.as_ref(),
+                app.ui_lang,
+                None,
+                &[],
+            );
         }
 
         // 2. Test interactive ToggleForceTag for purely symbolic booleans
@@ -461,11 +486,12 @@ mod tests {
         }
 
         // 3. Test SFC Manual Divergence builder via Message (manual spawning without automatic dummy steps)
-        let original_step_count = if let Some(PouSource::Sfc(sfc)) = app.project.pous.get("batch_seq") {
-            sfc.steps.len()
-        } else {
-            0
-        };
+        let original_step_count =
+            if let Some(PouSource::Sfc(sfc)) = app.project.pous.get("batch_seq") {
+                sfc.steps.len()
+            } else {
+                0
+            };
         let _ = app.update(Message::SfcAddAndDivergence("batch_seq".to_string()));
         if let Some(PouSource::Sfc(sfc)) = app.project.pous.get("batch_seq") {
             assert_eq!(sfc.steps.len(), original_step_count);
@@ -478,7 +504,8 @@ mod tests {
     }
 
     #[test]
-    fn test_multi_window_detachment_and_schematic_canvas_rendering() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_multi_window_detachment_and_schematic_canvas_rendering()
+    -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = env::temp_dir().join("ferrite_gui_multi_window_test");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
@@ -522,11 +549,25 @@ mod tests {
 
         // 4. Verify Ladder Quick Additions with ContactKind & CoilKind
         use ferrite_lang_ld::{CoilKind, ContactKind};
-        let _ = app.update(Message::LdAddContactWithKind("main_safety".to_string(), 0, ContactKind::NormallyClosed));
-        let _ = app.update(Message::LdAddCoilWithKind("main_safety".to_string(), 0, CoilKind::Set));
+        let _ = app.update(Message::LdAddContactWithKind(
+            "main_safety".to_string(),
+            0,
+            ContactKind::NormallyClosed,
+        ));
+        let _ = app.update(Message::LdAddCoilWithKind(
+            "main_safety".to_string(),
+            0,
+            CoilKind::Set,
+        ));
         if let Some(PouSource::Ld(ld)) = app.project.pous.get("main_safety") {
             let last_contact = ld.rungs[0].elements.last().ok_or("no contact")?;
-            assert!(matches!(last_contact, ferrite_lang_ld::LdElement::Contact { kind: ContactKind::NormallyClosed, .. }));
+            assert!(matches!(
+                last_contact,
+                ferrite_lang_ld::LdElement::Contact {
+                    kind: ContactKind::NormallyClosed,
+                    ..
+                }
+            ));
             let last_coil = ld.rungs[0].coils.last().ok_or("no coil")?;
             assert_eq!(last_coil.kind, CoilKind::Set);
         }
@@ -536,10 +577,11 @@ mod tests {
     }
 
     #[test]
-    fn test_sfc_multi_tree_editing_and_deferred_compile_errors() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_sfc_multi_tree_editing_and_deferred_compile_errors()
+    -> Result<(), Box<dyn std::error::Error>> {
         use ferrite_lang_sfc::{
-            validate_sfc_topology, ConvergenceKind, DivergenceKind, SfcProgram, SfcStep,
-            SfcTransition, StepKind,
+            ConvergenceKind, DivergenceKind, SfcProgram, SfcStep, SfcTransition, StepKind,
+            validate_sfc_topology,
         };
 
         let temp_dir = env::temp_dir().join("ferrite_gui_sfc_multi_tree_test");
@@ -588,7 +630,8 @@ mod tests {
             ],
         };
         sfc.assign_default_grid_positions();
-        proj.pous.insert("parallel_sfc".to_string(), PouSource::Sfc(sfc));
+        proj.pous
+            .insert("parallel_sfc".to_string(), PouSource::Sfc(sfc));
         let mut app = FerriteStudioApp::new(proj);
 
         // 1. Initial topology check: 2 trees, valid
@@ -605,7 +648,11 @@ mod tests {
         assert!(app.status_banner.contains("2 independent parallel trees"));
 
         // 3. Deferred validation: User modifies Tree 2 step kind to Normal (missing initial step in tree 2)
-        let _ = app.update(Message::SfcStepKindChanged("parallel_sfc".to_string(), 2, StepKind::Normal));
+        let _ = app.update(Message::SfcStepKindChanged(
+            "parallel_sfc".to_string(),
+            2,
+            StepKind::Normal,
+        ));
 
         let report_invalid = if let Some(PouSource::Sfc(s)) = app.project.pous.get("parallel_sfc") {
             validate_sfc_topology(s)
@@ -623,21 +670,22 @@ mod tests {
         assert!(app.status_banner.contains("Compilation error"));
 
         // 4. User corrects Tree 2 by making X10 Initial again
-        let _ = app.update(Message::SfcStepKindChanged("parallel_sfc".to_string(), 2, StepKind::Initial));
+        let _ = app.update(Message::SfcStepKindChanged(
+            "parallel_sfc".to_string(),
+            2,
+            StepKind::Initial,
+        ));
         app.recompile_runtime();
         assert!(app.runtime.is_some());
         assert!(app.status_banner.contains("recompiled successfully"));
 
         // 5. Verify render_sfc_editor renders without panic with both trees
         if let Some(PouSource::Sfc(s)) = app.project.pous.get("parallel_sfc") {
-            let _elem = canvas_sfc::render_sfc_editor(s, app.runtime.as_ref(), app.ui_lang, None, &[]);
+            let _elem =
+                canvas_sfc::render_sfc_editor(s, app.runtime.as_ref(), app.ui_lang, None, &[]);
         }
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
     }
 }
-
-
-
-

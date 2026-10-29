@@ -58,19 +58,31 @@ impl Default for TrendPlotter {
         let mut channels = HashMap::new();
         channels.insert(
             "SP".to_string(),
-            TrendChannel::new("SP (Setpoint)".to_string(), Color::from_rgb(1.0, 0.843, 0.0)),
+            TrendChannel::new(
+                "SP (Setpoint)".to_string(),
+                Color::from_rgb(1.0, 0.843, 0.0),
+            ),
         );
         channels.insert(
             "PV".to_string(),
-            TrendChannel::new("PV (Process Var)".to_string(), Color::from_rgb(0.282, 0.792, 0.894)),
+            TrendChannel::new(
+                "PV (Process Var)".to_string(),
+                Color::from_rgb(0.282, 0.792, 0.894),
+            ),
         );
         channels.insert(
             "OUT".to_string(),
-            TrendChannel::new("OUT (Control)".to_string(), Color::from_rgb(0.180, 0.835, 0.451)),
+            TrendChannel::new(
+                "OUT (Control)".to_string(),
+                Color::from_rgb(0.180, 0.835, 0.451),
+            ),
         );
         channels.insert(
             "ERR".to_string(),
-            TrendChannel::new("ERR (Error)".to_string(), Color::from_rgb(1.0, 0.420, 0.420)),
+            TrendChannel::new(
+                "ERR (Error)".to_string(),
+                Color::from_rgb(1.0, 0.420, 0.420),
+            ),
         );
 
         Self {
@@ -116,7 +128,13 @@ impl TrendPlotter {
             }
             if let Ok(val) = rt.read_value(tag_name) {
                 let numeric_val = match val {
-                    IecValue::Bool(b) => if b { 1.0 } else { 0.0 },
+                    IecValue::Bool(b) => {
+                        if b {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
                     IecValue::Int(i) => i as f64,
                     IecValue::Dint(d) => d as f64,
                     IecValue::Real(r) => r as f64,
@@ -177,8 +195,12 @@ impl<'a, Message> canvas::Program<Message> for TrendCanvas<'a> {
                 continue;
             }
             for &[_, y] in &ch.points {
-                if y < min_y { min_y = y; }
-                if y > max_y { max_y = y; }
+                if y < min_y {
+                    min_y = y;
+                }
+                if y > max_y {
+                    max_y = y;
+                }
             }
         }
         let dy = (max_y - min_y).max(1.0);
@@ -259,9 +281,7 @@ impl<'a, Message> canvas::Program<Message> for TrendCanvas<'a> {
                 }
             });
 
-            let line_stroke = Stroke::default()
-                .with_color(ch.color)
-                .with_width(2.0);
+            let line_stroke = Stroke::default().with_color(ch.color).with_width(2.0);
 
             frame.stroke(&path, line_stroke);
         }

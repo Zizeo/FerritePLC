@@ -101,16 +101,12 @@ impl LdProgram {
                 self.validate_element(elem, tags)?;
             }
             for coil in &rung.coils {
-                let ty = SymbolResolver::validate_writable_symbol(
-                    tags,
-                    &coil.symbol,
-                    &self.name,
-                    false,
-                )
-                .map_err(|source| LdError::Ir {
-                    pou: self.name.clone(),
-                    source,
-                })?;
+                let ty =
+                    SymbolResolver::validate_writable_symbol(tags, &coil.symbol, &self.name, false)
+                        .map_err(|source| LdError::Ir {
+                            pou: self.name.clone(),
+                            source,
+                        })?;
                 if ty != IecType::Bool {
                     return Err(LdError::Ir {
                         pou: self.name.clone(),
@@ -181,15 +177,12 @@ impl LdProgram {
                         },
                     })?;
                     if IecValue::parse_literal(val_or_sym, Some(pty)).is_err() {
-                        let _ = SymbolResolver::validate_readable_symbol(
-                            tags,
-                            val_or_sym,
-                            &self.name,
-                        )
-                        .map_err(|source| LdError::Ir {
-                            pou: self.name.clone(),
-                            source,
-                        })?;
+                        let _ =
+                            SymbolResolver::validate_readable_symbol(tags, val_or_sym, &self.name)
+                                .map_err(|source| LdError::Ir {
+                                    pou: self.name.clone(),
+                                    source,
+                                })?;
                     }
                 }
                 for (pin, target) in outputs {
@@ -208,9 +201,9 @@ impl LdProgram {
                     let _ =
                         SymbolResolver::validate_writable_symbol(tags, target, &self.name, false)
                             .map_err(|source| LdError::Ir {
-                                pou: self.name.clone(),
-                                source,
-                            })?;
+                            pou: self.name.clone(),
+                            source,
+                        })?;
                 }
                 Ok(())
             }
@@ -439,8 +432,7 @@ impl ExecutablePou for CompiledLdPou {
 
     fn execute(&mut self, ctx: &mut ScanContext<'_>) -> Result<(), RuntimeError> {
         for rung in &self.rungs {
-            let power =
-                Self::eval_elements(&rung.elements, true, &mut self.edge_states, ctx)?;
+            let power = Self::eval_elements(&rung.elements, true, &mut self.edge_states, ctx)?;
             for coil in &rung.coils {
                 match coil.kind {
                     CoilKind::Normal => {

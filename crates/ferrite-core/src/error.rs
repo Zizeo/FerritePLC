@@ -11,10 +11,7 @@ pub enum CoreError {
     AddressOutOfBounds(String),
 
     #[error("Type mismatch: expected {expected:?}, got {actual:?}")]
-    TypeMismatch {
-        expected: IecType,
-        actual: IecType,
-    },
+    TypeMismatch { expected: IecType, actual: IecType },
 
     #[error("Unknown symbol '{0}'")]
     UnknownSymbol(String),

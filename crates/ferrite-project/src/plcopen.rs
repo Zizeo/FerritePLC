@@ -77,11 +77,13 @@ impl PlcOpenTc6 {
                             .map_err(|e| ProjectError::Xml(format!("XML ST start error: {e}")))?;
                         let mut xhtml = BytesStart::new("xhtml");
                         xhtml.push_attribute(("xmlns", "http://www.w3.org/1999/xhtml"));
+                        writer.write_event(Event::Start(xhtml)).map_err(|e| {
+                            ProjectError::Xml(format!("XML xhtml start error: {e}"))
+                        })?;
                         writer
-                            .write_event(Event::Start(xhtml))
-                            .map_err(|e| ProjectError::Xml(format!("XML xhtml start error: {e}")))?;
-                        writer
-                            .write_event(Event::CData(quick_xml::events::BytesCData::new(&st.source)))
+                            .write_event(Event::CData(quick_xml::events::BytesCData::new(
+                                &st.source,
+                            )))
                             .map_err(|e| ProjectError::Xml(format!("XML CDATA error: {e}")))?;
                         writer
                             .write_event(Event::End(BytesEnd::new("xhtml")))
@@ -94,8 +96,9 @@ impl PlcOpenTc6 {
                         writer
                             .write_event(Event::Start(BytesStart::new("LD")))
                             .map_err(|e| ProjectError::Xml(format!("XML LD start error: {e}")))?;
-                        let json = serde_json::to_string_pretty(ld)
-                            .map_err(|e| ProjectError::Xml(format!("JSON serialization error: {e}")))?;
+                        let json = serde_json::to_string_pretty(ld).map_err(|e| {
+                            ProjectError::Xml(format!("JSON serialization error: {e}"))
+                        })?;
                         writer
                             .write_event(Event::CData(quick_xml::events::BytesCData::new(json)))
                             .map_err(|e| ProjectError::Xml(format!("XML CDATA error: {e}")))?;
@@ -107,8 +110,9 @@ impl PlcOpenTc6 {
                         writer
                             .write_event(Event::Start(BytesStart::new("SFC")))
                             .map_err(|e| ProjectError::Xml(format!("XML SFC start error: {e}")))?;
-                        let json = serde_json::to_string_pretty(sfc)
-                            .map_err(|e| ProjectError::Xml(format!("JSON serialization error: {e}")))?;
+                        let json = serde_json::to_string_pretty(sfc).map_err(|e| {
+                            ProjectError::Xml(format!("JSON serialization error: {e}"))
+                        })?;
                         writer
                             .write_event(Event::CData(quick_xml::events::BytesCData::new(json)))
                             .map_err(|e| ProjectError::Xml(format!("XML CDATA error: {e}")))?;
@@ -120,8 +124,9 @@ impl PlcOpenTc6 {
                         writer
                             .write_event(Event::Start(BytesStart::new("FBD")))
                             .map_err(|e| ProjectError::Xml(format!("XML FBD start error: {e}")))?;
-                        let json = serde_json::to_string_pretty(fbd)
-                            .map_err(|e| ProjectError::Xml(format!("JSON serialization error: {e}")))?;
+                        let json = serde_json::to_string_pretty(fbd).map_err(|e| {
+                            ProjectError::Xml(format!("JSON serialization error: {e}"))
+                        })?;
                         writer
                             .write_event(Event::CData(quick_xml::events::BytesCData::new(json)))
                             .map_err(|e| ProjectError::Xml(format!("XML CDATA error: {e}")))?;
@@ -363,13 +368,29 @@ impl PlcOpenTc6 {
                         && let Some(ref pou_name) = current_pou_name
                     {
                         if in_body_st {
-                            imported_pous.push((pou_name.clone(), LanguageKind::St, text.to_string()));
+                            imported_pous.push((
+                                pou_name.clone(),
+                                LanguageKind::St,
+                                text.to_string(),
+                            ));
                         } else if in_body_ld {
-                            imported_pous.push((pou_name.clone(), LanguageKind::Ld, text.to_string()));
+                            imported_pous.push((
+                                pou_name.clone(),
+                                LanguageKind::Ld,
+                                text.to_string(),
+                            ));
                         } else if in_body_sfc {
-                            imported_pous.push((pou_name.clone(), LanguageKind::Sfc, text.to_string()));
+                            imported_pous.push((
+                                pou_name.clone(),
+                                LanguageKind::Sfc,
+                                text.to_string(),
+                            ));
                         } else if in_body_fbd {
-                            imported_pous.push((pou_name.clone(), LanguageKind::Fbd, text.to_string()));
+                            imported_pous.push((
+                                pou_name.clone(),
+                                LanguageKind::Fbd,
+                                text.to_string(),
+                            ));
                         }
                     }
                 }
