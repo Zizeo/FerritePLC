@@ -14,8 +14,8 @@ use ferrite_core::{
 };
 use ferrite_fieldbus_modbus::{ModbusRequest, ModbusResponse, ModbusTcpClient, ModbusTcpServer};
 use ferrite_hal::{
-    create_hardware_driver, GpioHalConfig, HardwareDriver, PinDirection, RPiPinInfo,
-    RPI_40PIN_HEADER,
+    GpioHalConfig, HardwareDriver, PinDirection, RPI_40PIN_HEADER, RPiPinInfo,
+    create_hardware_driver,
 };
 use ferrite_ir::ValidationDiagnostic;
 use ferrite_lang_fbd::{FbdBlock, FbdBlockKind, FbdInputSource};
@@ -376,9 +376,7 @@ pub fn handle_keyboard_shortcut(
                     Some(Message::Undo)
                 }
             }
-            iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("y") => {
-                Some(Message::Redo)
-            }
+            iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("y") => Some(Message::Redo),
             _ => None,
         }
     } else {
@@ -563,7 +561,7 @@ impl FerriteStudioApp {
         }
     }
 
-pub fn subscription(&self) -> iced::Subscription<Message> {
+    pub fn subscription(&self) -> iced::Subscription<Message> {
         let close_sub = iced::window::close_requests().map(Message::WindowCloseRequested);
         let tick_sub = if self.sim_running {
             let scan_ms = self.project.manifest.scan_cycle_ms;
@@ -1166,10 +1164,8 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                         );
                     }
                     Err(e) => {
-                        self.status_banner = format!(
-                            "Failed to load project from {}: {e}",
-                            path.display()
-                        );
+                        self.status_banner =
+                            format!("Failed to load project from {}: {e}", path.display());
                     }
                 }
                 Task::none()
@@ -1197,10 +1193,10 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                 if self.project.root_dir.exists() {
                     dialog = dialog.set_directory(&self.project.root_dir);
                 }
-                if let Some(file) = dialog.pick_file() {
-                    if let Some(parent) = file.parent() {
-                        return self.update(Message::LoadProjectFromPath(parent.to_path_buf()));
-                    }
+                if let Some(file) = dialog.pick_file()
+                    && let Some(parent) = file.parent()
+                {
+                    return self.update(Message::LoadProjectFromPath(parent.to_path_buf()));
                 }
                 Task::none()
             }
@@ -1228,7 +1224,10 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
             }
             Message::ExportPlcopenXmlDialog => {
                 let file = rfd::FileDialog::new()
-                    .set_title(self.ui_lang.tr("Export PLCopen TC6 XML", "Exporter PLCopen TC6 XML"))
+                    .set_title(
+                        self.ui_lang
+                            .tr("Export PLCopen TC6 XML", "Exporter PLCopen TC6 XML"),
+                    )
                     .add_filter("PLCopen XML (.xml)", &["xml"])
                     .set_file_name("project_plcopen.xml")
                     .save_file();
@@ -1236,7 +1235,8 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                     match self.project.export_plcopen_xml() {
                         Ok(xml) => match std::fs::write(&path, xml) {
                             Ok(()) => {
-                                self.status_banner = format!("PLCopen XML exported to {}", path.display());
+                                self.status_banner =
+                                    format!("PLCopen XML exported to {}", path.display());
                             }
                             Err(e) => {
                                 self.status_banner = format!("Failed to write XML file: {e}");
@@ -1251,7 +1251,10 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
             }
             Message::ImportPlcopenXmlDialog => {
                 let file = rfd::FileDialog::new()
-                    .set_title(self.ui_lang.tr("Import PLCopen TC6 XML", "Importer PLCopen TC6 XML"))
+                    .set_title(
+                        self.ui_lang
+                            .tr("Import PLCopen TC6 XML", "Importer PLCopen TC6 XML"),
+                    )
                     .add_filter("PLCopen XML (.xml)", &["xml"])
                     .pick_file();
                 if let Some(xml_path) = file {
@@ -1263,23 +1266,25 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                         .pick_folder();
                     if let Some(target_dir) = target_folder {
                         match std::fs::read_to_string(&xml_path) {
-                            Ok(xml_content) => match Project::import_plcopen_xml(&xml_content, &target_dir) {
-                                Ok(imported_project) => {
-                                    let p_name = imported_project.manifest.name.clone();
-                                    self.project = imported_project;
-                                    self.undo_stack.clear();
-                                    self.redo_stack.clear();
-                                    self.recompile_runtime();
-                                    self.status_banner = format!(
-                                        "Project '{}' successfully imported from PLCopen XML to {}",
-                                        p_name,
-                                        target_dir.display()
-                                    );
+                            Ok(xml_content) => {
+                                match Project::import_plcopen_xml(&xml_content, &target_dir) {
+                                    Ok(imported_project) => {
+                                        let p_name = imported_project.manifest.name.clone();
+                                        self.project = imported_project;
+                                        self.undo_stack.clear();
+                                        self.redo_stack.clear();
+                                        self.recompile_runtime();
+                                        self.status_banner = format!(
+                                            "Project '{}' successfully imported from PLCopen XML to {}",
+                                            p_name,
+                                            target_dir.display()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        self.status_banner = format!("PLCopen import failed: {e}");
+                                    }
                                 }
-                                Err(e) => {
-                                    self.status_banner = format!("PLCopen import failed: {e}");
-                                }
-                            },
+                            }
                             Err(e) => {
                                 self.status_banner = format!("Failed to read XML file: {e}");
                             }
@@ -2995,43 +3000,79 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
         self.view_main()
     }
 
-        fn view_active_menu(&self) -> Element<'_, Message> {
+    fn view_active_menu(&self) -> Element<'_, Message> {
         let Some(active) = self.active_menu else {
             return column![].into();
         };
 
         let items: Element<'_, Message> = match active {
             ActiveMenu::File => row![
-                button(text(self.ui_lang.tr("Save Project (Ctrl+S)", "Enregistrer Projet (Ctrl+S)")).size(11))
-                    .on_press(Message::SaveProject)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                button(
+                    text(
+                        self.ui_lang
+                            .tr("Save Project (Ctrl+S)", "Enregistrer Projet (Ctrl+S)")
+                    )
+                    .size(11)
+                )
+                .on_press(Message::SaveProject)
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
                 button(text(self.ui_lang.tr("Save As...", "Enregistrer sous...")).size(11))
                     .on_press(Message::SaveProjectAsDialog)
                     .style(StudioTheme::ghost_button)
                     .padding([4, 8]),
-                button(text(self.ui_lang.tr("Open Folder (Ctrl+O)...", "Ouvrir Dossier (Ctrl+O)...")).size(11))
-                    .on_press(Message::OpenProjectFolderDialog)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
-                button(text(self.ui_lang.tr("Open Manifest (.fplc)...", "Ouvrir Manifeste (.fplc)...")).size(11))
-                    .on_press(Message::OpenProjectManifestDialog)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                button(
+                    text(
+                        self.ui_lang
+                            .tr("Open Folder (Ctrl+O)...", "Ouvrir Dossier (Ctrl+O)...")
+                    )
+                    .size(11)
+                )
+                .on_press(Message::OpenProjectFolderDialog)
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
+                button(
+                    text(
+                        self.ui_lang
+                            .tr("Open Manifest (.fplc)...", "Ouvrir Manifeste (.fplc)...")
+                    )
+                    .size(11)
+                )
+                .on_press(Message::OpenProjectManifestDialog)
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
                 text("|").size(11).color(StudioTheme::BORDER_CARD),
-                button(text(self.ui_lang.tr("Export PLCopen XML...", "Exporter PLCopen XML...")).size(11))
-                    .on_press(Message::ExportPlcopenXmlDialog)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
-                button(text(self.ui_lang.tr("Import PLCopen XML...", "Importer PLCopen XML...")).size(11))
-                    .on_press(Message::ImportPlcopenXmlDialog)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                button(
+                    text(
+                        self.ui_lang
+                            .tr("Export PLCopen XML...", "Exporter PLCopen XML...")
+                    )
+                    .size(11)
+                )
+                .on_press(Message::ExportPlcopenXmlDialog)
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
+                button(
+                    text(
+                        self.ui_lang
+                            .tr("Import PLCopen XML...", "Importer PLCopen XML...")
+                    )
+                    .size(11)
+                )
+                .on_press(Message::ImportPlcopenXmlDialog)
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
                 text("|").size(11).color(StudioTheme::BORDER_CARD),
-                button(text(self.ui_lang.tr("Global Tags & FB", "Variables Globales & FB")).size(11))
-                    .on_press(Message::SelectTab(WorkspaceTab::SymbolsAndConfig))
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                button(
+                    text(
+                        self.ui_lang
+                            .tr("Global Tags & FB", "Variables Globales & FB")
+                    )
+                    .size(11)
+                )
+                .on_press(Message::SelectTab(WorkspaceTab::SymbolsAndConfig))
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
                 iced::widget::Space::with_width(Length::Fill),
                 button(text("✕").size(11))
                     .on_press(Message::ToggleActiveMenu(None))
@@ -3042,11 +3083,14 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
             .align_y(Alignment::Center)
             .into(),
             ActiveMenu::Plc => row![
-                button(text(if self.sim_running {
-                    self.ui_lang.tr("Pause PLC", "Mettre en Pause")
-                } else {
-                    self.ui_lang.tr("Run PLC", "Démarrer l'API")
-                }).size(11))
+                button(
+                    text(if self.sim_running {
+                        self.ui_lang.tr("Pause PLC", "Mettre en Pause")
+                    } else {
+                        self.ui_lang.tr("Run PLC", "Démarrer l'API")
+                    })
+                    .size(11)
+                )
                 .on_press(Message::ToggleRunSim)
                 .style(StudioTheme::ghost_button)
                 .padding([4, 8]),
@@ -3089,16 +3133,25 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                     .on_press(Message::ToggleRightIo)
                     .style(StudioTheme::ghost_button)
                     .padding([4, 8]),
-                button(text(self.ui_lang.tr("Toggle Bottom Dock", "Basculer Panneau Inférieur")).size(11))
-                    .on_press(Message::ToggleBottomDock)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                button(
+                    text(
+                        self.ui_lang
+                            .tr("Toggle Bottom Dock", "Basculer Panneau Inférieur")
+                    )
+                    .size(11)
+                )
+                .on_press(Message::ToggleBottomDock)
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
                 text("|").size(11).color(StudioTheme::BORDER_CARD),
-                button(text(if self.detach_left_explorer {
-                    self.ui_lang.tr("Dock Explorer", "Ancrer Explorateur")
-                } else {
-                    self.ui_lang.tr("Detach Explorer", "Détacher Explorateur")
-                }).size(11))
+                button(
+                    text(if self.detach_left_explorer {
+                        self.ui_lang.tr("Dock Explorer", "Ancrer Explorateur")
+                    } else {
+                        self.ui_lang.tr("Detach Explorer", "Détacher Explorateur")
+                    })
+                    .size(11)
+                )
                 .on_press(if self.detach_left_explorer {
                     Message::DockLeftExplorer
                 } else {
@@ -3106,11 +3159,14 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                 })
                 .style(StudioTheme::ghost_button)
                 .padding([4, 8]),
-                button(text(if self.detach_right_io {
-                    self.ui_lang.tr("Dock I/O Rack", "Ancrer Baie E/S")
-                } else {
-                    self.ui_lang.tr("Detach I/O Rack", "Détacher Baie E/S")
-                }).size(11))
+                button(
+                    text(if self.detach_right_io {
+                        self.ui_lang.tr("Dock I/O Rack", "Ancrer Baie E/S")
+                    } else {
+                        self.ui_lang.tr("Detach I/O Rack", "Détacher Baie E/S")
+                    })
+                    .size(11)
+                )
                 .on_press(if self.detach_right_io {
                     Message::DockRightIo
                 } else {
@@ -3118,11 +3174,16 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                 })
                 .style(StudioTheme::ghost_button)
                 .padding([4, 8]),
-                button(text(if self.detach_bottom_dock {
-                    self.ui_lang.tr("Dock Bottom Dock", "Ancrer Panneau Inférieur")
-                } else {
-                    self.ui_lang.tr("Detach Bottom Dock", "Détacher Panneau Inférieur")
-                }).size(11))
+                button(
+                    text(if self.detach_bottom_dock {
+                        self.ui_lang
+                            .tr("Dock Bottom Dock", "Ancrer Panneau Inférieur")
+                    } else {
+                        self.ui_lang
+                            .tr("Detach Bottom Dock", "Détacher Panneau Inférieur")
+                    })
+                    .size(11)
+                )
                 .on_press(if self.detach_bottom_dock {
                     Message::DockBottomDock
                 } else {
@@ -3140,7 +3201,9 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
             .align_y(Alignment::Center)
             .into(),
             ActiveMenu::Options => row![
-                text(self.ui_lang.tr("Language:", "Langue :")).size(11).color(StudioTheme::TEXT_MUTED),
+                text(self.ui_lang.tr("Language:", "Langue :"))
+                    .size(11)
+                    .color(StudioTheme::TEXT_MUTED),
                 button(text("English").size(11))
                     .on_press(Message::SetLanguage(UiLanguage::En))
                     .style(if self.ui_lang == UiLanguage::En {
@@ -3158,7 +3221,9 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                     })
                     .padding([3, 8]),
                 text("|").size(11).color(StudioTheme::BORDER_CARD),
-                text(self.ui_lang.tr("Theme:", "Thème :")).size(11).color(StudioTheme::TEXT_MUTED),
+                text(self.ui_lang.tr("Theme:", "Thème :"))
+                    .size(11)
+                    .color(StudioTheme::TEXT_MUTED),
                 button(text(self.ui_lang.tr("Dark", "Sombre")).size(11))
                     .on_press(Message::SetTheme(UiTheme::Dark))
                     .style(if self.ui_theme == UiTheme::Dark {
@@ -4208,7 +4273,7 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
             .into()
     }
 
-        fn rpi_pin_style(
+    fn rpi_pin_style(
         info: &RPiPinInfo,
         cfg: &GpioHalConfig,
         levels: &HashMap<u32, bool>,
@@ -4228,11 +4293,7 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
             );
         }
         if info.name.starts_with("Ground") || info.name.starts_with("GND") {
-            return (
-                "GND".to_string(),
-                Color::from_rgb(0.47, 0.53, 0.60),
-                false,
-            );
+            return ("GND".to_string(), Color::from_rgb(0.47, 0.53, 0.60), false);
         }
 
         if let Some(bcm) = info.bcm {
@@ -4486,11 +4547,17 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                     .align_y(Alignment::Center)
                     .into()
                 } else {
-                    row![container(text("Server Inactive").size(11).color(StudioTheme::TEXT_MUTED))
+                    row![
+                        container(
+                            text("Server Inactive")
+                                .size(11)
+                                .color(StudioTheme::TEXT_MUTED)
+                        )
                         .padding([2, 6])
                         .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
                             1.0, 1.0, 1.0, 0.04,
-                        )))]
+                        )))
+                    ]
                     .into()
                 };
 
@@ -4615,10 +4682,7 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                     let r = row![
                         text(rng).size(10).width(Length::FillPortion(2)),
                         text(fc).size(10).width(Length::FillPortion(2)),
-                        text(addr)
-                            .size(10)
-                            .color(col)
-                            .width(Length::FillPortion(2)),
+                        text(addr).size(10).color(col).width(Length::FillPortion(2)),
                         text(mode)
                             .size(10)
                             .color(StudioTheme::TEXT_MUTED)
@@ -4674,29 +4738,31 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                     let (even_txt, even_col, even_clickable) =
                         Self::rpi_pin_style(even, &self.hal_config, &live_levels);
 
-                    let odd_widget: Element<'_, Message> = if odd_clickable && let Some(bcm) = odd.bcm {
-                        button(text(odd_txt).size(10.5).color(odd_col))
-                            .on_press(Message::MockGpioPinToggled(bcm))
-                            .style(StudioTheme::ghost_button)
-                            .padding([1, 6])
-                            .into()
-                    } else {
-                        container(text(odd_txt).size(10.5).color(odd_col))
-                            .padding([1, 6])
-                            .into()
-                    };
+                    let odd_widget: Element<'_, Message> =
+                        if odd_clickable && let Some(bcm) = odd.bcm {
+                            button(text(odd_txt).size(10.5).color(odd_col))
+                                .on_press(Message::MockGpioPinToggled(bcm))
+                                .style(StudioTheme::ghost_button)
+                                .padding([1, 6])
+                                .into()
+                        } else {
+                            container(text(odd_txt).size(10.5).color(odd_col))
+                                .padding([1, 6])
+                                .into()
+                        };
 
-                    let even_widget: Element<'_, Message> = if even_clickable && let Some(bcm) = even.bcm {
-                        button(text(even_txt).size(10.5).color(even_col))
-                            .on_press(Message::MockGpioPinToggled(bcm))
-                            .style(StudioTheme::ghost_button)
-                            .padding([1, 6])
-                            .into()
-                    } else {
-                        container(text(even_txt).size(10.5).color(even_col))
-                            .padding([1, 6])
-                            .into()
-                    };
+                    let even_widget: Element<'_, Message> =
+                        if even_clickable && let Some(bcm) = even.bcm {
+                            button(text(even_txt).size(10.5).color(even_col))
+                                .on_press(Message::MockGpioPinToggled(bcm))
+                                .style(StudioTheme::ghost_button)
+                                .padding([1, 6])
+                                .into()
+                        } else {
+                            container(text(even_txt).size(10.5).color(even_col))
+                                .padding([1, 6])
+                                .into()
+                        };
 
                     let center_pin_badge = container(
                         text(format!("{:>2} | {:<2}", odd.pin_number, even.pin_number))

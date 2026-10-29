@@ -690,7 +690,8 @@ mod tests {
     }
 
     #[test]
-    fn test_load_project_from_path_and_plcopen_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_load_project_from_path_and_plcopen_roundtrip() -> Result<(), Box<dyn std::error::Error>>
+    {
         let temp_dir = std::env::temp_dir().join("ferrite_test_load_path");
         if temp_dir.exists() {
             let _ = std::fs::remove_dir_all(&temp_dir);
@@ -711,13 +712,22 @@ mod tests {
     fn test_keyboard_shortcut_mapping() {
         use crate::app::handle_keyboard_shortcut;
 
-        let cmd_s = handle_keyboard_shortcut(&iced::keyboard::Key::Character("s".into()), iced::keyboard::Modifiers::COMMAND);
+        let cmd_s = handle_keyboard_shortcut(
+            &iced::keyboard::Key::Character("s".into()),
+            iced::keyboard::Modifiers::COMMAND,
+        );
         assert!(matches!(cmd_s, Some(Message::SaveProject)));
 
-        let cmd_o = handle_keyboard_shortcut(&iced::keyboard::Key::Character("o".into()), iced::keyboard::Modifiers::COMMAND);
+        let cmd_o = handle_keyboard_shortcut(
+            &iced::keyboard::Key::Character("o".into()),
+            iced::keyboard::Modifiers::COMMAND,
+        );
         assert!(matches!(cmd_o, Some(Message::OpenProjectFolderDialog)));
 
-        let cmd_z = handle_keyboard_shortcut(&iced::keyboard::Key::Character("z".into()), iced::keyboard::Modifiers::COMMAND);
+        let cmd_z = handle_keyboard_shortcut(
+            &iced::keyboard::Key::Character("z".into()),
+            iced::keyboard::Modifiers::COMMAND,
+        );
         assert!(matches!(cmd_z, Some(Message::Undo)));
 
         let cmd_shift_z = handle_keyboard_shortcut(
@@ -726,10 +736,16 @@ mod tests {
         );
         assert!(matches!(cmd_shift_z, Some(Message::Redo)));
 
-        let cmd_y = handle_keyboard_shortcut(&iced::keyboard::Key::Character("y".into()), iced::keyboard::Modifiers::COMMAND);
+        let cmd_y = handle_keyboard_shortcut(
+            &iced::keyboard::Key::Character("y".into()),
+            iced::keyboard::Modifiers::COMMAND,
+        );
         assert!(matches!(cmd_y, Some(Message::Redo)));
 
-        let del = handle_keyboard_shortcut(&iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete), iced::keyboard::Modifiers::empty());
+        let del = handle_keyboard_shortcut(
+            &iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete),
+            iced::keyboard::Modifiers::empty(),
+        );
         assert!(matches!(del, Some(Message::SfcRequestDeleteSelected(_))));
     }
 
