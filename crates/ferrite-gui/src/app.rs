@@ -4451,11 +4451,59 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                     .as_deref()
                     .unwrap_or("No tests executed yet.");
 
-                row![
+                let telem_row: Element<'_, Message> = if let Some(ref srv) = self.modbus_server {
+                    let telem = srv.telemetry();
+                    row![
+                        container(
+                            text(format!("Requests: {}", telem.requests_total))
+                                .size(11)
+                                .color(StudioTheme::ACCENT_CYAN)
+                        )
+                        .padding([2, 6])
+                        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                            0.28, 0.79, 0.89, 0.15,
+                        ))),
+                        container(
+                            text(format!("Active Clients: {}", telem.active_clients))
+                                .size(11)
+                                .color(StudioTheme::ACCENT_EMERALD)
+                        )
+                        .padding([2, 6])
+                        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                            0.18, 0.84, 0.45, 0.15,
+                        ))),
+                        container(
+                            text(format!("Exceptions: {}", telem.exceptions_total))
+                                .size(11)
+                                .color(StudioTheme::ACCENT_ROSE)
+                        )
+                        .padding([2, 6])
+                        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                            0.96, 0.25, 0.37, 0.15,
+                        ))),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into()
+                } else {
+                    row![container(text("Server Inactive").size(11).color(StudioTheme::TEXT_MUTED))
+                        .padding([2, 6])
+                        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                            1.0, 1.0, 1.0, 0.04,
+                        )))]
+                    .into()
+                };
+
+                let controls_row = row![
                     column![
-                        text(format!("Modbus TCP Server ({status_str})"))
-                            .size(12)
-                            .color(StudioTheme::ACCENT_CYAN),
+                        row![
+                            text(format!("Modbus TCP Server ({status_str})"))
+                                .size(12)
+                                .color(StudioTheme::ACCENT_CYAN),
+                            telem_row,
+                        ]
+                        .spacing(12)
+                        .align_y(Alignment::Center),
                         row![
                             text("Port:").size(12),
                             text_input("5020", &self.modbus_port.to_string())
@@ -4495,8 +4543,97 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                     .spacing(6)
                     .width(Length::FillPortion(1)),
                 ]
-                .spacing(16)
-                .into()
+                .spacing(16);
+
+                let mapping_rows = [
+                    (
+                        "00001 - 01000 (0..999)",
+                        "FC01, FC05, FC15",
+                        "%QX0.0 .. %QX124.7",
+                        "Read / Write",
+                        StudioTheme::ACCENT_CYAN,
+                    ),
+                    (
+                        "01001 - 02000 (1000..1999)",
+                        "FC01, FC05, FC15",
+                        "%MX0.0 .. %MX124.7",
+                        "Read / Write",
+                        StudioTheme::ACCENT_AMBER,
+                    ),
+                    (
+                        "10001 - 11000 (0..999)",
+                        "FC02",
+                        "%IX0.0 .. %IX124.7",
+                        "Read Only",
+                        StudioTheme::ACCENT_EMERALD,
+                    ),
+                    (
+                        "30001 - 31000 (0..999)",
+                        "FC04",
+                        "%IW0 .. %IW999",
+                        "Read Only",
+                        StudioTheme::TEXT_SECONDARY,
+                    ),
+                    (
+                        "40001 - 41000 (0..999)",
+                        "FC03, FC06, FC16",
+                        "%QW0 .. %QW999",
+                        "Read / Write",
+                        StudioTheme::ACCENT_CYAN,
+                    ),
+                    (
+                        "41001 - 42000 (1000..1999)",
+                        "FC03, FC06, FC16",
+                        "%MW0 .. %MW999",
+                        "Read / Write",
+                        StudioTheme::ACCENT_AMBER,
+                    ),
+                ];
+
+                let table_header = row![
+                    text("Modbus Register Range")
+                        .size(10.5)
+                        .color(StudioTheme::TEXT_MUTED)
+                        .width(Length::FillPortion(2)),
+                    text("Function Codes")
+                        .size(10.5)
+                        .color(StudioTheme::TEXT_MUTED)
+                        .width(Length::FillPortion(2)),
+                    text("FerritePLC Address")
+                        .size(10.5)
+                        .color(StudioTheme::TEXT_MUTED)
+                        .width(Length::FillPortion(2)),
+                    text("Access Mode")
+                        .size(10.5)
+                        .color(StudioTheme::TEXT_MUTED)
+                        .width(Length::FillPortion(1)),
+                ]
+                .spacing(8);
+
+                let mut table_col = column![table_header].spacing(3);
+                for (rng, fc, addr, mode, col) in mapping_rows {
+                    let r = row![
+                        text(rng).size(10).width(Length::FillPortion(2)),
+                        text(fc).size(10).width(Length::FillPortion(2)),
+                        text(addr)
+                            .size(10)
+                            .color(col)
+                            .width(Length::FillPortion(2)),
+                        text(mode)
+                            .size(10)
+                            .color(StudioTheme::TEXT_MUTED)
+                            .width(Length::FillPortion(1)),
+                    ]
+                    .spacing(8);
+                    table_col = table_col.push(r);
+                }
+
+                let table_card = container(table_col)
+                    .padding([6, 12])
+                    .style(StudioTheme::canvas_container_style)
+                    .width(Length::Fill);
+
+                column![controls_row, table_card].spacing(8).into()
             }
             BottomDockTab::Gpio => {
                 let hal_status = if self.hal_enabled {
