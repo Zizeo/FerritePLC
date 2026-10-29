@@ -683,6 +683,13 @@ impl FerriteStudioApp {
     }
 
     pub fn execute_plc_scan_tick(&mut self) -> Result<ScanTelemetry, RuntimeError> {
+        self.execute_plc_scan_batch(1)
+    }
+
+    pub fn execute_plc_scan_batch(
+        &mut self,
+        batch_size: usize,
+    ) -> Result<ScanTelemetry, RuntimeError> {
         self.sync_shared_io();
 
         let Some(rt) = &mut self.runtime else {
@@ -696,7 +703,7 @@ impl FerriteStudioApp {
             let _ = self.hal_driver.read_inputs(&mut rt.process_image);
         }
 
-        let tel = rt.step_scan_batch(self.sim_speed.batch_size())?;
+        let tel = rt.step_scan_batch(batch_size)?;
         self.trend_plotter.sample(rt);
 
         if self.hal_enabled {
@@ -1026,6 +1033,7 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::ResetSim => {
+                self.sim_running = false;
                 self.recompile_runtime();
                 self.trend_plotter.clear_all();
                 Task::none()
@@ -1034,6 +1042,9 @@ impl FerriteStudioApp {
                 self.sim_running = false;
                 if let Some(rt) = &mut self.runtime {
                     let _ = rt.warm_restart();
+                    if self.hal_enabled {
+                        let _ = self.hal_driver.write_outputs(&rt.process_image);
+                    }
                     if let Ok(mut snap) = self.shared_io.write() {
                         for tag in rt.tags.tags() {
                             if let Ok(v) = rt.read_value(&tag.name) {
@@ -1060,8 +1071,24 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::ResetSimCold => {
+                self.sim_running = false;
                 if let Some(rt) = &mut self.runtime {
                     let _ = rt.cold_restart();
+                    if self.hal_enabled {
+                        let _ = self.hal_driver.write_outputs(&rt.process_image);
+                    }
+                    if let Ok(mut snap) = self.shared_io.write() {
+                        for tag in rt.tags.tags() {
+                            if let Ok(v) = rt.read_value(&tag.name) {
+                                snap.values.insert(tag.name.clone(), v);
+                            }
+                        }
+                    }
+                    if self.modbus_server.is_some()
+                        && let Ok(mut pi_lock) = self.modbus_shared_pi.write()
+                    {
+                        *pi_lock = rt.process_image.clone();
+                    }
                 } else {
                     self.recompile_runtime();
                 }
@@ -1140,7 +1167,7 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::PlcTickTimer => {
-                match self.execute_plc_scan_tick() {
+                match self.execute_plc_scan_batch(self.sim_speed.batch_size()) {
                     Ok(tel) => {
                         if tel.breakpoint_hit {
                             self.sim_running = false;
@@ -3758,36 +3785,48 @@ impl FerriteStudioApp {
         .spacing(2)
         .align_y(Alignment::Center);
 
+        let scrollable_tools = scrollable(
+            row![
+                text("FerritePLC").size(15),
+                menu_bar,
+                telemetry_pill,
+                forces_banner,
+                iced::widget::Space::with_width(12),
+                run_btn,
+                step_btn,
+                reset_warm_btn,
+                reset_cold_btn,
+                iced::widget::Space::with_width(6),
+                speed_group,
+                iced::widget::Space::with_width(8),
+                save_btn,
+                check_btn,
+                undo_btn,
+                redo_btn,
+                scenarios_btn,
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::default()))
+        .width(Length::Fill);
+
+        let trailing_controls = row![
+            lang_btn,
+            explorer_toggle,
+            dock_toggle,
+            io_toggle,
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+
         container(
-            scrollable(
-                row![
-                    text("FerritePLC").size(15),
-                    menu_bar,
-                    telemetry_pill,
-                    forces_banner,
-                    iced::widget::Space::with_width(12),
-                    run_btn,
-                    step_btn,
-                    reset_warm_btn,
-                    reset_cold_btn,
-                    iced::widget::Space::with_width(6),
-                    speed_group,
-                    iced::widget::Space::with_width(8),
-                    save_btn,
-                    check_btn,
-                    undo_btn,
-                    redo_btn,
-                    scenarios_btn,
-                    iced::widget::Space::with_width(Length::Fill),
-                    lang_btn,
-                    explorer_toggle,
-                    dock_toggle,
-                    io_toggle,
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::default()))
+            row![
+                scrollable_tools,
+                trailing_controls,
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
             .width(Length::Fill),
         )
         .padding([8, 16])

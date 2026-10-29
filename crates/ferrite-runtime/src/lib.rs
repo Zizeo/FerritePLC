@@ -316,6 +316,20 @@ impl PlcRuntime {
         self.unforce_all()?;
         self.process_image.clear();
         self.tags.reset_values_to_initial();
+
+        // Re-initialize all direct addresses with initial values and latch inputs
+        for tag in self.tags.tags() {
+            if let Some(addr) = tag.address {
+                if addr.area == MemoryArea::Input {
+                    let _ = self.process_image.set_hw_input(addr, &tag.initial_value);
+                } else {
+                    let _ = self.process_image.write(addr, &tag.initial_value);
+                }
+            }
+        }
+        self.process_image.latch_inputs();
+        self.tags.reset_fbs();
+
         self.alarms.clear();
         self.alarm_journal.clear();
         self.scan_count = 0;
@@ -343,12 +357,18 @@ impl PlcRuntime {
         self.tags.reset_values_to_initial();
         self.tags.import_retain_values(&retain_tags);
 
-        // Re-initialize direct address bindings with tag initial values and re-latch inputs
+        // Re-initialize direct address bindings:
+        // - %I inputs are re-initialized with tag initial values and re-latched
+        // - Retained tags write their preserved value to process_image if mapped
+        // - Non-retain %Q outputs are reset to initial values
+        // - %M markers are already restored via import_markers
         for tag in self.tags.tags() {
             if let Some(addr) = tag.address {
                 if addr.area == MemoryArea::Input {
                     let _ = self.process_image.set_hw_input(addr, &tag.initial_value);
-                } else {
+                } else if tag.retain {
+                    let _ = self.process_image.write(addr, tag.current_value());
+                } else if addr.area == MemoryArea::Output {
                     let _ = self.process_image.write(addr, &tag.initial_value);
                 }
             }
@@ -1013,6 +1033,15 @@ mod tests {
         }
         assert_eq!(runtime.read_value("Fill_Timer.ET")?, IecValue::Time(3500));
 
+        // Mark Batch_Count (%MW12) as retain and write 42
+        let mw12_addr: ferrite_core::address::DirectAddress = "%MW12".parse()?;
+        runtime.process_image.write(mw12_addr, &IecValue::Int(42))?;
+        if let Some(tag) = runtime.tags.get_tag_mut("Batch_Count") {
+            tag.retain = true;
+            tag.value = Some(IecValue::Int(42));
+        }
+        assert_eq!(runtime.read_value("Batch_Count")?, IecValue::Int(42));
+
         // Call warm_restart()
         runtime.warm_restart()?;
 
@@ -1021,6 +1050,8 @@ mod tests {
         // Fill_Timer must have accumulators reset
         assert_eq!(runtime.read_value("Fill_Timer.ET")?, IecValue::Time(0));
         assert_eq!(runtime.read_value("Fill_Timer.Q")?, IecValue::Bool(false));
+        // Retained tag Batch_Count at %MW12 must be preserved as 42
+        assert_eq!(runtime.read_value("Batch_Count")?, IecValue::Int(42));
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

@@ -814,6 +814,43 @@ mod tests {
         let _ = app.update(Message::ResetSimWarm);
         assert!(!app.sim_running, "Warm restart must auto-pause the simulation");
 
+        let shared = app
+            .shared_io
+            .read()
+            .map_err(|e| format!("{e}"))?;
+        assert_eq!(
+            shared.values.get("EStop_OK"),
+            Some(&ferrite_core::IecValue::Bool(true))
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_single_step_advances_exactly_one_scan_cycle() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::app::SimSpeed;
+        let temp_dir = std::env::temp_dir().join("ferrite_test_step_single");
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let scaffold = ferrite_project::Project::scaffold(&temp_dir, "test_step")?;
+        let mut app = FerriteStudioApp::new(scaffold);
+
+        // Set speed to Max which normally executes batch of 50
+        app.sim_speed = SimSpeed::Max;
+        assert_eq!(app.sim_speed.batch_size(), 50);
+
+        let initial_scans = app.runtime.as_ref().map(|rt| rt.scan_count).unwrap_or(0);
+        let _ = app.update(Message::StepSimTick);
+        let after_scans = app.runtime.as_ref().map(|rt| rt.scan_count).unwrap_or(0);
+
+        assert_eq!(
+            after_scans,
+            initial_scans + 1,
+            "Single-step must advance by exactly 1 scan cycle, not batch size"
+        );
+
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
