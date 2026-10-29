@@ -53,13 +53,14 @@ pub enum Breakpoint {
     SymbolTrue(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanTelemetry {
     pub scan_count: u64,
     pub virtual_time_ms: u64,
     pub scan_duration_us: u64,
     pub max_scan_duration_us: u64,
     pub breakpoint_hit: bool,
+    pub hit_breakpoint: Option<Breakpoint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -369,20 +370,29 @@ impl PlcRuntime {
         // Evaluate ISA-18.2 Alarms
         self.evaluate_alarms();
 
-        let mut breakpoint_hit = false;
+        let mut hit_breakpoint = None;
         for bp in &self.breakpoints {
             match bp {
                 Breakpoint::ScanCount(target) if *target == self.scan_count => {
-                    breakpoint_hit = true;
+                    hit_breakpoint = Some(bp.clone());
+                    break;
                 }
                 Breakpoint::SymbolTrue(sym) => {
                     if let Ok(IecValue::Bool(true)) = self.read_value(sym) {
-                        breakpoint_hit = true;
+                        hit_breakpoint = Some(bp.clone());
+                        break;
+                    }
+                }
+                Breakpoint::Pou(id) => {
+                    if self.tasks.iter().any(|t| t.pous.iter().any(|p| p.id() == *id)) {
+                        hit_breakpoint = Some(bp.clone());
+                        break;
                     }
                 }
                 _ => {}
             }
         }
+        let breakpoint_hit = hit_breakpoint.is_some();
 
         Ok(ScanTelemetry {
             scan_count: self.scan_count,
@@ -390,7 +400,25 @@ impl PlcRuntime {
             scan_duration_us: elapsed_us,
             max_scan_duration_us: self.max_scan_duration_us,
             breakpoint_hit,
+            hit_breakpoint,
         })
+    }
+
+    /// Executes up to `batch_size` sequential scan cycles.
+    /// Halts early and returns immediately if any breakpoint is hit or on runtime error.
+    pub fn step_scan_batch(&mut self, batch_size: usize) -> Result<ScanTelemetry, RuntimeError> {
+        let count = batch_size.max(1);
+        let mut latest_tel = self.step_scan()?;
+        if latest_tel.breakpoint_hit {
+            return Ok(latest_tel);
+        }
+        for _ in 1..count {
+            latest_tel = self.step_scan()?;
+            if latest_tel.breakpoint_hit {
+                break;
+            }
+        }
+        Ok(latest_tel)
     }
 
     /// Executes an automated headless test scenario from `sim/scenarios.toml`.
@@ -746,6 +774,25 @@ mod tests {
         runtime.set_stimulus("Overpressure_Fault", IecValue::Bool(true))?;
         runtime.step_scan()?;
         assert_eq!(runtime.tasks()[2].execution_count, 1);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_runtime_sim_speed_batching_and_breakpoint() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_plc_batch_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        let project = Project::scaffold(&temp_dir, "batch_plant")?;
+        let mut runtime = PlcRuntime::from_project(&project)?;
+
+        runtime.breakpoints.push(Breakpoint::ScanCount(3));
+        let tel = runtime.step_scan_batch(10)?;
+        assert!(tel.breakpoint_hit);
+        assert_eq!(tel.scan_count, 3);
+        assert_eq!(tel.hit_breakpoint, Some(Breakpoint::ScanCount(3)));
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
