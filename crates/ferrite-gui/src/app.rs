@@ -13,7 +13,10 @@ use ferrite_core::{
     RuntimeError, StandardFbKind, TagEntry,
 };
 use ferrite_fieldbus_modbus::{ModbusRequest, ModbusResponse, ModbusTcpClient, ModbusTcpServer};
-use ferrite_hal::{GpioHalConfig, HardwareDriver, create_hardware_driver};
+use ferrite_hal::{
+    create_hardware_driver, GpioHalConfig, HardwareDriver, PinDirection, RPiPinInfo,
+    RPI_40PIN_HEADER,
+};
 use ferrite_ir::ValidationDiagnostic;
 use ferrite_lang_fbd::{FbdBlock, FbdBlockKind, FbdInputSource};
 use ferrite_lang_ld::{CoilKind, ContactKind, LdCoil, LdElement, LdRung};
@@ -4205,6 +4208,56 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
             .into()
     }
 
+        fn rpi_pin_style(
+        info: &RPiPinInfo,
+        cfg: &GpioHalConfig,
+        levels: &HashMap<u32, bool>,
+    ) -> (String, Color, bool) {
+        if info.name.starts_with("3V3") || info.name.starts_with("3.3V") {
+            return (
+                info.name.to_string(),
+                Color::from_rgb(0.96, 0.62, 0.04),
+                false,
+            );
+        }
+        if info.name.starts_with("5V") {
+            return (
+                info.name.to_string(),
+                Color::from_rgb(0.94, 0.27, 0.27),
+                false,
+            );
+        }
+        if info.name.starts_with("Ground") || info.name.starts_with("GND") {
+            return (
+                "GND".to_string(),
+                Color::from_rgb(0.47, 0.53, 0.60),
+                false,
+            );
+        }
+
+        if let Some(bcm) = info.bcm {
+            let is_high = levels.get(&bcm).copied().unwrap_or(false);
+            let state_sym = if is_high { "●" } else { "○" };
+            if let Some(m) = cfg.mappings.iter().find(|m| m.bcm_pin == bcm) {
+                let col = match m.direction {
+                    PinDirection::Input => Color::from_rgb(0.34, 0.71, 0.76),
+                    PinDirection::Output => Color::from_rgb(0.18, 0.84, 0.45),
+                };
+                let txt = format!("{state_sym} {} [{}]", info.name, m.address);
+                (txt, col, m.direction == PinDirection::Input)
+            } else {
+                let txt = format!("{state_sym} {}", info.name);
+                (txt, Color::from_rgb(0.71, 0.75, 0.80), false)
+            }
+        } else {
+            (
+                info.name.to_string(),
+                Color::from_rgb(0.60, 0.65, 0.70),
+                false,
+            )
+        }
+    }
+
     fn view_bottom_dock_content(&self) -> Element<'_, Message> {
         match self.bottom_dock_tab {
             BottomDockTab::Diagnostics => {
@@ -4451,22 +4504,95 @@ pub fn subscription(&self) -> iced::Subscription<Message> {
                 } else {
                     "DISABLED"
                 };
-                row![
-                    button(text(format!("HAL Driver ({hal_status})")).size(11))
+
+                let header_row = row![
+                    text("Raspberry Pi 40-Pin GPIO Hardware Interface")
+                        .size(12)
+                        .color(StudioTheme::ACCENT_CYAN),
+                    text("|").size(12).color(StudioTheme::BORDER_CARD),
+                    button(text(format!("HAL: {hal_status}")).size(11))
                         .on_press(Message::ToggleHalEnabled)
                         .style(if self.hal_enabled {
                             StudioTheme::success_button
                         } else {
                             StudioTheme::secondary_button
                         })
-                        .padding([4, 10]),
-                    button(text("Toggle Mock BCM 17 (IX0.0)").size(11))
-                        .on_press(Message::MockGpioPinToggled(17))
-                        .style(StudioTheme::secondary_button)
-                        .padding([4, 10]),
+                        .padding([3, 8]),
+                    text(format!("Active Driver: {}", self.hal_driver.name()))
+                        .size(11)
+                        .color(StudioTheme::TEXT_MUTED),
                 ]
-                .spacing(12)
-                .into()
+                .spacing(10)
+                .align_y(Alignment::Center);
+
+                let live_levels = self.hal_driver.pin_levels();
+                let mut grid_col = column![].spacing(3);
+
+                for pair_idx in 0..20 {
+                    let odd = &RPI_40PIN_HEADER[pair_idx * 2];
+                    let even = &RPI_40PIN_HEADER[pair_idx * 2 + 1];
+
+                    let (odd_txt, odd_col, odd_clickable) =
+                        Self::rpi_pin_style(odd, &self.hal_config, &live_levels);
+                    let (even_txt, even_col, even_clickable) =
+                        Self::rpi_pin_style(even, &self.hal_config, &live_levels);
+
+                    let odd_widget: Element<'_, Message> = if odd_clickable && let Some(bcm) = odd.bcm {
+                        button(text(odd_txt).size(10.5).color(odd_col))
+                            .on_press(Message::MockGpioPinToggled(bcm))
+                            .style(StudioTheme::ghost_button)
+                            .padding([1, 6])
+                            .into()
+                    } else {
+                        container(text(odd_txt).size(10.5).color(odd_col))
+                            .padding([1, 6])
+                            .into()
+                    };
+
+                    let even_widget: Element<'_, Message> = if even_clickable && let Some(bcm) = even.bcm {
+                        button(text(even_txt).size(10.5).color(even_col))
+                            .on_press(Message::MockGpioPinToggled(bcm))
+                            .style(StudioTheme::ghost_button)
+                            .padding([1, 6])
+                            .into()
+                    } else {
+                        container(text(even_txt).size(10.5).color(even_col))
+                            .padding([1, 6])
+                            .into()
+                    };
+
+                    let center_pin_badge = container(
+                        text(format!("{:>2} | {:<2}", odd.pin_number, even.pin_number))
+                            .size(10)
+                            .color(StudioTheme::TEXT_MUTED),
+                    )
+                    .padding([1, 6])
+                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                        1.0, 1.0, 1.0, 0.04,
+                    )));
+
+                    let pin_row = row![
+                        container(odd_widget)
+                            .width(Length::FillPortion(1))
+                            .align_x(iced::alignment::Horizontal::Right),
+                        center_pin_badge,
+                        container(even_widget)
+                            .width(Length::FillPortion(1))
+                            .align_x(iced::alignment::Horizontal::Left),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center);
+
+                    grid_col = grid_col.push(pin_row);
+                }
+
+                let pin_map_card = container(scrollable(grid_col).height(Length::Fill))
+                    .padding([6, 12])
+                    .style(StudioTheme::canvas_container_style)
+                    .width(Length::Fill)
+                    .height(Length::Fill);
+
+                column![header_row, pin_map_card].spacing(8).into()
             }
         }
     }

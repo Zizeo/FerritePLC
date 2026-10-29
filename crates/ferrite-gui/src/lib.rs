@@ -732,4 +732,16 @@ mod tests {
         let del = handle_keyboard_shortcut(&iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete), iced::keyboard::Modifiers::empty());
         assert!(matches!(del, Some(Message::SfcRequestDeleteSelected(_))));
     }
+
+    #[test]
+    fn test_rpi_40pin_header_pin_styling() {
+        let pin_1 = &ferrite_hal::RPI_40PIN_HEADER[0];
+        assert_eq!(pin_1.pin_number, 1);
+        assert!(pin_1.name.contains("3.3V") || pin_1.name.contains("3V3"));
+        assert!(pin_1.bcm.is_none());
+
+        let pin_11 = &ferrite_hal::RPI_40PIN_HEADER[10];
+        assert_eq!(pin_11.pin_number, 11);
+        assert_eq!(pin_11.bcm, Some(17));
+    }
 }
