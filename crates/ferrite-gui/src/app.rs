@@ -381,9 +381,9 @@ pub fn handle_keyboard_shortcut(
         }
     } else {
         match key {
-            iced::keyboard::Key::Named(
-                iced::keyboard::key::Named::Delete | iced::keyboard::key::Named::Backspace,
-            ) => Some(Message::SfcRequestDeleteSelected(String::new())),
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
+                Some(Message::SfcRequestDeleteSelected(String::new()))
+            }
             _ => None,
         }
     }
@@ -827,6 +827,37 @@ impl FerriteStudioApp {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        match &message {
+            Message::SaveProject
+            | Message::SaveProjectAsDialog
+            | Message::OpenProjectFolderDialog
+            | Message::OpenProjectManifestDialog
+            | Message::ExportPlcopenXmlDialog
+            | Message::ImportPlcopenXmlDialog
+            | Message::CheckProject
+            | Message::RunScenarios
+            | Message::ToggleRunSim
+            | Message::StepSimTick
+            | Message::ResetSim
+            | Message::ResetSimWarm
+            | Message::ResetSimCold
+            | Message::ToggleLeftExplorer
+            | Message::ToggleRightIo
+            | Message::ToggleBottomDock
+            | Message::DockLeftExplorer
+            | Message::DetachLeftExplorer
+            | Message::DockRightIo
+            | Message::DetachRightIo
+            | Message::DockBottomDock
+            | Message::DetachBottomDock
+            | Message::SetLanguage(_)
+            | Message::SetTheme(_)
+            | Message::SelectTab(_) => {
+                self.active_menu = None;
+            }
+            _ => {}
+        }
+
         match message {
             Message::None => Task::none(),
             Message::ToggleActiveMenu(menu) => {
@@ -1209,9 +1240,9 @@ impl FerriteStudioApp {
                     dialog = dialog.set_directory(&self.project.root_dir);
                 }
                 if let Some(folder) = dialog.pick_folder() {
-                    self.project.root_dir = folder.clone();
                     match self.project.save(&folder) {
                         Ok(()) => {
+                            self.project.root_dir = folder.clone();
                             self.modified = false;
                             self.status_banner = format!("Project saved to {}", folder.display());
                         }
@@ -3678,7 +3709,7 @@ impl FerriteStudioApp {
             .padding([6, 8]);
 
         let menu_bar = row![
-            button(text(self.ui_lang.tr("File v", "Fichier v")).size(11))
+            button(text(self.ui_lang.tr("File ▾", "Fichier ▾")).size(11))
                 .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::File)))
                 .style(if self.active_menu == Some(ActiveMenu::File) {
                     StudioTheme::secondary_button
@@ -3686,7 +3717,7 @@ impl FerriteStudioApp {
                     StudioTheme::ghost_button
                 })
                 .padding([3, 7]),
-            button(text(self.ui_lang.tr("PLC v", "API v")).size(11))
+            button(text(self.ui_lang.tr("PLC ▾", "API ▾")).size(11))
                 .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Plc)))
                 .style(if self.active_menu == Some(ActiveMenu::Plc) {
                     StudioTheme::secondary_button
@@ -3694,7 +3725,7 @@ impl FerriteStudioApp {
                     StudioTheme::ghost_button
                 })
                 .padding([3, 7]),
-            button(text(self.ui_lang.tr("Panels v", "Panneaux v")).size(11))
+            button(text(self.ui_lang.tr("Panels ▾", "Panneaux ▾")).size(11))
                 .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Panels)))
                 .style(if self.active_menu == Some(ActiveMenu::Panels) {
                     StudioTheme::secondary_button
@@ -3702,7 +3733,7 @@ impl FerriteStudioApp {
                     StudioTheme::ghost_button
                 })
                 .padding([3, 7]),
-            button(text(self.ui_lang.tr("Options v", "Options v")).size(11))
+            button(text(self.ui_lang.tr("Options ▾", "Options ▾")).size(11))
                 .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Options)))
                 .style(if self.active_menu == Some(ActiveMenu::Options) {
                     StudioTheme::secondary_button

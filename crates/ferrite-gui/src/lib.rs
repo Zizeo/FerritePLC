@@ -747,6 +747,34 @@ mod tests {
             iced::keyboard::Modifiers::empty(),
         );
         assert!(matches!(del, Some(Message::SfcRequestDeleteSelected(_))));
+
+        let backspace = handle_keyboard_shortcut(
+            &iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace),
+            iced::keyboard::Modifiers::empty(),
+        );
+        assert!(backspace.is_none());
+    }
+
+    #[test]
+    fn test_active_menu_auto_dismissal() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::app::ActiveMenu;
+        let temp_dir = std::env::temp_dir().join("ferrite_test_menu_dismiss");
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let scaffold = ferrite_project::Project::scaffold(&temp_dir, "test_menu")?;
+        let mut app = FerriteStudioApp::new(scaffold);
+
+        app.active_menu = Some(ActiveMenu::File);
+        let _ = app.update(Message::SaveProject);
+        assert_eq!(app.active_menu, None);
+
+        app.active_menu = Some(ActiveMenu::Plc);
+        let _ = app.update(Message::CheckProject);
+        assert_eq!(app.active_menu, None);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
     }
 
     #[test]
