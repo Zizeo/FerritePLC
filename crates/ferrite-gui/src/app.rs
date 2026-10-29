@@ -48,6 +48,40 @@ pub enum BottomDockTab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SimSpeed {
+    Slow0_1x,
+    #[default]
+    Realtime1x,
+    Fast2x,
+    Fast5x,
+    Fast10x,
+    Max,
+}
+
+impl SimSpeed {
+    pub fn batch_size(self) -> usize {
+        match self {
+            Self::Slow0_1x | Self::Realtime1x => 1,
+            Self::Fast2x => 2,
+            Self::Fast5x => 5,
+            Self::Fast10x => 10,
+            Self::Max => 50,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Slow0_1x => "0.1x",
+            Self::Realtime1x => "1x",
+            Self::Fast2x => "2x",
+            Self::Fast5x => "5x",
+            Self::Fast10x => "10x",
+            Self::Max => "Max",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UiTheme {
     #[default]
     Dark,
@@ -87,6 +121,7 @@ pub enum Message {
     // Simulation controls
     ToggleRunSim,
     StepSimTick,
+    SetSimSpeed(SimSpeed),
     ResetSim,
     PlcTickTimer,
     RunScenarios,
@@ -235,6 +270,7 @@ pub struct FerriteStudioApp {
     pub diagnostics: Vec<ValidationDiagnostic>,
     pub active_tab: WorkspaceTab,
     pub sim_running: bool,
+    pub sim_speed: SimSpeed,
     pub modified: bool,
     pub last_tick: Instant,
     pub status_banner: String,
@@ -356,6 +392,7 @@ impl FerriteStudioApp {
             diagnostics,
             active_tab: first_pou,
             sim_running: false,
+            sim_speed: SimSpeed::Realtime1x,
             modified: false,
             last_tick: Instant::now(),
             status_banner,
@@ -427,7 +464,14 @@ impl FerriteStudioApp {
     pub fn subscription(&self) -> iced::Subscription<Message> {
         let close_sub = iced::window::close_requests().map(Message::WindowCloseRequested);
         let tick_sub = if self.sim_running {
-            let period = Duration::from_millis(self.project.manifest.scan_cycle_ms.max(5));
+            let scan_ms = self.project.manifest.scan_cycle_ms;
+            let period = match self.sim_speed {
+                SimSpeed::Slow0_1x => Duration::from_millis((scan_ms * 10).max(50)),
+                SimSpeed::Realtime1x | SimSpeed::Fast2x | SimSpeed::Fast5x | SimSpeed::Fast10x => {
+                    Duration::from_millis(scan_ms.max(5))
+                }
+                SimSpeed::Max => Duration::from_millis(10),
+            };
             iced::time::every(period).map(|_| Message::PlcTickTimer)
         } else {
             iced::Subscription::none()
@@ -540,7 +584,7 @@ impl FerriteStudioApp {
             let _ = self.hal_driver.read_inputs(&mut rt.process_image);
         }
 
-        let tel = rt.step_scan()?;
+        let tel = rt.step_scan_batch(self.sim_speed.batch_size())?;
         self.trend_plotter.sample(rt);
 
         if self.hal_enabled {
@@ -811,7 +855,29 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::PlcTickTimer => {
-                let _ = self.execute_plc_scan_tick();
+                match self.execute_plc_scan_tick() {
+                    Ok(tel) => {
+                        if tel.breakpoint_hit {
+                            self.sim_running = false;
+                            let bp_info = match &tel.hit_breakpoint {
+                                Some(ferrite_runtime::Breakpoint::ScanCount(n)) => format!("Scan count #{n} reached"),
+                                Some(ferrite_runtime::Breakpoint::SymbolTrue(s)) => format!("Symbol '{s}' is TRUE"),
+                                Some(ferrite_runtime::Breakpoint::Pou(id)) => format!("POU '{id}' invoked"),
+                                None => "Condition satisfied".to_string(),
+                            };
+                            self.status_banner = format!("⚠️ Breakpoint hit at scan #{} (virtual time {}ms): {}", tel.scan_count, tel.virtual_time_ms, bp_info);
+                            self.bottom_dock_tab = BottomDockTab::Diagnostics;
+                        }
+                    }
+                    Err(e) => {
+                        self.sim_running = false;
+                        self.status_banner = format!("Runtime error: {e}");
+                    }
+                }
+                Task::none()
+            }
+            Message::SetSimSpeed(speed) => {
+                self.sim_speed = speed;
                 Task::none()
             }
             Message::RunScenarios => {
@@ -2480,6 +2546,35 @@ impl FerriteStudioApp {
             .style(StudioTheme::secondary_button)
             .padding([6, 12]);
 
+        let speeds = [
+            SimSpeed::Slow0_1x,
+            SimSpeed::Realtime1x,
+            SimSpeed::Fast2x,
+            SimSpeed::Fast5x,
+            SimSpeed::Fast10x,
+            SimSpeed::Max,
+        ];
+        let mut speed_row = row![].spacing(2);
+        for s in speeds {
+            let is_sel = self.sim_speed == s;
+            speed_row = speed_row.push(
+                button(text(s.label()).size(10))
+                    .on_press(Message::SetSimSpeed(s))
+                    .style(if is_sel {
+                        StudioTheme::primary_button
+                    } else {
+                        StudioTheme::ghost_button
+                    })
+                    .padding([3, 6]),
+            );
+        }
+        let speed_group = row![
+            text(self.ui_lang.tr("Speed:", "Vitesse:")).size(11).color(StudioTheme::TEXT_MUTED),
+            speed_row,
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center);
+
         let save_btn = button(text(self.ui_lang.tr("Save", "Enregistrer")).size(12))
             .on_press(Message::SaveProject)
             .style(StudioTheme::secondary_button)
@@ -2536,6 +2631,8 @@ impl FerriteStudioApp {
                 run_btn,
                 step_btn,
                 reset_btn,
+                iced::widget::Space::with_width(6),
+                speed_group,
                 iced::widget::Space::with_width(8),
                 save_btn,
                 check_btn,
