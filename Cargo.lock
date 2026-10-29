@@ -1415,6 +1415,7 @@ name = "ferrite-runtime"
 version = "0.1.0"
 dependencies = [
  "ferrite-core",
+ "ferrite-lang-st",
  "ferrite-project",
  "serde",
  "serde_json",
