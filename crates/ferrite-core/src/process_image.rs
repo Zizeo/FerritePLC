@@ -196,6 +196,35 @@ impl ProcessImage {
         Ok(())
     }
 
+    /// Returns the total count of forced bits across all memory areas (%I, %Q, %M).
+    pub fn active_forces_count(&self) -> usize {
+        let count_bits = |slice: &[u8]| -> usize {
+            slice.iter().map(|b| b.count_ones() as usize).sum()
+        };
+        count_bits(&self.force_mask_inputs)
+            + count_bits(&self.force_mask_outputs)
+            + count_bits(&self.force_mask_markers)
+    }
+
+    /// Clears all active force bitmasks and forced values across %I, %Q, %M.
+    pub fn unforce_all(&mut self) {
+        self.force_mask_inputs.fill(0);
+        self.force_val_inputs.fill(0);
+        self.force_mask_outputs.fill(0);
+        self.force_val_outputs.fill(0);
+        self.force_mask_markers.fill(0);
+        self.force_val_markers.fill(0);
+    }
+
+    /// Zeroes all memory buffers (%I, %Q, %M).
+    pub fn clear(&mut self) {
+        self.inputs.fill(0);
+        self.hw_inputs.fill(0);
+        self.outputs.fill(0);
+        self.hw_outputs.fill(0);
+        self.markers.fill(0);
+    }
+
     fn read_from_slice(
         slice: &[u8],
         addr: DirectAddress,
@@ -330,3 +359,21 @@ impl ProcessImage {
 }
 
 pub type MemoryMap = ProcessImage;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_process_image_forces_count_and_unforce_all() -> Result<(), Box<dyn std::error::Error>> {
+        let mut pi = ProcessImage::new(64);
+        let in_addr: DirectAddress = "%IX0.0".parse()?;
+        let out_addr: DirectAddress = "%QX0.1".parse()?;
+        pi.force(in_addr, &IecValue::Bool(true))?;
+        pi.force(out_addr, &IecValue::Bool(true))?;
+        assert_eq!(pi.active_forces_count(), 2);
+        pi.unforce_all();
+        assert_eq!(pi.active_forces_count(), 0);
+        Ok(())
+    }
+}

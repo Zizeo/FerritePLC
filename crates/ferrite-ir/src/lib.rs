@@ -87,12 +87,16 @@ pub enum IrExpr {
 }
 
 impl IrExpr {
-    pub fn evaluate(&self, ctx: &ScanContext<'_>, pou_name: &str) -> Result<IecValue, RuntimeError> {
+    /// Pure, read-only evaluation of an expression using an arbitrary symbol resolver closure.
+    pub fn evaluate_with_resolver<F>(&self, resolver: &F, pou_name: &str) -> Result<IecValue, RuntimeError>
+    where
+        F: Fn(&str) -> Result<IecValue, RuntimeError>,
+    {
         match self {
             Self::Literal(v) => Ok(v.clone()),
-            Self::Symbol(sym) => ctx.read_symbol(sym),
+            Self::Symbol(sym) => resolver(sym),
             Self::Unary { op, expr } => {
-                let val = expr.evaluate(ctx, pou_name)?;
+                let val = expr.evaluate_with_resolver(resolver, pou_name)?;
                 match op {
                     IrUnaryOp::Not => match val {
                         IecValue::Bool(b) => Ok(IecValue::Bool(!b)),
@@ -117,18 +121,22 @@ impl IrExpr {
                 }
             }
             Self::Binary { op, left, right } => {
-                let lv = left.evaluate(ctx, pou_name)?;
-                let rv = right.evaluate(ctx, pou_name)?;
+                let lv = left.evaluate_with_resolver(resolver, pou_name)?;
+                let rv = right.evaluate_with_resolver(resolver, pou_name)?;
                 eval_binary_op(*op, &lv, &rv, pou_name)
             }
             Self::Call { function_name, args } => {
                 let mut evaluated_args = Vec::with_capacity(args.len());
                 for a in args {
-                    evaluated_args.push(a.evaluate(ctx, pou_name)?);
+                    evaluated_args.push(a.evaluate_with_resolver(resolver, pou_name)?);
                 }
                 eval_math_function(function_name, &evaluated_args, pou_name)
             }
         }
+    }
+
+    pub fn evaluate(&self, ctx: &ScanContext<'_>, pou_name: &str) -> Result<IecValue, RuntimeError> {
+        self.evaluate_with_resolver(&|sym| ctx.read_symbol(sym), pou_name)
     }
 
     pub fn infer_type(&self, tags: &TagTable, pou_name: &str) -> Result<IecType, IrError> {
@@ -1051,5 +1059,28 @@ impl PouGraph {
     pub fn pou_ids_in_order(&self, scope: &str) -> Result<Vec<PouId>, IrError> {
         let sorted = self.topological_sort(scope)?;
         Ok(sorted.into_iter().map(PouId).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ferrite_core::CoreError;
+
+    #[test]
+    fn test_ir_expr_evaluate_with_resolver() -> Result<(), Box<dyn std::error::Error>> {
+        let expr = IrExpr::Binary {
+            op: IrBinaryOp::And,
+            left: Box::new(IrExpr::Symbol("Start_PB".to_string())),
+            right: Box::new(IrExpr::Symbol("Safety_OK".to_string())),
+        };
+        let lookup = |sym: &str| match sym {
+            "Start_PB" => Ok(IecValue::Bool(true)),
+            "Safety_OK" => Ok(IecValue::Bool(true)),
+            _ => Err(CoreError::UnknownSymbol(sym.to_string()).into()),
+        };
+        let res = expr.evaluate_with_resolver(&lookup, "main")?;
+        assert_eq!(res, IecValue::Bool(true));
+        Ok(())
     }
 }

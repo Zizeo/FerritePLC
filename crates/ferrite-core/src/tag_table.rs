@@ -359,4 +359,23 @@ impl TagTable {
             }
         }
     }
+
+    /// Returns the total count of forced tags in this TagTable.
+    pub fn active_forces_count(&self) -> usize {
+        self.tags.iter().filter(|t| t.forced.is_some()).count()
+    }
+
+    /// Clears all tag forces.
+    pub fn unforce_all(&mut self) {
+        for t in &mut self.tags {
+            t.forced = None;
+        }
+    }
+
+    /// Resets all tags back to their initial configured values.
+    pub fn reset_values_to_initial(&mut self) {
+        for t in &mut self.tags {
+            t.value = Some(t.initial_value.clone());
+        }
+    }
 }
