@@ -344,6 +344,40 @@ pub struct FerriteStudioApp {
     pub sfc_delete_modal: Option<(String, Vec<crate::canvas_sfc::SfcElementKey>)>,
 }
 
+pub fn handle_keyboard_shortcut(
+    key: &iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<Message> {
+    if modifiers.command() {
+        match key {
+            iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s") => {
+                Some(Message::SaveProject)
+            }
+            iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("o") => {
+                Some(Message::OpenProjectFolderDialog)
+            }
+            iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("z") => {
+                if modifiers.shift() {
+                    Some(Message::Redo)
+                } else {
+                    Some(Message::Undo)
+                }
+            }
+            iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("y") => {
+                Some(Message::Redo)
+            }
+            _ => None,
+        }
+    } else {
+        match key {
+            iced::keyboard::Key::Named(
+                iced::keyboard::key::Named::Delete | iced::keyboard::key::Named::Backspace,
+            ) => Some(Message::SfcRequestDeleteSelected(String::new())),
+            _ => None,
+        }
+    }
+}
+
 impl FerriteStudioApp {
     pub fn new(initial_project: Project) -> Self {
         Self::with_language(initial_project, UiLanguage::En)
@@ -515,7 +549,7 @@ impl FerriteStudioApp {
         }
     }
 
-    pub fn subscription(&self) -> iced::Subscription<Message> {
+pub fn subscription(&self) -> iced::Subscription<Message> {
         let close_sub = iced::window::close_requests().map(Message::WindowCloseRequested);
         let tick_sub = if self.sim_running {
             let scan_ms = self.project.manifest.scan_cycle_ms;
@@ -530,17 +564,8 @@ impl FerriteStudioApp {
         } else {
             iced::Subscription::none()
         };
-        let key_sub = iced::keyboard::on_key_press(|key, _modifiers| {
-            if matches!(
-                key,
-                iced::keyboard::Key::Named(
-                    iced::keyboard::key::Named::Delete | iced::keyboard::key::Named::Backspace
-                )
-            ) {
-                Some(Message::SfcRequestDeleteSelected(String::new()))
-            } else {
-                None
-            }
+        let key_sub = iced::keyboard::on_key_press(|key, modifiers| {
+            handle_keyboard_shortcut(&key, modifiers)
         });
         iced::Subscription::batch([close_sub, tick_sub, key_sub])
     }
