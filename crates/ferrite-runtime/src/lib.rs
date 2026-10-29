@@ -353,7 +353,14 @@ impl PlcRuntime {
             return Some(false);
         }
         let expr = ferrite_lang_st::parse_st_expression(trimmed, pou_name).ok()?;
-        let val = expr.evaluate_with_resolver(&|sym| self.read_value(sym), pou_name).ok()?;
+                let val = expr.evaluate_with_resolver(&|sym| {
+            if let Ok(v) = self.read_value(sym) {
+                Ok(v)
+            } else {
+                let scoped = format!("{pou_name}.{sym}");
+                self.read_value(&scoped)
+            }
+        }, pou_name).ok()?;
         val.as_bool().ok()
     }
 
