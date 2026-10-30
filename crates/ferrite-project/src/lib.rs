@@ -663,11 +663,20 @@ impl Project {
                     ..Default::default()
                 },
                 SfcTransition {
-                    id: "T5_OrConv".to_string(),
-                    from_steps: vec!["4".to_string(), "5".to_string()],
+                    id: "T5a_Merge_Fast".to_string(),
+                    from_steps: vec!["4".to_string()],
                     to_steps: vec!["6".to_string()],
-                    receptivity: "Mix_Done OR Tank_Temp >= 60.0".to_string(),
-                    convergence: ConvergenceKind::Or,
+                    receptivity: "Mix_Done".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    ..Default::default()
+                },
+                SfcTransition {
+                    id: "T5b_Merge_Slow".to_string(),
+                    from_steps: vec!["5".to_string()],
+                    to_steps: vec!["6".to_string()],
+                    receptivity: "Tank_Temp >= 60.0".to_string(),
+                    convergence: ConvergenceKind::And,
                     divergence: DivergenceKind::And,
                     ..Default::default()
                 },
@@ -1041,7 +1050,7 @@ END_PROGRAM
                     },
                     SimStep {
                         scan: 6,
-                        description: "Scan 6: T5_OrConv merges into Step 6 -> triggers subordinate cip_clean.X1 via cross-SFC transition".to_string(),
+                        description: "Scan 6: T5a_Merge_Fast / T5b_Merge_Slow (OR Convergence) merges into Step 6 -> triggers subordinate cip_clean.X1 via cross-SFC transition".to_string(),
                         set: HashMap::new(),
                         expect: step6_expect,
                     },
