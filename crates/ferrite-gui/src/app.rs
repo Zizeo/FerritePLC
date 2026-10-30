@@ -3786,29 +3786,42 @@ impl FerriteStudioApp {
         .align_y(Alignment::Center);
 
         let scrollable_tools = scrollable(
-            row![
-                text("FerritePLC").size(15),
-                menu_bar,
-                telemetry_pill,
-                forces_banner,
-                iced::widget::Space::with_width(12),
-                run_btn,
-                step_btn,
-                reset_warm_btn,
-                reset_cold_btn,
-                iced::widget::Space::with_width(6),
-                speed_group,
-                iced::widget::Space::with_width(8),
-                save_btn,
-                check_btn,
-                undo_btn,
-                redo_btn,
-                scenarios_btn,
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
+            container(
+                row![
+                    text("FerritePLC").size(15),
+                    menu_bar,
+                    telemetry_pill,
+                    forces_banner,
+                    iced::widget::Space::with_width(12),
+                    run_btn,
+                    step_btn,
+                    reset_warm_btn,
+                    reset_cold_btn,
+                    iced::widget::Space::with_width(6),
+                    speed_group,
+                    iced::widget::Space::with_width(8),
+                    save_btn,
+                    check_btn,
+                    undo_btn,
+                    redo_btn,
+                    scenarios_btn,
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 4.0,
+                bottom: 8.0,
+                left: 0.0,
+            }),
         )
-        .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::default()))
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new()
+                .width(4)
+                .scroller_width(4)
+                .margin(1),
+        ))
         .width(Length::Fill);
 
         let trailing_controls = row![
@@ -3829,7 +3842,12 @@ impl FerriteStudioApp {
             .align_y(Alignment::Center)
             .width(Length::Fill),
         )
-        .padding([8, 16])
+        .padding(iced::Padding {
+            top: 6.0,
+            right: 16.0,
+            bottom: 4.0,
+            left: 16.0,
+        })
         .style(StudioTheme::header_container_style)
         .width(Length::Fill)
         .into()

@@ -220,20 +220,61 @@ pub const ALL_DIVERGENCE_KINDS: [SfcDivergenceWrapper; 2] = [
 ];
 
 pub fn is_step_active(rt: &PlcRuntime, pou_name: &str, step_id: &str) -> (bool, u64) {
-    let tag1 = format!("{step_id}.state");
-    let tag2 = format!("{pou_name}.{step_id}.state");
-    let t_tag1 = format!("{step_id}.t");
-    let t_tag2 = format!("{pou_name}.{step_id}.t");
+    is_step_active_with_name(rt, pou_name, step_id, "")
+}
 
-    let is_on = match rt.read_value(&tag1).or_else(|_| rt.read_value(&tag2)) {
-        Ok(IecValue::Bool(b)) => b,
-        _ => false,
-    };
+pub fn is_step_active_with_name(
+    rt: &PlcRuntime,
+    pou_name: &str,
+    step_id: &str,
+    step_name: &str,
+) -> (bool, u64) {
+    let clean_id = step_id.trim().trim_start_matches(['X', 'x']);
+    let x_id = format!("X{clean_id}");
 
-    let elapsed_ms = match rt.read_value(&t_tag1).or_else(|_| rt.read_value(&t_tag2)) {
-        Ok(IecValue::Time(ms)) => ms,
-        _ => 0,
-    };
+    let mut state_candidates = Vec::with_capacity(6);
+    let mut time_candidates = Vec::with_capacity(6);
+
+    if !pou_name.is_empty() {
+        state_candidates.push(format!("{pou_name}.{x_id}.state"));
+        state_candidates.push(format!("{pou_name}.{step_id}.state"));
+        if !step_name.is_empty() && step_name != step_id {
+            state_candidates.push(format!("{pou_name}.{step_name}.state"));
+        }
+        time_candidates.push(format!("{pou_name}.{x_id}.t"));
+        time_candidates.push(format!("{pou_name}.{step_id}.t"));
+        if !step_name.is_empty() && step_name != step_id {
+            time_candidates.push(format!("{pou_name}.{step_name}.t"));
+        }
+    }
+
+    state_candidates.push(format!("{x_id}.state"));
+    state_candidates.push(format!("{step_id}.state"));
+    if !step_name.is_empty() && step_name != step_id {
+        state_candidates.push(format!("{step_name}.state"));
+    }
+
+    time_candidates.push(format!("{x_id}.t"));
+    time_candidates.push(format!("{step_id}.t"));
+    if !step_name.is_empty() && step_name != step_id {
+        time_candidates.push(format!("{step_name}.t"));
+    }
+
+    let is_on = state_candidates
+        .iter()
+        .find_map(|sym| match rt.read_value(sym) {
+            Ok(IecValue::Bool(b)) => Some(b),
+            _ => None,
+        })
+        .unwrap_or(false);
+
+    let elapsed_ms = time_candidates
+        .iter()
+        .find_map(|sym| match rt.read_value(sym) {
+            Ok(IecValue::Time(ms)) => Some(ms),
+            _ => None,
+        })
+        .unwrap_or(0);
 
     (is_on, elapsed_ms)
 }
@@ -1609,10 +1650,10 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         frame.stroke(
                             &path,
                             Stroke::default()
-                                .with_color(COLOR_ACTIVE_STEP)
-                                .with_width(1.8),
+                                .with_color(COLOR_INACTIVE_STEP)
+                                .with_width(2.0),
                         );
-                        draw_arrowhead(&mut frame, sp, (0.0, 1.0), COLOR_ACTIVE_STEP);
+                        draw_arrowhead(&mut frame, sp, (0.0, 1.0), COLOR_INACTIVE_STEP);
                     }
                 }
             }
@@ -1623,7 +1664,7 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             let (x, y) = self.step_pos(step, state);
             let (active, elapsed_ms) = self
                 .runtime
-                .map(|rt| is_step_active(rt, &self.program.name, &step.id))
+                .map(|rt| is_step_active_with_name(rt, &self.program.name, &step.id, &step.name))
                 .unwrap_or((false, 0));
 
             let is_selected = self.selected == Some(&SfcElementKey::Step(step.id.clone()))

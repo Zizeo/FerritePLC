@@ -1295,28 +1295,30 @@ END_PROGRAM
         for fb in &self.fb_instances.instances {
             table.register_fb(fb.clone());
         }
-        for pou in self.pous.values() {
-            match pou {
-                PouSource::Sfc(sfc) => {
-                    sfc.register_introspection_symbols(&mut table)?;
-                }
-                PouSource::Fbd(fbd) => {
-                    for blk in &fbd.blocks {
-                        if let FbdBlockKind::StandardFb { instance, fb_type } = &blk.kind {
-                            if let Some(existing) = table.get_fb_mut(instance) {
-                                if let Some(k) = fb_type {
-                                    existing.kind = *k;
+        for entry in &self.manifest.pous {
+            if let Some(pou) = self.pous.get(&entry.name) {
+                match pou {
+                    PouSource::Sfc(sfc) => {
+                        sfc.register_introspection_symbols(&mut table)?;
+                    }
+                    PouSource::Fbd(fbd) => {
+                        for blk in &fbd.blocks {
+                            if let FbdBlockKind::StandardFb { instance, fb_type } = &blk.kind {
+                                if let Some(existing) = table.get_fb_mut(instance) {
+                                    if let Some(k) = fb_type {
+                                        existing.kind = *k;
+                                    }
+                                } else {
+                                    table.register_fb(FbInstance::new(
+                                        instance.clone(),
+                                        fb_type.unwrap_or(StandardFbKind::Ton),
+                                    ));
                                 }
-                            } else {
-                                table.register_fb(FbInstance::new(
-                                    instance.clone(),
-                                    fb_type.unwrap_or(StandardFbKind::Ton),
-                                ));
                             }
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         Ok(table)

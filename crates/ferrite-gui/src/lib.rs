@@ -854,4 +854,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
+
+    #[test]
+    fn test_sfc_active_step_multi_pou_isolation() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::canvas_sfc::is_step_active;
+        let temp_dir = std::env::temp_dir().join("ferrite_test_sfc_isolation");
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let scaffold = ferrite_project::Project::scaffold(&temp_dir, "test_iso")?;
+        let mut app = FerriteStudioApp::new(scaffold);
+
+        // Advance simulation:
+        // Set EStop_OK, Stop_Button, Guard_Door_Closed, Start_Button
+        if let Some(ref mut rt) = app.runtime {
+            rt.force("EStop_OK", ferrite_core::IecValue::Bool(true))?;
+            rt.force("Stop_Button", ferrite_core::IecValue::Bool(true))?;
+            rt.force("Guard_Door_Closed", ferrite_core::IecValue::Bool(true))?;
+            rt.force("Start_Button", ferrite_core::IecValue::Bool(true))?;
+        }
+        let _ = app.execute_plc_scan_tick()?;
+        let _ = app.execute_plc_scan_tick()?;
+
+        let rt = app.runtime.as_ref().ok_or("runtime not initialized")?;
+        // In batch_seq: Step 1 and Step 2 should be active, Step 0 should be inactive
+        assert!(rt.read_value("batch_seq.X1.state")?.as_bool()?);
+        assert!(rt.read_value("batch_seq.X2.state")?.as_bool()?);
+        assert!(!rt.read_value("batch_seq.X0.state")?.as_bool()?);
+
+        // In cip_clean: Step 0 should be active (Standby), Step 1 and 2 should be inactive
+        assert!(rt.read_value("cip_clean.X0.state")?.as_bool()?);
+        assert!(!rt.read_value("cip_clean.X1.state")?.as_bool()?);
+        assert!(!rt.read_value("cip_clean.X2.state")?.as_bool()?);
+
+        // Verify is_step_active correctly isolates cip_clean from batch_seq
+        let (cip_s0, _) = is_step_active(rt, "cip_clean", "0");
+        let (cip_s1, _) = is_step_active(rt, "cip_clean", "1");
+        let (cip_s2, _) = is_step_active(rt, "cip_clean", "2");
+
+        assert!(cip_s0, "cip_clean Step 0 (Standby) must be active");
+        assert!(!cip_s1, "cip_clean Step 1 must NOT be active while batch_seq has step 1 active");
+        assert!(!cip_s2, "cip_clean Step 2 must NOT be active while batch_seq has step 2 active");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }
