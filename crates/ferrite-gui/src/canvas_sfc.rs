@@ -3609,15 +3609,13 @@ mod tests {
         ));
         let _ = app.update(Message::SfcAddOrDivergence("seq_test".to_string()));
         if let Some(ferrite_project::PouSource::Sfc(sfc)) = app.project.pous.get("seq_test") {
-            let div_tr = sfc
-                .transitions
-                .iter()
-                .find(|t| t.divergence == DivergenceKind::Or)
-                .ok_or("OR divergence transition must exist")?;
-            assert_eq!(div_tr.to_steps.len(), 3);
-            assert!(div_tr.to_steps.contains(&"1".to_string()));
-            assert!(div_tr.to_steps.contains(&"2".to_string()));
-            assert!(div_tr.to_steps.contains(&"3".to_string()));
+            // In IEC 60848, OR divergence has an independent transition on each branch:
+            let branch1 = sfc.transitions.iter().find(|t| t.to_steps.contains(&"1".to_string())).ok_or("Branch 1 transition must exist")?;
+            let branch2 = sfc.transitions.iter().find(|t| t.to_steps.contains(&"2".to_string())).ok_or("Branch 2 transition must exist")?;
+            let branch3 = sfc.transitions.iter().find(|t| t.to_steps.contains(&"3".to_string())).ok_or("Branch 3 transition must exist")?;
+            assert_eq!(branch1.to_steps, vec!["1".to_string()]);
+            assert_eq!(branch2.to_steps, vec!["2".to_string()]);
+            assert_eq!(branch3.to_steps, vec!["3".to_string()]);
         }
 
         // 4. Test delete: single-item selection deletes immediately without confirmation modal

@@ -2378,13 +2378,6 @@ impl FerriteStudioApp {
             }
             Message::SfcAddOrDivergence(pou_name) => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
-                    let next_t = sfc.transitions.len() + 1;
-                    let trans_id = format!("T{next_t}_OrDiv");
-
-                    let mut from_steps = Vec::new();
-                    let mut to_steps = Vec::new();
-                    let mut pos = None;
-
                     let selected_steps: Vec<String> = self
                         .sfc_selected_elements
                         .iter()
@@ -2397,60 +2390,56 @@ impl FerriteStudioApp {
                         })
                         .collect();
 
-                    if selected_steps.len() >= 2 {
-                        to_steps = selected_steps.clone();
-                        let step_positions: Vec<(i32, i32)> = sfc
-                            .steps
-                            .iter()
-                            .filter(|s| selected_steps.contains(&s.id))
-                            .filter_map(|s| s.grid_pos)
-                            .collect();
-                        if !step_positions.is_empty() {
-                            let avg_x = step_positions.iter().map(|(x, _)| x).sum::<i32>()
-                                / step_positions.len() as i32;
-                            let min_y = step_positions.iter().map(|(_, y)| *y).min().unwrap_or(140);
-                            pos = Some((avg_x + 50, (min_y - 80).max(40)));
-                        }
-                    } else if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) =
+                    let from_step = if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) =
                         self.sfc_selected
                         && p == &pou_name
+                        && !selected_steps.contains(sid)
                     {
-                        from_steps.push(sid.clone());
-                        if let Some(s) = sfc.steps.iter().find(|s| &s.id == sid)
-                            && let Some((sx, sy)) = s.grid_pos
-                        {
-                            pos = Some((sx + 50, sy + 100));
+                        Some(sid.clone())
+                    } else {
+                        None
+                    };
+
+                    if selected_steps.len() >= 2 {
+                        // In IEC 60848: OR divergence requires an independent transition on each branch
+                        let mut next_t = sfc.transitions.len() + 1;
+                        for target_id in &selected_steps {
+                            let trans_id = format!("T{next_t}_Or_{target_id}");
+                            let s_pos = sfc.steps.iter().find(|s| &s.id == target_id).and_then(|s| s.grid_pos);
+                            let grid_pos = s_pos.map(|(sx, sy)| (sx + 50, (sy - 80).max(40)));
+                            sfc.transitions.push(SfcTransition {
+                                id: trans_id,
+                                from_steps: from_step.as_ref().map(|s| vec![s.clone()]).unwrap_or_default(),
+                                to_steps: vec![target_id.clone()],
+                                receptivity: "TRUE".to_string(),
+                                convergence: ConvergenceKind::And,
+                                divergence: DivergenceKind::And,
+                                grid_pos,
+                            });
+                            next_t += 1;
+                        }
+                    } else {
+                        // Create 2 alternative branch transitions originating from the selected source step (or default)
+                        let source_id = from_step.or_else(|| selected_steps.first().cloned());
+                        let source_pos = source_id.as_ref().and_then(|sid| {
+                            sfc.steps.iter().find(|s| &s.id == sid).and_then(|s| s.grid_pos)
+                        });
+                        let mut next_t = sfc.transitions.len() + 1;
+                        for i in 1..=2 {
+                            let trans_id = format!("T{next_t}_Or{i}");
+                            let grid_pos = source_pos.map(|(sx, sy)| (sx + (i - 1) * 120, sy + 100));
+                            sfc.transitions.push(SfcTransition {
+                                id: trans_id,
+                                from_steps: source_id.as_ref().map(|s| vec![s.clone()]).unwrap_or_default(),
+                                to_steps: Vec::new(),
+                                receptivity: format!("Branch{i}_Cond"),
+                                convergence: ConvergenceKind::And,
+                                divergence: DivergenceKind::And,
+                                grid_pos,
+                            });
+                            next_t += 1;
                         }
                     }
-
-                    let grid_pos = pos.or_else(|| {
-                        let lowest_y = sfc
-                            .steps
-                            .iter()
-                            .filter_map(|s| s.grid_pos.map(|(_, y)| y + 60))
-                            .chain(
-                                sfc.transitions
-                                    .iter()
-                                    .filter_map(|t| t.grid_pos.map(|(_, y)| y + 20)),
-                            )
-                            .max();
-                        let base_x = sfc
-                            .transitions
-                            .first()
-                            .and_then(|t| t.grid_pos.map(|(x, _)| x))
-                            .unwrap_or(110);
-                        Some((base_x, lowest_y.map(|y| y + 40).unwrap_or(140)))
-                    });
-
-                    sfc.transitions.push(SfcTransition {
-                        id: trans_id,
-                        from_steps,
-                        to_steps,
-                        receptivity: "TRUE".to_string(),
-                        convergence: ConvergenceKind::And,
-                        divergence: DivergenceKind::Or,
-                        grid_pos,
-                    });
                     self.track_history();
                     self.modified = true;
                 }
@@ -2458,12 +2447,6 @@ impl FerriteStudioApp {
             }
             Message::SfcAddOrConvergence(pou_name) => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
-                    let next_t = sfc.transitions.len() + 1;
-                    let trans_id = format!("T{next_t}_OrConv");
-
-                    let mut from_steps = Vec::new();
-                    let mut pos = None;
-
                     let selected_steps: Vec<String> = self
                         .sfc_selected_elements
                         .iter()
@@ -2477,59 +2460,40 @@ impl FerriteStudioApp {
                         .collect();
 
                     if selected_steps.len() >= 2 {
-                        from_steps = selected_steps.clone();
-                        let step_positions: Vec<(i32, i32)> = sfc
-                            .steps
-                            .iter()
-                            .filter(|s| selected_steps.contains(&s.id))
-                            .filter_map(|s| s.grid_pos)
-                            .collect();
-                        if !step_positions.is_empty() {
-                            let avg_x = step_positions.iter().map(|(x, _)| x).sum::<i32>()
-                                / step_positions.len() as i32;
-                            let max_y = step_positions.iter().map(|(_, y)| *y).max().unwrap_or(100);
-                            pos = Some((avg_x + 50, max_y + 100));
+                        // In IEC 60848: OR convergence requires a transition on each branch before the common state
+                        let mut next_t = sfc.transitions.len() + 1;
+                        for src_id in &selected_steps {
+                            let trans_id = format!("T{next_t}_Conv_{src_id}");
+                            let s_pos = sfc.steps.iter().find(|s| &s.id == src_id).and_then(|s| s.grid_pos);
+                            let grid_pos = s_pos.map(|(sx, sy)| (sx + 50, sy + 100));
+                            sfc.transitions.push(SfcTransition {
+                                id: trans_id,
+                                from_steps: vec![src_id.clone()],
+                                to_steps: Vec::new(),
+                                receptivity: "TRUE".to_string(),
+                                convergence: ConvergenceKind::And,
+                                divergence: DivergenceKind::And,
+                                grid_pos,
+                            });
+                            next_t += 1;
                         }
                     } else if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) =
                         self.sfc_selected
                         && p == &pou_name
                     {
-                        from_steps.push(sid.clone());
-                        if let Some(s) = sfc.steps.iter().find(|s| &s.id == sid)
-                            && let Some((sx, sy)) = s.grid_pos
-                        {
-                            pos = Some((sx + 50, sy + 100));
-                        }
+                        let next_t = sfc.transitions.len() + 1;
+                        let s_pos = sfc.steps.iter().find(|s| &s.id == sid).and_then(|s| s.grid_pos);
+                        let grid_pos = s_pos.map(|(sx, sy)| (sx + 50, sy + 100));
+                        sfc.transitions.push(SfcTransition {
+                            id: format!("T{next_t}_Conv_{sid}"),
+                            from_steps: vec![sid.clone()],
+                            to_steps: Vec::new(),
+                            receptivity: "TRUE".to_string(),
+                            convergence: ConvergenceKind::And,
+                            divergence: DivergenceKind::And,
+                            grid_pos,
+                        });
                     }
-
-                    let grid_pos = pos.or_else(|| {
-                        let lowest_y = sfc
-                            .steps
-                            .iter()
-                            .filter_map(|s| s.grid_pos.map(|(_, y)| y + 60))
-                            .chain(
-                                sfc.transitions
-                                    .iter()
-                                    .filter_map(|t| t.grid_pos.map(|(_, y)| y + 20)),
-                            )
-                            .max();
-                        let base_x = sfc
-                            .transitions
-                            .first()
-                            .and_then(|t| t.grid_pos.map(|(x, _)| x))
-                            .unwrap_or(110);
-                        Some((base_x, lowest_y.map(|y| y + 40).unwrap_or(140)))
-                    });
-
-                    sfc.transitions.push(SfcTransition {
-                        id: trans_id,
-                        from_steps,
-                        to_steps: Vec::new(),
-                        receptivity: "TRUE".to_string(),
-                        convergence: ConvergenceKind::Or,
-                        divergence: DivergenceKind::And,
-                        grid_pos,
-                    });
                     self.track_history();
                     self.modified = true;
                 }
