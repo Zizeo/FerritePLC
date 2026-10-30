@@ -1,8 +1,7 @@
-use iced::border::Radius;
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, Text};
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, pick_list, row, text, text_input};
 use iced::{event, mouse};
-use iced::{Alignment, Background, Border, Color, Element, Length, Point, Rectangle, Theme, Vector};
+use iced::{Alignment, Color, Element, Length, Point, Rectangle, Theme, Vector};
 use serde::{Deserialize, Serialize};
 
 use ferrite_core::IecValue;
@@ -119,6 +118,170 @@ pub struct LdLayoutResult {
     pub total_bounds: Rectangle,
 }
 
+impl LdLayoutResult {
+    pub fn hit_test(&self, point: Point) -> Option<LdElementKey> {
+        for rung in &self.rungs {
+            // 1. Contacts
+            for elem in &rung.elements {
+                if elem.bounds.contains(point) {
+                    return Some(elem.key.clone());
+                }
+            }
+            // 2. Coils
+            for coil in &rung.coils {
+                if coil.bounds.contains(point) {
+                    return Some(coil.key.clone());
+                }
+            }
+            // 3. Branches
+            for br in &rung.branches {
+                let max_y = br.paths_y.iter().cloned().fold(br.start_y, f32::max);
+                let br_box = Rectangle {
+                    x: br.split_x - 10.0,
+                    y: br.start_y - 10.0,
+                    width: (br.merge_x - br.split_x + 20.0).max(20.0),
+                    height: (max_y - br.start_y + 20.0).max(20.0),
+                };
+                if br_box.contains(point) {
+                    let near_split = (point.x - br.split_x).abs() <= 10.0 && point.y >= br.start_y - 5.0 && point.y <= max_y + 5.0;
+                    let near_merge = (point.x - br.merge_x).abs() <= 10.0 && point.y >= br.start_y - 5.0 && point.y <= max_y + 5.0;
+                    if near_split || near_merge {
+                        return Some(br.key.clone());
+                    }
+                }
+            }
+            // 4. Rung header / left margin
+            let rung_header = Rectangle {
+                x: self.rail_left_x - 70.0,
+                y: rung.bounds.y,
+                width: 70.0,
+                height: RUNG_HEADER_HEIGHT,
+            };
+            if rung_header.contains(point) {
+                return Some(LdElementKey::Rung(rung.rung_idx));
+            }
+        }
+        None
+    }
+
+    pub fn elements_in_rect(&self, rect: Rectangle) -> Vec<LdElementKey> {
+        let mut keys = Vec::new();
+        let min_x = rect.x;
+        let max_x = rect.x + rect.width;
+        let min_y = rect.y;
+        let max_y = rect.y + rect.height;
+
+        let intersects = |b: &Rectangle| -> bool {
+            b.x < max_x && b.x + b.width > min_x && b.y < max_y && b.y + b.height > min_y
+        };
+
+        for rung in &self.rungs {
+            for elem in &rung.elements {
+                if intersects(&elem.bounds) {
+                    keys.push(elem.key.clone());
+                }
+            }
+            for coil in &rung.coils {
+                if intersects(&coil.bounds) {
+                    keys.push(coil.key.clone());
+                }
+            }
+            for br in &rung.branches {
+                let max_y = br.paths_y.iter().cloned().fold(br.start_y, f32::max);
+                let br_box = Rectangle {
+                    x: br.split_x,
+                    y: br.start_y,
+                    width: (br.merge_x - br.split_x).max(10.0),
+                    height: (max_y - br.start_y).max(10.0),
+                };
+                if intersects(&br_box) {
+                    keys.push(br.key.clone());
+                }
+            }
+        }
+        keys
+    }
+
+    pub fn find_nearest_drop_target(
+        &self,
+        point: Point,
+        dragged_keys: &[LdElementKey],
+    ) -> Option<LdDropTarget> {
+        let is_dragging_coil = dragged_keys.iter().any(|k| matches!(k, LdElementKey::Coil { .. }));
+
+        for rung in &self.rungs {
+            if is_dragging_coil {
+                let right_area = Rectangle {
+                    x: self.rail_right_x - WIRE_PAD - COIL_CARD_WIDTH - 30.0,
+                    y: rung.bounds.y,
+                    width: COIL_CARD_WIDTH + 60.0,
+                    height: rung.bounds.height,
+                };
+                if right_area.contains(point) {
+                    return Some(LdDropTarget::CoilSlot {
+                        rung: rung.rung_idx,
+                        index: rung.coils.len(),
+                    });
+                }
+            } else {
+                for elem in &rung.elements {
+                    if dragged_keys.contains(&elem.key) {
+                        continue;
+                    }
+                    if let LdElementKey::Contact { branch_path, index, .. } = &elem.key {
+                        if point.x >= elem.bounds.x - 20.0
+                            && point.x < elem.bounds.x + elem.bounds.width * 0.35
+                            && (point.y - (elem.bounds.y + elem.bounds.height / 2.0)).abs() <= 25.0
+                        {
+                            return Some(LdDropTarget::BeforeElement {
+                                rung: rung.rung_idx,
+                                branch_path: branch_path.clone(),
+                                index: *index,
+                            });
+                        }
+                        if point.x > elem.bounds.x + elem.bounds.width * 0.65
+                            && point.x <= elem.bounds.x + elem.bounds.width + 20.0
+                            && (point.y - (elem.bounds.y + elem.bounds.height / 2.0)).abs() <= 25.0
+                        {
+                            return Some(LdDropTarget::AfterElement {
+                                rung: rung.rung_idx,
+                                branch_path: branch_path.clone(),
+                                index: *index,
+                            });
+                        }
+                        if elem.bounds.contains(point)
+                            || (point.x >= elem.bounds.x
+                                && point.x <= elem.bounds.x + elem.bounds.width
+                                && (point.y - (elem.bounds.y + elem.bounds.height)).abs() <= 20.0)
+                        {
+                            return Some(LdDropTarget::NewBranch {
+                                rung: rung.rung_idx,
+                                branch_path: branch_path.clone(),
+                            });
+                        }
+                    }
+                }
+                if rung.elements.is_empty() {
+                    let wire_area = Rectangle {
+                        x: self.rail_left_x,
+                        y: rung.wire_y - 20.0,
+                        width: self.rail_right_x - self.rail_left_x,
+                        height: 40.0,
+                    };
+                    if wire_area.contains(point) {
+                        return Some(LdDropTarget::BeforeElement {
+                            rung: rung.rung_idx,
+                            branch_path: Vec::new(),
+                            index: 0,
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LdCanvasState {
     pub pan: Vector,
@@ -130,6 +293,7 @@ pub struct LdCanvasState {
     pub drop_hover: Option<LdDropTarget>,
     pub is_panning: bool,
     pub pan_start: Option<Point>,
+    pub modifiers: iced::keyboard::Modifiers,
 }
 
 impl Default for LdCanvasState {
@@ -144,14 +308,17 @@ impl Default for LdCanvasState {
             drop_hover: None,
             is_panning: false,
             pan_start: None,
+            modifiers: iced::keyboard::Modifiers::default(),
         }
     }
 }
 
 pub struct LdCanvasProgram<'a> {
+    pub pou_name: &'a str,
     pub program: &'a LdProgram,
     pub runtime: Option<&'a PlcRuntime>,
-    pub state: &'a LdCanvasState,
+    pub selected: Option<&'a LdElementKey>,
+    pub selected_elements: &'a [LdElementKey],
     pub lang: UiLanguage,
 }
 
@@ -179,12 +346,248 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
 
     fn update(
         &self,
-        _state: &mut Self::State,
-        _event: canvas::Event,
-        _bounds: Rectangle,
-        _cursor: mouse::Cursor,
+        state: &mut Self::State,
+        event: canvas::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
     ) -> (event::Status, Option<Message>) {
-        (event::Status::Ignored, None)
+        let cursor_pos = match cursor.position_in(bounds) {
+            Some(p) => p,
+            None => {
+                if let canvas::Event::Mouse(mouse::Event::ButtonReleased(_)) = event {
+                    state.is_panning = false;
+                    state.pan_start = None;
+                    state.drag_marquee = None;
+                    state.dragging = None;
+                    state.drop_hover = None;
+                }
+                return (event::Status::Ignored, None);
+            }
+        };
+
+        let canvas_pos = Point::new(
+            (cursor_pos.x - state.pan.x) / state.zoom.max(0.1),
+            (cursor_pos.y - state.pan.y) / state.zoom.max(0.1),
+        );
+
+        match event {
+            // 1. Keyboard Events
+            canvas::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(m)) => {
+                state.modifiers = m;
+                (event::Status::Captured, None)
+            }
+            canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                state.modifiers = modifiers;
+                if matches!(
+                    key,
+                    iced::keyboard::Key::Named(
+                        iced::keyboard::key::Named::Delete | iced::keyboard::key::Named::Backspace
+                    )
+                ) {
+                    (
+                        event::Status::Captured,
+                        Some(Message::LdRequestDeleteSelected(self.pou_name.to_string())),
+                    )
+                } else {
+                    (event::Status::Ignored, None)
+                }
+            }
+
+            // 2. Middle-click pan
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+                state.is_panning = true;
+                state.pan_start = Some(cursor_pos);
+                (event::Status::Captured, None)
+            }
+            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) => {
+                state.is_panning = false;
+                state.pan_start = None;
+                (event::Status::Captured, None)
+            }
+
+            // 3. Scroll Wheel Zoom
+            canvas::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                let factor = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => 1.0 + y * 0.08,
+                    mouse::ScrollDelta::Pixels { y, .. } => 1.0 + y * 0.003,
+                };
+                let old_zoom = state.zoom;
+                let new_zoom = (old_zoom * factor).clamp(0.25, 3.0);
+                if (new_zoom - old_zoom).abs() > 0.001 {
+                    let new_pan_x = cursor_pos.x - canvas_pos.x * new_zoom;
+                    let new_pan_y = cursor_pos.y - canvas_pos.y * new_zoom;
+                    state.zoom = new_zoom;
+                    state.pan = Vector::new(new_pan_x, new_pan_y);
+                    (
+                        event::Status::Captured,
+                        Some(Message::LdCanvasZoomChanged(
+                            self.pou_name.to_string(),
+                            new_zoom,
+                        )),
+                    )
+                } else {
+                    (event::Status::Ignored, None)
+                }
+            }
+
+            // 4. Cursor Movement
+            canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if state.is_panning
+                    && let Some(start) = state.pan_start
+                {
+                    let dx = cursor_pos.x - start.x;
+                    let dy = cursor_pos.y - start.y;
+                    state.pan = Vector::new(state.pan.x + dx, state.pan.y + dy);
+                    state.pan_start = Some(cursor_pos);
+                    return (
+                        event::Status::Captured,
+                        Some(Message::LdCanvasPanChanged(
+                            self.pou_name.to_string(),
+                            state.pan,
+                        )),
+                    );
+                }
+
+                if let Some((start, _)) = state.drag_marquee {
+                    state.drag_marquee = Some((start, canvas_pos));
+                    let min_x = start.x.min(canvas_pos.x);
+                    let max_x = start.x.max(canvas_pos.x);
+                    let min_y = start.y.min(canvas_pos.y);
+                    let max_y = start.y.max(canvas_pos.y);
+                    let rect = Rectangle {
+                        x: min_x,
+                        y: min_y,
+                        width: max_x - min_x,
+                        height: max_y - min_y,
+                    };
+                    let layout = LdLayoutEngine::compute_layout(self.program, self.runtime);
+                    let selected = layout.elements_in_rect(rect);
+                    state.selected_elements = selected;
+                    state.selected = if state.selected_elements.len() == 1 {
+                        Some(state.selected_elements[0].clone())
+                    } else {
+                        None
+                    };
+                    return (event::Status::Captured, None);
+                }
+
+                if let Some((ref keys, _origin)) = state.dragging {
+                    let layout = LdLayoutEngine::compute_layout(self.program, self.runtime);
+                    state.drop_hover = layout.find_nearest_drop_target(canvas_pos, keys);
+                    return (event::Status::Captured, None);
+                }
+
+                (event::Status::Ignored, None)
+            }
+
+            // 5. Left Click Pressed
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                let layout = LdLayoutEngine::compute_layout(self.program, self.runtime);
+                let hit = layout.hit_test(canvas_pos);
+
+                let is_ctrl = state.modifiers.control() || state.modifiers.command();
+
+                if let Some(key) = hit {
+                    if is_ctrl {
+                        if let Some(pos) = state.selected_elements.iter().position(|k| k == &key) {
+                            state.selected_elements.remove(pos);
+                        } else {
+                            state.selected_elements.push(key);
+                        }
+                        state.selected = if state.selected_elements.len() == 1 {
+                            Some(state.selected_elements[0].clone())
+                        } else {
+                            None
+                        };
+                        (
+                            event::Status::Captured,
+                            Some(Message::LdSelectElements(
+                                self.pou_name.to_string(),
+                                state.selected_elements.clone(),
+                            )),
+                        )
+                    } else {
+                        let to_drag = if state.selected_elements.contains(&key) && state.selected_elements.len() > 1 {
+                            state.selected_elements.clone()
+                        } else {
+                            state.selected = Some(key.clone());
+                            state.selected_elements = vec![key.clone()];
+                            vec![key]
+                        };
+                        state.dragging = Some((to_drag, canvas_pos));
+                        state.drop_hover = None;
+                        (
+                            event::Status::Captured,
+                            Some(Message::LdSelectElements(
+                                self.pou_name.to_string(),
+                                state.selected_elements.clone(),
+                            )),
+                        )
+                    }
+                } else {
+                    state.selected = None;
+                    state.selected_elements.clear();
+                    state.drag_marquee = Some((canvas_pos, canvas_pos));
+                    (
+                        event::Status::Captured,
+                        Some(Message::LdSelectElements(
+                            self.pou_name.to_string(),
+                            Vec::new(),
+                        )),
+                    )
+                }
+            }
+
+            // 6. Left Click Released
+            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if let Some((start, end)) = state.drag_marquee.take() {
+                    let min_x = start.x.min(end.x);
+                    let max_x = start.x.max(end.x);
+                    let min_y = start.y.min(end.y);
+                    let max_y = start.y.max(end.y);
+                    let rect = Rectangle {
+                        x: min_x,
+                        y: min_y,
+                        width: max_x - min_x,
+                        height: max_y - min_y,
+                    };
+                    let layout = LdLayoutEngine::compute_layout(self.program, self.runtime);
+                    let selected = layout.elements_in_rect(rect);
+                    state.selected_elements = selected.clone();
+                    state.selected = if selected.len() == 1 {
+                        Some(selected[0].clone())
+                    } else {
+                        None
+                    };
+                    return (
+                        event::Status::Captured,
+                        Some(Message::LdSelectElements(
+                            self.pou_name.to_string(),
+                            selected,
+                        )),
+                    );
+                }
+
+                if let Some((keys, _origin)) = state.dragging.take() {
+                    let drop_target = state.drop_hover.take();
+                    if let Some(target) = drop_target {
+                        return (
+                            event::Status::Captured,
+                            Some(Message::LdMoveElements(
+                                self.pou_name.to_string(),
+                                keys,
+                                target,
+                            )),
+                        );
+                    }
+                    return (event::Status::Captured, None);
+                }
+
+                (event::Status::Ignored, None)
+            }
+
+            _ => (event::Status::Ignored, None),
+        }
     }
 
     fn draw(
@@ -322,7 +725,10 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
 
             // Draw contacts & inline FBs
             for elem in &rung_layout.elements {
-                let is_selected = state.selected_elements.contains(&elem.key) || state.selected == Some(elem.key.clone());
+                let is_selected = self.selected == Some(&elem.key)
+                    || self.selected_elements.contains(&elem.key)
+                    || state.selected_elements.contains(&elem.key)
+                    || state.selected == Some(elem.key.clone());
                 let border_color = if is_selected {
                     StudioTheme::ACCENT_CYAN
                 } else if elem.energized {
@@ -432,7 +838,10 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
 
             // Draw coils
             for coil_placed in &rung_layout.coils {
-                let is_coil_selected = state.selected_elements.contains(&coil_placed.key) || state.selected == Some(coil_placed.key.clone());
+                let is_coil_selected = self.selected == Some(&coil_placed.key)
+                    || self.selected_elements.contains(&coil_placed.key)
+                    || state.selected_elements.contains(&coil_placed.key)
+                    || state.selected == Some(coil_placed.key.clone());
                 let border_color = if is_coil_selected {
                     StudioTheme::ACCENT_CYAN
                 } else if coil_placed.energized {
@@ -523,6 +932,10 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
 pub struct LdLayoutEngine;
 
 impl LdLayoutEngine {
+    pub fn build(program: &LdProgram, runtime: Option<&PlcRuntime>) -> LdLayoutResult {
+        Self::compute_layout(program, runtime)
+    }
+
     pub fn calculate_branch_depth(elements: &[LdElement]) -> usize {
         elements
             .iter()
@@ -829,413 +1242,374 @@ fn is_symbol_energized(rt: &PlcRuntime, symbol: &str) -> bool {
     matches!(rt.read_value(symbol), Ok(IecValue::Bool(true)))
 }
 
-fn wire_segment<'a>(active: bool, width: f32) -> Element<'a, Message> {
-    let color = if active {
-        StudioTheme::ACCENT_EMERALD
-    } else {
-        StudioTheme::BORDER_CARD
-    };
-    container(iced::widget::Space::with_width(Length::Fixed(width)))
-        .height(Length::Fixed(2.5))
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(Background::Color(color)),
-            ..Default::default()
-        })
-        .into()
-}
-
 pub fn render_ld_editor<'a>(
     program: &'a LdProgram,
     runtime: Option<&'a PlcRuntime>,
+    selected: Option<&'a LdElementKey>,
+    selected_elements: &'a [LdElementKey],
     lang: UiLanguage,
 ) -> Element<'a, Message> {
     let pou_name = program.name.clone();
+    // 1. Determine selected rung index (defaults to 0 or selected element's rung)
+    let selected_rung = match selected {
+        Some(LdElementKey::Rung(r))
+        | Some(LdElementKey::Contact { rung: r, .. })
+        | Some(LdElementKey::Coil { rung: r, .. })
+        | Some(LdElementKey::Branch { rung: r, .. })
+        | Some(LdElementKey::InlineFb { rung: r, .. }) => *r,
+        None => selected_elements
+            .iter()
+            .map(|k| match k {
+                LdElementKey::Rung(r)
+                | LdElementKey::Contact { rung: r, .. }
+                | LdElementKey::Coil { rung: r, .. }
+                | LdElementKey::Branch { rung: r, .. }
+                | LdElementKey::InlineFb { rung: r, .. } => *r,
+            })
+            .next()
+            .unwrap_or(0),
+    };
 
-    // 1. Toolbar Header
-    let header = row![
-        text(format!(
+    let selected_branch_path: Vec<LdBranchPathSegment> = match selected {
+        Some(LdElementKey::Contact { branch_path, .. })
+        | Some(LdElementKey::InlineFb { branch_path, .. }) => branch_path.clone(),
+        Some(LdElementKey::Branch {
+            branch_path,
+            index,
+            ..
+        }) => {
+            let mut bp = branch_path.clone();
+            bp.push(LdBranchPathSegment {
+                branch_idx: *index,
+                path_idx: 0,
+            });
+            bp
+        }
+        _ => Vec::new(),
+    };
+
+    // 2. Top Toolbar Header
+    let top_toolbar: Element<'a, Message> = if selected_elements.len() > 1 {
+        let count_label = text(format!("{} items selected", selected_elements.len()))
+            .size(12)
+            .font(iced::Font::MONOSPACE)
+            .color(StudioTheme::ACCENT_CYAN);
+
+        let delete_btn = button(text("Delete Selected (Del)").size(11.5))
+            .on_press(Message::LdRequestDeleteSelected(pou_name.clone()))
+            .style(StudioTheme::danger_button)
+            .padding([4, 10]);
+
+        let deselect_btn = button(text("Deselect [x]").size(11))
+            .on_press(Message::LdSelectElements(pou_name.clone(), Vec::new()))
+            .style(StudioTheme::ghost_button)
+            .padding([3, 8]);
+
+        container(
+            row![
+                count_label,
+                delete_btn,
+                iced::widget::Space::with_width(Length::Fill),
+                deselect_btn,
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        )
+        .padding([4, 8])
+        .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+            0.2, 0.4, 0.6, 0.15,
+        )))
+        .into()
+    } else {
+        let title = text(format!(
             "{} — {}",
             lang.tr("Ladder Diagram", "Diagramme à Contacts (Ladder)"),
             program.name
         ))
-        .size(17),
-        iced::widget::Space::with_width(Length::Fill),
-        button(text(lang.tr("+ Add Rung", "+ Réseau")).size(11))
+        .size(15);
+
+        let add_rung_btn = button(text(lang.tr("+ Rung", "+ Réseau")).size(11))
             .on_press(Message::LdAddRung(pou_name.clone()))
             .style(StudioTheme::primary_button)
-            .padding([5, 10]),
-        button(text(lang.tr("Clear POU", "Vider")).size(11))
+            .padding([4, 8]);
+
+        let add_no_btn = button(text("+ NO [ ]").size(11))
+            .on_press(Message::LdAddContactWithKind(
+                pou_name.clone(),
+                selected_rung,
+                ContactKind::NormallyOpen,
+            ))
+            .style(StudioTheme::secondary_button)
+            .padding([4, 8]);
+
+        let add_nc_btn = button(text("+ NC [/]").size(11))
+            .on_press(Message::LdAddContactWithKind(
+                pou_name.clone(),
+                selected_rung,
+                ContactKind::NormallyClosed,
+            ))
+            .style(StudioTheme::secondary_button)
+            .padding([4, 8]);
+
+        let add_p_btn = button(text("+ |P|").size(11))
+            .on_press(Message::LdAddContactWithKind(
+                pou_name.clone(),
+                selected_rung,
+                ContactKind::RisingEdge,
+            ))
+            .style(StudioTheme::secondary_button)
+            .padding([4, 8]);
+
+        let add_n_btn = button(text("+ |N|").size(11))
+            .on_press(Message::LdAddContactWithKind(
+                pou_name.clone(),
+                selected_rung,
+                ContactKind::FallingEdge,
+            ))
+            .style(StudioTheme::secondary_button)
+            .padding([4, 8]);
+
+        let add_coil_btn = button(text("+ Coil ( )").size(11))
+            .on_press(Message::LdAddCoil(pou_name.clone(), selected_rung))
+            .style(StudioTheme::secondary_button)
+            .padding([4, 8]);
+
+        let add_branch_btn = button(text("+ Branch").size(11))
+            .on_press(Message::LdAddParallelBranch(
+                pou_name.clone(),
+                selected_rung,
+                selected_branch_path,
+            ))
+            .style(StudioTheme::secondary_button)
+            .padding([4, 8]);
+
+        let clear_btn = button(text(lang.tr("Clear", "Vider")).size(11))
             .on_press(Message::ConfirmClearPou(pou_name.clone()))
             .style(StudioTheme::danger_button)
-            .padding([5, 10]),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
+            .padding([4, 8]);
 
-    let tip = text(lang.tr(
-        "Tip: Left power rail is energized. Compact contact and coil cards fit on screen with power flow indicator.",
-        "Astuce : Rail d'alimentation actif. Cartes compactes pour s'adapter à l'écran avec flux de puissance direct.",
-    ))
-    .size(11.5)
-    .color(StudioTheme::TEXT_MUTED);
+        container(
+            row![
+                title,
+                iced::widget::Space::with_width(Length::Fixed(12.0)),
+                add_rung_btn,
+                add_no_btn,
+                add_nc_btn,
+                add_p_btn,
+                add_n_btn,
+                add_coil_btn,
+                add_branch_btn,
+                iced::widget::Space::with_width(Length::Fill),
+                clear_btn,
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .padding([4, 8])
+        .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+            0.2, 0.4, 0.6, 0.15,
+        )))
+        .into()
+    };
 
-    // 2. Rungs List
-    let mut rungs_column = column![header, tip].spacing(14);
+    // 3. Vector Canvas Widget
+    let canvas_widget = iced::widget::canvas::Canvas::new(LdCanvasProgram {
+        pou_name: &program.name,
+        program,
+        runtime,
+        selected,
+        selected_elements,
+        lang,
+    })
+    .width(Length::Fill)
+    .height(Length::Fill);
 
-    for (r_idx, rung) in program.rungs.iter().enumerate() {
-        let p_name = pou_name.clone();
+    // 4. Bottom Inspector Context Bar
+    let inspector_bar: Element<'a, Message> = match selected {
+        Some(LdElementKey::Contact {
+            rung: r_idx,
+            branch_path,
+            index,
+        }) => {
+            let p_name = pou_name.clone();
+            let b_path = branch_path.clone();
+            let idx = *index;
+            let r_i = *r_idx;
 
-        // Rung Header: Rung ID + Comment + Quick buttons
-        let rung_header = row![
-            container(text(&rung.id).size(11.5).color(StudioTheme::ACCENT_CYAN))
-                .padding([2, 6])
-                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-                    0.220, 0.741, 0.973, 0.12
-                ))),
-            text_input("Comment...", &rung.comment,)
-                .on_input({
-                    let p = p_name.clone();
-                    move |s| Message::LdRungCommentChanged(p.clone(), r_idx, s)
-                })
+            let contact_data = program
+                .rungs
+                .get(r_i)
+                .and_then(|r| LdCanvasProgram::lookup_element(&r.elements, &b_path, idx));
+
+            if let Some(LdElement::Contact { symbol, kind }) = contact_data {
+                let tag_input = text_input("Tag...", symbol)
+                    .on_input(move |s| {
+                        Message::LdContactSymbolChanged(p_name.clone(), r_i, idx, s)
+                    })
+                    .width(Length::Fixed(160.0))
+                    .padding([3, 7])
+                    .style(StudioTheme::styled_input);
+
+                let p_for_kind = pou_name.clone();
+                let kind_picker = pick_list(
+                    &ALL_CONTACT_KINDS[..],
+                    Some(LdContactKindWrapper(*kind)),
+                    move |w| Message::LdContactKindChanged(p_for_kind.clone(), r_i, idx, w.0),
+                )
+                .width(Length::Fixed(80.0))
+                .text_size(11.0)
+                .padding([3, 7]);
+
+                let p_for_del = pou_name.clone();
+                let del_btn = button(text("Delete (Del)").size(11))
+                    .on_press(Message::LdRequestDeleteSelected(p_for_del))
+                    .style(StudioTheme::danger_button)
+                    .padding([3, 8]);
+
+                let deselect_btn = button(text("Close [x]").size(11))
+                    .on_press(Message::LdSelectElement(pou_name, None))
+                    .style(StudioTheme::ghost_button)
+                    .padding([3, 8]);
+
+                container(
+                    row![
+                        text("Contact:").size(12).color(StudioTheme::ACCENT_CYAN),
+                        tag_input,
+                        kind_picker,
+                        del_btn,
+                        iced::widget::Space::with_width(Length::Fill),
+                        deselect_btn,
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .padding([6, 12])
+                .style(StudioTheme::card_style)
                 .width(Length::Fill)
-                .padding([3, 7])
-                .style(StudioTheme::styled_input),
-            button(text("+ NO").size(10.5))
-                .on_press(Message::LdAddContactWithKind(
-                    p_name.clone(),
-                    r_idx,
-                    ContactKind::NormallyOpen
-                ))
-                .style(StudioTheme::secondary_button)
-                .padding([3, 6]),
-            button(text("+ NC").size(10.5))
-                .on_press(Message::LdAddContactWithKind(
-                    p_name.clone(),
-                    r_idx,
-                    ContactKind::NormallyClosed
-                ))
-                .style(StudioTheme::secondary_button)
-                .padding([3, 6]),
-            button(text("+ |P|").size(10.5))
-                .on_press(Message::LdAddContactWithKind(
-                    p_name.clone(),
-                    r_idx,
-                    ContactKind::RisingEdge
-                ))
-                .style(StudioTheme::secondary_button)
-                .padding([3, 6]),
-            button(text("+ |N|").size(10.5))
-                .on_press(Message::LdAddContactWithKind(
-                    p_name.clone(),
-                    r_idx,
-                    ContactKind::FallingEdge
-                ))
-                .style(StudioTheme::secondary_button)
-                .padding([3, 6]),
-            button(text("+ ( )").size(10.5))
-                .on_press(Message::LdAddCoilWithKind(
-                    p_name.clone(),
-                    r_idx,
-                    CoilKind::Normal
-                ))
-                .style(StudioTheme::secondary_button)
-                .padding([3, 6]),
-            button(text(lang.tr("Del", "Suppr")).size(10.5))
-                .on_press(Message::LdRemoveRung(p_name.clone(), r_idx))
-                .style(StudioTheme::danger_button)
-                .padding([3, 6]),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center);
-
-        // Power Rails & Circuit
-        let left_rail = container(iced::widget::Space::with_width(Length::Fixed(4.0)))
-            .height(Length::Fixed(RAIL_HEIGHT))
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(StudioTheme::ACCENT_EMERALD)),
-                border: Border {
-                    radius: Radius::from(2.0),
-                    ..Default::default()
-                },
-                ..Default::default()
-            });
-
-        let right_rail = container(iced::widget::Space::with_width(Length::Fixed(4.0)))
-            .height(Length::Fixed(RAIL_HEIGHT))
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(StudioTheme::BORDER_CARD)),
-                border: Border {
-                    radius: Radius::from(2.0),
-                    ..Default::default()
-                },
-                ..Default::default()
-            });
-
-        let mut power_flowing = true;
-        let mut circuit_row = row![left_rail, wire_segment(true, WIRE_GAP),]
-            .spacing(0)
-            .align_y(Alignment::Center);
-
-        // Contacts and parallel branches in this rung
-        for (e_idx, elem) in rung.elements.iter().enumerate() {
-            let p_elem = p_name.clone();
-            match elem {
-                LdElement::Contact { symbol, kind } => {
-                    let contact_closed = runtime.is_some_and(|rt| {
-                        let energized = is_symbol_energized(rt, symbol);
-                        match kind {
-                            ContactKind::NormallyOpen => energized,
-                            ContactKind::NormallyClosed => !energized,
-                            ContactKind::RisingEdge | ContactKind::FallingEdge => energized,
-                        }
-                    });
-
-                    let is_active = power_flowing && contact_closed;
-                    power_flowing = is_active;
-
-                    let border_color = if is_active {
-                        StudioTheme::ACCENT_EMERALD
-                    } else {
-                        StudioTheme::BORDER_CARD
-                    };
-                    let bg_color = if is_active {
-                        iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15)
-                    } else {
-                        StudioTheme::BG_BASE
-                    };
-
-                    let glyph_str = match kind {
-                        ContactKind::NormallyOpen => "--| |--",
-                        ContactKind::NormallyClosed => "--|/|--",
-                        ContactKind::RisingEdge => "--|P|--",
-                        ContactKind::FallingEdge => "--|N|--",
-                    };
-
-                    // Compact 2-level stacked contact card
-                    let top_row = row![
-                        text_input("Tag", symbol)
-                            .on_input({
-                                let p = p_elem.clone();
-                                move |s| Message::LdContactSymbolChanged(p.clone(), r_idx, e_idx, s)
-                            })
-                            .width(72)
-                            .padding([1, 4])
-                            .size(10.5)
-                            .style(StudioTheme::styled_input),
-                        iced::widget::Space::with_width(Length::Fill),
-                        button(text("x").size(9.5))
-                            .on_press(Message::LdRemoveContact(p_elem.clone(), r_idx, e_idx))
-                            .style(StudioTheme::ghost_button)
-                            .padding([0, 3]),
-                    ]
-                    .align_y(Alignment::Center);
-
-                    let bottom_row = row![
-                        text(glyph_str)
-                            .size(11.5)
-                            .font(iced::Font::MONOSPACE)
-                            .color(if is_active {
-                                StudioTheme::ACCENT_EMERALD
-                            } else {
-                                StudioTheme::TEXT_MUTED
-                            }),
-                        iced::widget::Space::with_width(Length::Fill),
-                        pick_list(&ALL_CONTACT_KINDS[..], Some(LdContactKindWrapper(*kind)), {
-                            let p = p_elem.clone();
-                            move |w| Message::LdContactKindChanged(p.clone(), r_idx, e_idx, w.0)
-                        },)
-                        .width(44)
-                        .style(StudioTheme::styled_pick_list),
-                    ]
-                    .align_y(Alignment::Center);
-
-                    let contact_card = container(column![top_row, bottom_row].spacing(2))
-                        .width(CONTACT_CARD_WIDTH)
-                        .padding(4)
-                        .style(move |_theme: &Theme| container::Style {
-                            background: Some(Background::Color(bg_color)),
-                            border: Border {
-                                color: border_color,
-                                width: if is_active { 1.5 } else { 1.0 },
-                                radius: Radius::from(4.0),
-                            },
-                            ..Default::default()
-                        });
-
-                    circuit_row = circuit_row.push(contact_card);
-                    circuit_row = circuit_row.push(wire_segment(power_flowing, WIRE_GAP));
-                }
-                LdElement::Branch { paths } => {
-                    let branch_closed = runtime.is_some_and(|rt| {
-                        paths.iter().any(|path| {
-                            path.iter().all(|sub_elem| match sub_elem {
-                                LdElement::Contact { symbol, kind } => {
-                                    let energized = is_symbol_energized(rt, symbol);
-                                    match kind {
-                                        ContactKind::NormallyOpen | ContactKind::RisingEdge => {
-                                            energized
-                                        }
-                                        ContactKind::NormallyClosed | ContactKind::FallingEdge => {
-                                            !energized
-                                        }
-                                    }
-                                }
-                                _ => true,
-                            })
-                        })
-                    });
-                    let is_active = power_flowing && branch_closed;
-                    power_flowing = is_active;
-                    let branch_box = container(text("[OR Branch]").size(11).color(if is_active {
-                        StudioTheme::ACCENT_EMERALD
-                    } else {
-                        StudioTheme::ACCENT_PURPLE
-                    }))
-                    .padding([4, 8])
-                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-                        0.75, 0.5, 0.9, 0.12,
-                    )));
-
-                    circuit_row = circuit_row.push(branch_box);
-                    circuit_row = circuit_row.push(wire_segment(power_flowing, WIRE_GAP));
-                }
-                LdElement::InlineFb { instance, .. } => {
-                    let fb_q = runtime
-                        .is_some_and(|rt| rt.tags.get_fb(instance).map(|fb| fb.q).unwrap_or(false));
-                    let is_active = power_flowing && fb_q;
-                    power_flowing = is_active;
-                    let fb_box = container(text(format!("[FB: {instance}]")).size(11).color(
-                        if is_active {
-                            StudioTheme::ACCENT_EMERALD
-                        } else {
-                            StudioTheme::ACCENT_CYAN
-                        },
-                    ))
-                    .padding([4, 8])
-                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-                        0.22, 0.74, 0.97, 0.12,
-                    )));
-
-                    circuit_row = circuit_row.push(fb_box);
-                    circuit_row = circuit_row.push(wire_segment(power_flowing, WIRE_GAP));
-                }
+                .into()
+            } else {
+                iced::widget::Space::with_height(Length::Shrink).into()
             }
         }
+        Some(LdElementKey::Coil {
+            rung: r_idx,
+            index,
+        }) => {
+            let p_name = pou_name.clone();
+            let idx = *index;
+            let r_i = *r_idx;
 
-        // Spanning expanding wire bus across to coils so coils snap to the right power rail
-        let span_color = if power_flowing {
-            StudioTheme::ACCENT_EMERALD
-        } else {
-            StudioTheme::BORDER_CARD
-        };
-        let span_wire = container(iced::widget::Space::with_width(Length::Fill))
-            .height(Length::Fixed(2.5))
-            .style(move |_theme: &Theme| container::Style {
-                background: Some(Background::Color(span_color)),
-                ..Default::default()
-            });
-        circuit_row = circuit_row.push(span_wire);
+            let coil_data = program.rungs.get(r_i).and_then(|r| r.coils.get(idx));
 
-        // Coils in this rung
-        for (c_idx, coil) in rung.coils.iter().enumerate() {
-            let p_coil = p_name.clone();
-            let is_coil_on =
-                power_flowing || runtime.is_some_and(|rt| is_symbol_energized(rt, &coil.symbol));
+            if let Some(coil) = coil_data {
+                let tag_input = text_input("Tag...", &coil.symbol)
+                    .on_input(move |s| Message::LdCoilSymbolChanged(p_name.clone(), r_i, idx, s))
+                    .width(Length::Fixed(160.0))
+                    .padding([3, 7])
+                    .style(StudioTheme::styled_input);
 
-            let coil_border = if is_coil_on {
-                StudioTheme::ACCENT_EMERALD
-            } else {
-                StudioTheme::BORDER_CARD
-            };
-            let coil_bg = if is_coil_on {
-                iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15)
-            } else {
-                StudioTheme::BG_BASE
-            };
+                let p_for_kind = pou_name.clone();
+                let kind_picker = pick_list(
+                    &ALL_COIL_KINDS[..],
+                    Some(LdCoilKindWrapper(coil.kind)),
+                    move |w| Message::LdCoilKindChanged(p_for_kind.clone(), r_i, idx, w.0),
+                )
+                .width(Length::Fixed(80.0))
+                .text_size(11.0)
+                .padding([3, 7]);
 
-            let glyph_str = match coil.kind {
-                CoilKind::Normal => "--( )--",
-                CoilKind::Set => "--[S]--",
-                CoilKind::Reset => "--[R]--",
-            };
+                let p_for_del = pou_name.clone();
+                let del_btn = button(text("Delete (Del)").size(11))
+                    .on_press(Message::LdRequestDeleteSelected(p_for_del))
+                    .style(StudioTheme::danger_button)
+                    .padding([3, 8]);
 
-            // Compact 2-level stacked coil card
-            let top_row = row![
-                text_input("Coil", &coil.symbol)
-                    .on_input({
-                        let p = p_coil.clone();
-                        move |s| Message::LdCoilSymbolChanged(p.clone(), r_idx, c_idx, s)
-                    })
-                    .width(72)
-                    .padding([1, 4])
-                    .size(10.5)
-                    .style(StudioTheme::styled_input),
-                iced::widget::Space::with_width(Length::Fill),
-                button(text("x").size(9.5))
-                    .on_press(Message::LdRemoveCoil(p_coil.clone(), r_idx, c_idx))
+                let deselect_btn = button(text("Close [x]").size(11))
+                    .on_press(Message::LdSelectElement(pou_name, None))
                     .style(StudioTheme::ghost_button)
-                    .padding([0, 3]),
-            ]
-            .align_y(Alignment::Center);
+                    .padding([3, 8]);
 
-            let bottom_row = row![
-                text(glyph_str)
-                    .size(11.5)
-                    .font(iced::Font::MONOSPACE)
-                    .color(if is_coil_on {
-                        StudioTheme::ACCENT_EMERALD
-                    } else {
-                        StudioTheme::TEXT_MUTED
-                    }),
-                iced::widget::Space::with_width(Length::Fill),
-                pick_list(&ALL_COIL_KINDS[..], Some(LdCoilKindWrapper(coil.kind)), {
-                    let p = p_coil.clone();
-                    move |w| Message::LdCoilKindChanged(p.clone(), r_idx, c_idx, w.0)
-                },)
-                .width(44)
-                .style(StudioTheme::styled_pick_list),
-            ]
-            .align_y(Alignment::Center);
-
-            let coil_card = container(column![top_row, bottom_row].spacing(2))
-                .width(COIL_CARD_WIDTH)
-                .padding(4)
-                .style(move |_theme: &Theme| container::Style {
-                    background: Some(Background::Color(coil_bg)),
-                    border: Border {
-                        color: coil_border,
-                        width: if is_coil_on { 1.5 } else { 1.0 },
-                        radius: Radius::from(4.0),
-                    },
-                    ..Default::default()
-                });
-
-            circuit_row = circuit_row.push(wire_segment(is_coil_on, WIRE_GAP));
-            circuit_row = circuit_row.push(coil_card);
+                container(
+                    row![
+                        text("Coil:").size(12).color(Color::from_rgb(0.98, 0.75, 0.14)),
+                        tag_input,
+                        kind_picker,
+                        del_btn,
+                        iced::widget::Space::with_width(Length::Fill),
+                        deselect_btn,
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .padding([6, 12])
+                .style(StudioTheme::card_style)
+                .width(Length::Fill)
+                .into()
+            } else {
+                iced::widget::Space::with_height(Length::Shrink).into()
+            }
         }
+        Some(LdElementKey::Rung(r_idx)) => {
+            let p_name = pou_name.clone();
+            let r_i = *r_idx;
 
-        // Right Rail Return
-        circuit_row = circuit_row.push(wire_segment(true, WIRE_GAP));
-        circuit_row = circuit_row.push(right_rail);
+            if let Some(rung) = program.rungs.get(r_i) {
+                let comment_input = text_input("Rung comment...", &rung.comment)
+                    .on_input(move |s| Message::LdRungCommentChanged(p_name.clone(), r_i, s))
+                    .width(Length::Fill)
+                    .padding([3, 7])
+                    .style(StudioTheme::styled_input);
 
-        let rung_card = container(
-            column![
-                rung_header,
-                container(circuit_row)
-                    .padding([8, 12])
-                    .style(StudioTheme::canvas_container_style)
-                    .width(Length::Fill),
-            ]
-            .spacing(8),
-        )
-        .padding(10)
-        .style(StudioTheme::card_style)
-        .width(Length::Fill);
+                let p_for_del = pou_name.clone();
+                let del_btn = button(text("Delete Rung").size(11))
+                    .on_press(Message::LdRemoveRung(p_for_del, r_i))
+                    .style(StudioTheme::danger_button)
+                    .padding([3, 8]);
 
-        rungs_column = rungs_column.push(rung_card);
-    }
+                let deselect_btn = button(text("Close [x]").size(11))
+                    .on_press(Message::LdSelectElement(pou_name, None))
+                    .style(StudioTheme::ghost_button)
+                    .padding([3, 8]);
 
-    scrollable(rungs_column.padding(16))
+                container(
+                    row![
+                        text(format!("Rung {r_i}:"))
+                            .size(12)
+                            .color(StudioTheme::ACCENT_CYAN),
+                        comment_input,
+                        del_btn,
+                        deselect_btn,
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .padding([6, 12])
+                .style(StudioTheme::card_style)
+                .width(Length::Fill)
+                .into()
+            } else {
+                iced::widget::Space::with_height(Length::Shrink).into()
+            }
+        }
+        _ => {
+            let tip = text(lang.tr(
+                "Tip: Click element to inspect, drag on empty canvas to marquee select, scroll wheel to zoom.",
+                "Astuce : Cliquez pour inspecter, glissez pour sélectionner en rectangle, molette pour zoomer.",
+            ))
+            .size(11.0)
+            .color(StudioTheme::TEXT_MUTED);
+
+            container(tip)
+                .padding([4, 12])
+                .style(StudioTheme::canvas_container_style)
+                .width(Length::Fill)
+                .into()
+        }
+    };
+
+    column![top_toolbar, canvas_widget, inspector_bar]
+        .spacing(6)
+        .padding(8)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -1245,6 +1619,7 @@ pub fn render_ld_editor<'a>(
 pub mod tests {
     use super::*;
     use ferrite_lang_ld::{LdCoil, LdRung};
+    use iced::widget::canvas::Program;
 
     #[test]
     fn test_ld_layout_straight_rung_geometry() {
@@ -1399,13 +1774,471 @@ pub mod tests {
             }],
         };
 
-        let state = LdCanvasState::default();
         let canvas_prog = LdCanvasProgram {
+            pou_name: "test_draw",
             program: &program,
             runtime: None,
-            state: &state,
+            selected: None,
+            selected_elements: &[],
             lang: UiLanguage::En,
         };
         assert_eq!(canvas_prog.program.name, "test_draw");
+    }
+
+    #[test]
+    fn test_ld_canvas_update_mouse_and_keyboard() {
+        let program = LdProgram {
+            name: "test_update".to_string(),
+            comment: "".to_string(),
+            rungs: vec![LdRung {
+                id: "R0".to_string(),
+                comment: "Rung 0".to_string(),
+                elements: vec![
+                    LdElement::Contact {
+                        symbol: "Start_Btn".to_string(),
+                        kind: ContactKind::NormallyOpen,
+                    },
+                ],
+                coils: vec![LdCoil {
+                    symbol: "Pump_Run".to_string(),
+                    kind: CoilKind::Normal,
+                }],
+            }],
+        };
+
+        let mut state = LdCanvasState::default();
+        let canvas = LdCanvasProgram {
+            pou_name: "test_update",
+            program: &program,
+            runtime: None,
+            selected: None,
+            selected_elements: &[],
+            lang: UiLanguage::En,
+        };
+
+        let bounds = Rectangle::new(Point::new(0.0, 0.0), iced::Size::new(1000.0, 600.0));
+        let layout = LdLayoutEngine::build(&program, None);
+        let contact_pt = Point::new(
+            layout.rungs[0].elements[0].bounds.x + 10.0,
+            layout.rungs[0].elements[0].bounds.y + 10.0,
+        );
+
+        // 1. Click on contact
+        let (status, msg) = canvas.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(contact_pt),
+        );
+        assert_eq!(status, iced::widget::canvas::event::Status::Captured);
+        assert!(matches!(msg, Some(Message::LdSelectElements(ref p, ref keys)) if p == "test_update" && keys.len() == 1));
+
+        // 2. Wheel scroll zoom
+        let (status, zoom_msg) = canvas.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+            }),
+            bounds,
+            mouse::Cursor::Available(Point::new(100.0, 100.0)),
+        );
+        assert_eq!(status, iced::widget::canvas::event::Status::Captured);
+        assert!(matches!(zoom_msg, Some(Message::LdCanvasZoomChanged(ref p, z)) if p == "test_update" && z > 1.0));
+
+        // 3. Delete key
+        let (status, del_msg) = canvas.update(
+            &mut state,
+            canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::default(),
+                text: None,
+                modified_key: iced::keyboard::key::Key::Named(iced::keyboard::key::Named::Delete),
+                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Delete),
+            }),
+            bounds,
+            mouse::Cursor::Available(Point::new(100.0, 100.0)),
+        );
+        assert_eq!(status, iced::widget::canvas::event::Status::Captured);
+        assert!(matches!(del_msg, Some(Message::LdRequestDeleteSelected(ref p)) if p == "test_update"));
+    }
+
+    #[test]
+    fn test_ld_hit_test_elements() {
+        let program = LdProgram {
+            name: "test_hit".to_string(),
+            comment: "".to_string(),
+            rungs: vec![LdRung {
+                id: "R0".to_string(),
+                comment: "Rung 0".to_string(),
+                elements: vec![
+                    LdElement::Contact {
+                        symbol: "Start_Btn".to_string(),
+                        kind: ContactKind::NormallyOpen,
+                    },
+                    LdElement::Contact {
+                        symbol: "Stop_Btn".to_string(),
+                        kind: ContactKind::NormallyClosed,
+                    },
+                ],
+                coils: vec![LdCoil {
+                    symbol: "Pump_Run".to_string(),
+                    kind: CoilKind::Normal,
+                }],
+            }],
+        };
+
+        let layout = LdLayoutEngine::build(&program, None);
+        assert_eq!(layout.rungs[0].elements.len(), 2);
+        assert_eq!(layout.rungs[0].coils.len(), 1);
+
+        let c0_center = Point::new(
+            layout.rungs[0].elements[0].bounds.x + 20.0,
+            layout.rungs[0].elements[0].bounds.y + 15.0,
+        );
+        let hit0 = layout.hit_test(c0_center);
+        assert_eq!(
+            hit0,
+            Some(LdElementKey::Contact {
+                rung: 0,
+                branch_path: vec![],
+                index: 0,
+            })
+        );
+
+        let coil_center = Point::new(
+            layout.rungs[0].coils[0].bounds.x + 20.0,
+            layout.rungs[0].coils[0].bounds.y + 15.0,
+        );
+        let hit_coil = layout.hit_test(coil_center);
+        assert_eq!(hit_coil, Some(LdElementKey::Coil { rung: 0, index: 0 }));
+
+        let hit_empty = layout.hit_test(Point::new(10.0, 10.0));
+        assert_eq!(hit_empty, None);
+    }
+
+    #[test]
+    fn test_ld_marquee_selection_intersection() {
+        let program = LdProgram {
+            name: "test_marquee".to_string(),
+            comment: "".to_string(),
+            rungs: vec![LdRung {
+                id: "R0".to_string(),
+                comment: "Rung 0".to_string(),
+                elements: vec![
+                    LdElement::Contact {
+                        symbol: "Start_Btn".to_string(),
+                        kind: ContactKind::NormallyOpen,
+                    },
+                    LdElement::Contact {
+                        symbol: "Stop_Btn".to_string(),
+                        kind: ContactKind::NormallyClosed,
+                    },
+                ],
+                coils: vec![LdCoil {
+                    symbol: "Pump_Run".to_string(),
+                    kind: CoilKind::Normal,
+                }],
+            }],
+        };
+
+        let layout = LdLayoutEngine::build(&program, None);
+
+        let c0_x = layout.rungs[0].elements[0].bounds.x;
+        let c1_right = layout.rungs[0].elements[1].bounds.x + layout.rungs[0].elements[1].bounds.width;
+        let c_top = layout.rungs[0].elements[0].bounds.y;
+        let c_bot = layout.rungs[0].elements[0].bounds.y + layout.rungs[0].elements[0].bounds.height;
+
+        let marquee_box = Rectangle::new(
+            Point::new(c0_x - 5.0, c_top - 5.0),
+            iced::Size::new((c1_right - c0_x) + 10.0, (c_bot - c_top) + 10.0),
+        );
+
+        let selected = layout.elements_in_rect(marquee_box);
+        assert_eq!(selected.len(), 2);
+        assert!(selected.contains(&LdElementKey::Contact {
+            rung: 0,
+            branch_path: vec![],
+            index: 0
+        }));
+        assert!(selected.contains(&LdElementKey::Contact {
+            rung: 0,
+            branch_path: vec![],
+            index: 1
+        }));
+        assert!(!selected.contains(&LdElementKey::Coil { rung: 0, index: 0 }));
+    }
+
+    #[test]
+    fn test_ld_move_contact_to_different_slot() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("ferrite_ld_move_{}", std::process::id()));
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let proj = crate::resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = crate::app::FerriteStudioApp::new(proj);
+
+        let ld_prog = LdProgram {
+            name: "test_move".to_string(),
+            comment: "".to_string(),
+            rungs: vec![LdRung {
+                id: "R0".to_string(),
+                comment: "".to_string(),
+                elements: vec![
+                    LdElement::Contact {
+                        symbol: "Start".to_string(),
+                        kind: ContactKind::NormallyOpen,
+                    },
+                    LdElement::Contact {
+                        symbol: "Stop".to_string(),
+                        kind: ContactKind::NormallyClosed,
+                    },
+                ],
+                coils: vec![LdCoil {
+                    symbol: "Motor".to_string(),
+                    kind: CoilKind::Normal,
+                }],
+            }],
+        };
+
+        app.project
+            .pous
+            .insert("test_move".to_string(), ferrite_project::PouSource::Ld(ld_prog));
+
+        app.perform_ld_move(
+            "test_move",
+            &[LdElementKey::Contact {
+                rung: 0,
+                branch_path: vec![],
+                index: 1,
+            }],
+            LdDropTarget::BeforeElement {
+                rung: 0,
+                branch_path: vec![],
+                index: 0,
+            },
+        );
+
+        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_move") else {
+            panic!("POU not found");
+        };
+
+        assert_eq!(ld.rungs[0].elements.len(), 2);
+        if let LdElement::Contact { symbol, .. } = &ld.rungs[0].elements[0] {
+            assert_eq!(symbol, "Stop");
+        } else {
+            panic!("Expected Contact");
+        }
+        if let LdElement::Contact { symbol, .. } = &ld.rungs[0].elements[1] {
+            assert_eq!(symbol, "Start");
+        } else {
+            panic!("Expected Contact");
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_ld_add_parallel_branch_wraps_contacts() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("ferrite_ld_branch_{}", std::process::id()));
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let proj = crate::resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = crate::app::FerriteStudioApp::new(proj);
+
+        let ld_prog = LdProgram {
+            name: "test_branch_wrap".to_string(),
+            comment: "".to_string(),
+            rungs: vec![LdRung {
+                id: "R0".to_string(),
+                comment: "".to_string(),
+                elements: vec![LdElement::Contact {
+                    symbol: "Main_Contact".to_string(),
+                    kind: ContactKind::NormallyOpen,
+                }],
+                coils: vec![],
+            }],
+        };
+
+        app.project.pous.insert(
+            "test_branch_wrap".to_string(),
+            ferrite_project::PouSource::Ld(ld_prog),
+        );
+
+        app.perform_ld_add_parallel_branch("test_branch_wrap", 0, &[]);
+
+        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_branch_wrap") else {
+            panic!("POU not found");
+        };
+
+        assert_eq!(ld.rungs[0].elements.len(), 1);
+        match &ld.rungs[0].elements[0] {
+            LdElement::Branch { paths } => {
+                assert_eq!(paths.len(), 2);
+                assert_eq!(paths[0].len(), 1);
+                assert_eq!(paths[1].len(), 1);
+            }
+            _ => panic!("Expected Branch"),
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_ld_branch_dissolution_on_last_branch_drop() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("ferrite_ld_dissolve_{}", std::process::id()));
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let proj = crate::resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = crate::app::FerriteStudioApp::new(proj);
+
+        let ld_prog = LdProgram {
+            name: "test_dissolve".to_string(),
+            comment: "".to_string(),
+            rungs: vec![LdRung {
+                id: "R0".to_string(),
+                comment: "".to_string(),
+                elements: vec![LdElement::Branch {
+                    paths: vec![
+                        vec![LdElement::Contact {
+                            symbol: "Leg_A".to_string(),
+                            kind: ContactKind::NormallyOpen,
+                        }],
+                        vec![LdElement::Contact {
+                            symbol: "Leg_B".to_string(),
+                            kind: ContactKind::NormallyOpen,
+                        }],
+                    ],
+                }],
+                coils: vec![],
+            }],
+        };
+
+        app.project.pous.insert(
+            "test_dissolve".to_string(),
+            ferrite_project::PouSource::Ld(ld_prog),
+        );
+
+        app.perform_ld_delete(
+            "test_dissolve",
+            &[LdElementKey::Contact {
+                rung: 0,
+                branch_path: vec![LdBranchPathSegment {
+                    branch_idx: 0,
+                    path_idx: 1,
+                }],
+                index: 0,
+            }],
+        );
+
+        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_dissolve") else {
+            panic!("POU not found");
+        };
+
+        assert_eq!(ld.rungs[0].elements.len(), 1);
+        match &ld.rungs[0].elements[0] {
+            LdElement::Contact { symbol, .. } => {
+                assert_eq!(symbol, "Leg_A");
+            }
+            _ => panic!("Expected branch to dissolve into single contact"),
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_ld_batch_delete_selected_elements() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("ferrite_ld_batch_del_{}", std::process::id()));
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let proj = crate::resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = crate::app::FerriteStudioApp::new(proj);
+
+        let ld_prog = LdProgram {
+            name: "test_batch_del".to_string(),
+            comment: "".to_string(),
+            rungs: vec![
+                LdRung {
+                    id: "R0".to_string(),
+                    comment: "".to_string(),
+                    elements: vec![
+                        LdElement::Contact {
+                            symbol: "C0".to_string(),
+                            kind: ContactKind::NormallyOpen,
+                        },
+                        LdElement::Contact {
+                            symbol: "C1".to_string(),
+                            kind: ContactKind::NormallyOpen,
+                        },
+                    ],
+                    coils: vec![LdCoil {
+                        symbol: "Out0".to_string(),
+                        kind: CoilKind::Normal,
+                    }],
+                },
+                LdRung {
+                    id: "R1".to_string(),
+                    comment: "".to_string(),
+                    elements: vec![LdElement::Contact {
+                        symbol: "C2".to_string(),
+                        kind: ContactKind::NormallyOpen,
+                    }],
+                    coils: vec![
+                        LdCoil {
+                            symbol: "Out1".to_string(),
+                            kind: CoilKind::Normal,
+                        },
+                        LdCoil {
+                            symbol: "Out2".to_string(),
+                            kind: CoilKind::Set,
+                        },
+                    ],
+                },
+            ],
+        };
+
+        app.project.pous.insert(
+            "test_batch_del".to_string(),
+            ferrite_project::PouSource::Ld(ld_prog),
+        );
+
+        let to_delete = vec![
+            LdElementKey::Contact {
+                rung: 0,
+                branch_path: vec![],
+                index: 1,
+            },
+            LdElementKey::Contact {
+                rung: 1,
+                branch_path: vec![],
+                index: 0,
+            },
+            LdElementKey::Coil { rung: 1, index: 0 },
+        ];
+
+        app.perform_ld_delete("test_batch_del", &to_delete);
+
+        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_batch_del") else {
+            panic!("POU not found");
+        };
+
+        assert_eq!(ld.rungs[0].elements.len(), 1);
+        if let LdElement::Contact { symbol, .. } = &ld.rungs[0].elements[0] {
+            assert_eq!(symbol, "C0");
+        }
+        assert_eq!(ld.rungs[0].coils.len(), 1);
+
+        assert_eq!(ld.rungs[1].elements.len(), 0);
+        assert_eq!(ld.rungs[1].coils.len(), 1);
+        assert_eq!(ld.rungs[1].coils[0].symbol, "Out2");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
     }
 }

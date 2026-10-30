@@ -6,7 +6,7 @@ use iced::border::Radius;
 use iced::widget::{
     button, column, container, pick_list, row, scrollable, text, text_editor, text_input,
 };
-use iced::{Alignment, Background, Border, Color, Element, Length, Task, Theme};
+use iced::{Alignment, Background, Border, Color, Element, Length, Task, Theme, Vector};
 
 use ferrite_core::{
     DirectAddress, FbInstance, IecType, IecValue, LanguageKind, MemoryArea, ProcessImage,
@@ -29,7 +29,7 @@ use ferrite_runtime::{PlcRuntime, ScanTelemetry};
 
 use crate::alarms_panel::render_alarms_panel;
 use crate::canvas_fbd::{delete_fbd_block, render_fbd_editor};
-use crate::canvas_ld::render_ld_editor;
+use crate::canvas_ld::{render_ld_editor, LdBranchPathSegment, LdDropTarget, LdElementKey};
 use crate::canvas_sfc::render_sfc_editor;
 use crate::digital_twin::{
     DigitalTwinWorkspace, SharedIoHandle, SharedIoState, render_digital_twin,
@@ -248,6 +248,13 @@ pub enum Message {
     LdRemoveCoil(String, usize, usize),
     LdCoilSymbolChanged(String, usize, usize, String),
     LdCoilKindChanged(String, usize, usize, CoilKind),
+    LdSelectElement(String, Option<LdElementKey>),
+    LdSelectElements(String, Vec<LdElementKey>),
+    LdCanvasPanChanged(String, Vector),
+    LdCanvasZoomChanged(String, f32),
+    LdRequestDeleteSelected(String),
+    LdMoveElements(String, Vec<LdElementKey>, LdDropTarget),
+    LdAddParallelBranch(String, usize, Vec<LdBranchPathSegment>),
 
     // Sequential Function Chart (SFC / Grafcet)
     SfcAddStep(String),
@@ -369,6 +376,10 @@ pub struct FerriteStudioApp {
     pub sfc_selected: Option<(String, crate::canvas_sfc::SfcElementKey)>,
     pub sfc_selected_elements: Vec<crate::canvas_sfc::SfcElementKey>,
     pub sfc_delete_modal: Option<(String, Vec<crate::canvas_sfc::SfcElementKey>)>,
+    pub ld_selected: Option<(String, LdElementKey)>,
+    pub ld_selected_elements: Vec<LdElementKey>,
+    pub ld_canvas_pan: HashMap<String, Vector>,
+    pub ld_canvas_zoom: HashMap<String, f32>,
     pub active_menu: Option<ActiveMenu>,
 }
 
@@ -535,6 +546,10 @@ impl FerriteStudioApp {
             sfc_selected: None,
             sfc_selected_elements: Vec::new(),
             sfc_delete_modal: None,
+            ld_selected: None,
+            ld_selected_elements: Vec::new(),
+            ld_canvas_pan: HashMap::new(),
+            ld_canvas_zoom: HashMap::new(),
         }
     }
 
@@ -662,6 +677,124 @@ impl FerriteStudioApp {
             }
         }
     }
+}
+
+fn remove_from_elements(
+    elements: &mut Vec<LdElement>,
+    branch_path: &[LdBranchPathSegment],
+    index: usize,
+) {
+    if branch_path.is_empty() {
+        if index < elements.len() {
+            elements.remove(index);
+        }
+    } else {
+        let seg = branch_path[0];
+        if let Some(LdElement::Branch { paths }) = elements.get_mut(seg.branch_idx)
+            && let Some(sub_path) = paths.get_mut(seg.path_idx)
+        {
+            remove_from_elements(sub_path, &branch_path[1..], index);
+        }
+    }
+}
+
+fn take_from_elements(
+    elements: &mut Vec<LdElement>,
+    branch_path: &[LdBranchPathSegment],
+    index: usize,
+) -> Option<LdElement> {
+    if branch_path.is_empty() {
+        if index < elements.len() {
+            Some(elements.remove(index))
+        } else {
+            None
+        }
+    } else {
+        let seg = branch_path[0];
+        if let Some(LdElement::Branch { paths }) = elements.get_mut(seg.branch_idx)
+            && let Some(sub_path) = paths.get_mut(seg.path_idx)
+        {
+            take_from_elements(sub_path, &branch_path[1..], index)
+        } else {
+            None
+        }
+    }
+}
+
+fn insert_into_elements(
+    elements: &mut Vec<LdElement>,
+    branch_path: &[LdBranchPathSegment],
+    index: usize,
+    new_elem: LdElement,
+) {
+    if branch_path.is_empty() {
+        let idx = index.min(elements.len());
+        elements.insert(idx, new_elem);
+    } else {
+        let seg = branch_path[0];
+        if let Some(LdElement::Branch { paths }) = elements.get_mut(seg.branch_idx)
+            && let Some(sub_path) = paths.get_mut(seg.path_idx)
+        {
+            insert_into_elements(sub_path, &branch_path[1..], index, new_elem);
+        }
+    }
+}
+
+fn wrap_in_new_branch(
+    elements: &mut Vec<LdElement>,
+    branch_path: &[LdBranchPathSegment],
+    index: usize,
+    added_elem: LdElement,
+) {
+    if branch_path.is_empty() {
+        if index < elements.len() {
+            let existing = elements.remove(index);
+            elements.insert(
+                index,
+                LdElement::Branch {
+                    paths: vec![vec![existing], vec![added_elem]],
+                },
+            );
+        } else {
+            elements.push(added_elem);
+        }
+    } else {
+        let seg = branch_path[0];
+        if let Some(LdElement::Branch { paths }) = elements.get_mut(seg.branch_idx)
+            && let Some(sub_path) = paths.get_mut(seg.path_idx)
+        {
+            wrap_in_new_branch(sub_path, &branch_path[1..], index, added_elem);
+        }
+    }
+}
+
+fn dissolve_branches_recursive(elements: &mut Vec<LdElement>) {
+    let mut new_elements = Vec::with_capacity(elements.len());
+    for elem in elements.drain(..) {
+        match elem {
+            LdElement::Branch { mut paths } => {
+                for path in &mut paths {
+                    dissolve_branches_recursive(path);
+                }
+                paths.retain(|p| !p.is_empty());
+                if paths.is_empty() {
+                    // Drop empty branch
+                } else if paths.len() == 1 {
+                    // Dissolve single path into parent line
+                    if let Some(single_path) = paths.pop() {
+                        new_elements.extend(single_path);
+                    }
+                } else {
+                    new_elements.push(LdElement::Branch { paths });
+                }
+            }
+            other => new_elements.push(other),
+        }
+    }
+    *elements = new_elements;
+}
+
+impl FerriteStudioApp {
 
     pub fn recompile_runtime(&mut self) {
         self.diagnostics = self.project.check().unwrap_or_default();
@@ -680,6 +813,245 @@ impl FerriteStudioApp {
                 self.status_banner = format!("Compilation error: {e}");
             }
         }
+    }
+
+    pub fn perform_ld_delete(&mut self, pou_name: &str, keys: &[LdElementKey]) {
+        let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(pou_name) else {
+            return;
+        };
+
+        let mut rungs_to_delete = Vec::new();
+        let mut coils_to_delete = Vec::new();
+        let mut contacts_to_delete = Vec::new();
+
+        for key in keys {
+            match key {
+                LdElementKey::Rung(r_idx) => rungs_to_delete.push(*r_idx),
+                LdElementKey::Coil { rung, index } => coils_to_delete.push((*rung, *index)),
+                LdElementKey::Contact {
+                    rung,
+                    branch_path,
+                    index,
+                } => {
+                    contacts_to_delete.push((*rung, branch_path.clone(), *index));
+                }
+                LdElementKey::Branch {
+                    rung,
+                    branch_path,
+                    index,
+                } => {
+                    contacts_to_delete.push((*rung, branch_path.clone(), *index));
+                }
+                LdElementKey::InlineFb {
+                    rung,
+                    branch_path,
+                    index,
+                } => {
+                    contacts_to_delete.push((*rung, branch_path.clone(), *index));
+                }
+            }
+        }
+
+        rungs_to_delete.sort_unstable();
+        rungs_to_delete.dedup();
+        for r_idx in rungs_to_delete.into_iter().rev() {
+            if r_idx < ld.rungs.len() {
+                ld.rungs.remove(r_idx);
+            }
+        }
+
+        coils_to_delete.sort_by_key(|a| std::cmp::Reverse(a.1));
+        for (r_idx, c_idx) in coils_to_delete {
+            if let Some(rung) = ld.rungs.get_mut(r_idx)
+                && c_idx < rung.coils.len()
+            {
+                rung.coils.remove(c_idx);
+            }
+        }
+
+        contacts_to_delete.sort_by_key(|a| std::cmp::Reverse(a.2));
+        for (r_idx, branch_path, c_idx) in contacts_to_delete {
+            if let Some(rung) = ld.rungs.get_mut(r_idx) {
+                remove_from_elements(&mut rung.elements, &branch_path, c_idx);
+            }
+        }
+
+        for rung in &mut ld.rungs {
+            dissolve_branches_recursive(&mut rung.elements);
+        }
+
+        self.ld_selected = None;
+        self.ld_selected_elements.clear();
+        self.track_history();
+        self.recompile_runtime();
+        self.modified = true;
+    }
+
+    pub fn perform_ld_move(
+        &mut self,
+        pou_name: &str,
+        keys: &[LdElementKey],
+        target: LdDropTarget,
+    ) {
+        let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(pou_name) else {
+            return;
+        };
+
+        let mut extracted_contacts = Vec::new();
+        let mut extracted_coils = Vec::new();
+
+        let mut sorted_keys = keys.to_vec();
+        sorted_keys.sort_by(|a, b| {
+            let idx_a = match a {
+                LdElementKey::Contact { index, .. }
+                | LdElementKey::Coil { index, .. }
+                | LdElementKey::InlineFb { index, .. } => *index,
+                _ => 0,
+            };
+            let idx_b = match b {
+                LdElementKey::Contact { index, .. }
+                | LdElementKey::Coil { index, .. }
+                | LdElementKey::InlineFb { index, .. } => *index,
+                _ => 0,
+            };
+            idx_b.cmp(&idx_a)
+        });
+
+        for key in &sorted_keys {
+            match key {
+                LdElementKey::Contact {
+                    rung,
+                    branch_path,
+                    index,
+                }
+                | LdElementKey::InlineFb {
+                    rung,
+                    branch_path,
+                    index,
+                } => {
+                    if let Some(r) = ld.rungs.get_mut(*rung)
+                        && let Some(elem) = take_from_elements(&mut r.elements, branch_path, *index)
+                    {
+                        extracted_contacts.push(elem);
+                    }
+                }
+                LdElementKey::Coil { rung, index } => {
+                    if let Some(r) = ld.rungs.get_mut(*rung)
+                        && *index < r.coils.len()
+                    {
+                        extracted_coils.push(r.coils.remove(*index));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        for rung in &mut ld.rungs {
+            dissolve_branches_recursive(&mut rung.elements);
+        }
+
+        match target {
+            LdDropTarget::BeforeElement {
+                rung,
+                branch_path,
+                index,
+            } => {
+                if let Some(r) = ld.rungs.get_mut(rung) {
+                    for elem in extracted_contacts.into_iter().rev() {
+                        insert_into_elements(&mut r.elements, &branch_path, index, elem);
+                    }
+                }
+            }
+            LdDropTarget::AfterElement {
+                rung,
+                branch_path,
+                index,
+            } => {
+                if let Some(r) = ld.rungs.get_mut(rung) {
+                    for elem in extracted_contacts.into_iter().rev() {
+                        insert_into_elements(&mut r.elements, &branch_path, index + 1, elem);
+                    }
+                }
+            }
+            LdDropTarget::NewBranch {
+                rung,
+                branch_path,
+            } => {
+                if let Some(r) = ld.rungs.get_mut(rung) {
+                    for elem in extracted_contacts {
+                        wrap_in_new_branch(&mut r.elements, &branch_path, 0, elem);
+                    }
+                }
+            }
+            LdDropTarget::CoilSlot { rung, index } => {
+                if let Some(r) = ld.rungs.get_mut(rung) {
+                    for coil in extracted_coils.into_iter().rev() {
+                        let idx = index.min(r.coils.len());
+                        r.coils.insert(idx, coil);
+                    }
+                }
+            }
+            LdDropTarget::NewRung { index } => {
+                let new_idx = index.min(ld.rungs.len());
+                ld.rungs.insert(
+                    new_idx,
+                    LdRung {
+                        id: format!("R{}", ld.rungs.len()),
+                        comment: String::new(),
+                        elements: extracted_contacts,
+                        coils: extracted_coils,
+                    },
+                );
+            }
+        }
+
+        self.ld_selected = None;
+        self.ld_selected_elements.clear();
+        self.track_history();
+        self.recompile_runtime();
+        self.modified = true;
+    }
+
+    pub fn perform_ld_add_parallel_branch(
+        &mut self,
+        pou_name: &str,
+        rung_idx: usize,
+        path: &[LdBranchPathSegment],
+    ) {
+        let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(pou_name) else {
+            return;
+        };
+        let Some(rung) = ld.rungs.get_mut(rung_idx) else {
+            return;
+        };
+
+        let new_contact = LdElement::Contact {
+            symbol: "Branch_Tag".to_string(),
+            kind: ContactKind::NormallyOpen,
+        };
+
+        if path.is_empty() {
+            if rung.elements.is_empty() {
+                rung.elements.push(new_contact);
+            } else {
+                let first = rung.elements.remove(0);
+                rung.elements.insert(
+                    0,
+                    LdElement::Branch {
+                        paths: vec![vec![first], vec![new_contact]],
+                    },
+                );
+            }
+        } else {
+            let seg = path[0];
+            if let Some(LdElement::Branch { paths }) = rung.elements.get_mut(seg.branch_idx) {
+                paths.push(vec![new_contact]);
+            }
+        }
+
+        self.track_history();
+        self.recompile_runtime();
+        self.modified = true;
     }
 
     pub fn execute_plc_scan_tick(&mut self) -> Result<ScanTelemetry, RuntimeError> {
@@ -1879,6 +2251,60 @@ impl FerriteStudioApp {
                     self.track_history();
                     self.modified = true;
                 }
+                Task::none()
+            }
+            Message::LdSelectElement(pou_name, key) => {
+                self.ld_selected = key.as_ref().map(|k| (pou_name, k.clone()));
+                self.ld_selected_elements = key.map(|k| vec![k]).unwrap_or_default();
+                Task::none()
+            }
+            Message::LdSelectElements(pou_name, keys) => {
+                if keys.len() == 1 {
+                    self.ld_selected = Some((pou_name, keys[0].clone()));
+                } else {
+                    self.ld_selected = None;
+                }
+                self.ld_selected_elements = keys;
+                Task::none()
+            }
+            Message::LdCanvasPanChanged(pou_name, pan) => {
+                self.ld_canvas_pan.insert(pou_name, pan);
+                Task::none()
+            }
+            Message::LdCanvasZoomChanged(pou_name, zoom) => {
+                self.ld_canvas_zoom.insert(pou_name, zoom);
+                Task::none()
+            }
+            Message::LdRequestDeleteSelected(pou_name) => {
+                let target_pou = if pou_name.is_empty() {
+                    if let WorkspaceTab::Pou(ref p) = self.active_tab {
+                        p.clone()
+                    } else {
+                        return Task::none();
+                    }
+                } else {
+                    pou_name
+                };
+
+                let mut elements = self.ld_selected_elements.clone();
+                if elements.is_empty()
+                    && let Some((ref p, ref k)) = self.ld_selected
+                    && p == &target_pou
+                {
+                    elements.push(k.clone());
+                }
+                if elements.is_empty() {
+                    return Task::none();
+                }
+                self.perform_ld_delete(&target_pou, &elements);
+                Task::none()
+            }
+            Message::LdMoveElements(pou_name, keys, target) => {
+                self.perform_ld_move(&pou_name, &keys, target);
+                Task::none()
+            }
+            Message::LdAddParallelBranch(pou_name, rung_idx, path) => {
+                self.perform_ld_add_parallel_branch(&pou_name, rung_idx, &path);
                 Task::none()
             }
             Message::SfcAddStep(pou_name) => {
@@ -4211,7 +4637,24 @@ impl FerriteStudioApp {
                 if let Some(pou) = self.project.pous.get(name) {
                     match pou {
                         PouSource::Ld(ld) => {
-                            render_ld_editor(ld, self.runtime.as_ref(), self.ui_lang)
+                            let sel = self
+                                .ld_selected
+                                .as_ref()
+                                .and_then(|(p, k)| if p == name { Some(k) } else { None });
+                            let sel_elems = if self.ld_selected.as_ref().map(|(p, _)| p.as_str()) == Some(name)
+                                || !self.ld_selected_elements.is_empty()
+                            {
+                                &self.ld_selected_elements
+                            } else {
+                                &[][..]
+                            };
+                            render_ld_editor(
+                                ld,
+                                self.runtime.as_ref(),
+                                sel,
+                                sel_elems,
+                                self.ui_lang,
+                            )
                         }
                         PouSource::Sfc(sfc) => {
                             let sel = self
