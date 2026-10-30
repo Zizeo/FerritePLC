@@ -1704,6 +1704,18 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                             err = Some("Unlinked Step");
                             break;
                         }
+                        SfcValidationError::InvalidOrDivergence { element_id, .. } => {
+                            if element_id == &step.id {
+                                err = Some("Invalid OR Divergence");
+                                break;
+                            }
+                        }
+                        SfcValidationError::InvalidOrConvergence { element_id, .. } => {
+                            if element_id == &step.id {
+                                err = Some("Invalid OR Convergence");
+                                break;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -1979,6 +1991,30 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         } if !*is_step && element_id == &tr.id => {
                             err = Some("Unlinked Transition");
                             break;
+                        }
+                        SfcValidationError::InvalidAndDivergence { transition_id, .. } => {
+                            if transition_id == &tr.id {
+                                err = Some("Invalid AND Divergence");
+                                break;
+                            }
+                        }
+                        SfcValidationError::InvalidAndConvergence { transition_id, .. } => {
+                            if transition_id == &tr.id {
+                                err = Some("Invalid AND Convergence");
+                                break;
+                            }
+                        }
+                        SfcValidationError::InvalidOrDivergence { element_id, .. } => {
+                            if element_id == &tr.id {
+                                err = Some("Invalid OR Divergence");
+                                break;
+                            }
+                        }
+                        SfcValidationError::InvalidOrConvergence { element_id, .. } => {
+                            if element_id == &tr.id {
+                                err = Some("Invalid OR Convergence");
+                                break;
+                            }
                         }
                         _ => {}
                     }
@@ -3321,6 +3357,57 @@ mod tests {
 
         // Render editor without panic or errors
         let _elem = render_sfc_editor(&program, None, UiLanguage::En, None, &[]);
+        let report = validate_sfc_topology(&program);
+        assert!(!report.is_valid);
+        assert!(report.errors.iter().any(|e| matches!(e, SfcValidationError::InvalidOrConvergence { element_id, .. } if element_id == "T_OrConv")));
+
+        // Standard IEC 60848 OR Convergence: multiple transitions converging to one step
+        let valid_or_conv = SfcProgram {
+            name: "valid_or_conv".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep {
+                    id: "0".to_string(),
+                    name: "Step_0".to_string(),
+                    kind: StepKind::Initial,
+                    actions: vec![],
+                    grid_pos: Some((60, 40)),
+                },
+                SfcStep {
+                    id: "1".to_string(),
+                    name: "Step_1".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![],
+                    grid_pos: Some((260, 40)),
+                },
+                SfcStep {
+                    id: "2".to_string(),
+                    name: "Step_2".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![],
+                    grid_pos: Some((160, 240)),
+                },
+            ],
+            transitions: vec![
+                SfcTransition {
+                    id: "T0".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["2".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    ..Default::default()
+                },
+                SfcTransition {
+                    id: "T1".to_string(),
+                    from_steps: vec!["1".to_string()],
+                    to_steps: vec!["2".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    ..Default::default()
+                },
+            ],
+        };
+        let valid_rep = validate_sfc_topology(&valid_or_conv);
+        assert!(valid_rep.is_valid);
+        let _valid_elem = render_sfc_editor(&valid_or_conv, None, UiLanguage::En, None, &[]);
     }
 
     #[test]
