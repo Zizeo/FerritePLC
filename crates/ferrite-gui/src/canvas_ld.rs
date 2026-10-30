@@ -1,6 +1,8 @@
 use iced::border::Radius;
+use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
-use iced::{Alignment, Background, Border, Element, Length, Point, Rectangle, Theme, Vector};
+use iced::{event, mouse};
+use iced::{Alignment, Background, Border, Color, Element, Length, Point, Rectangle, Theme, Vector};
 use serde::{Deserialize, Serialize};
 
 use ferrite_core::IecValue;
@@ -143,6 +145,378 @@ impl Default for LdCanvasState {
             is_panning: false,
             pan_start: None,
         }
+    }
+}
+
+pub struct LdCanvasProgram<'a> {
+    pub program: &'a LdProgram,
+    pub runtime: Option<&'a PlcRuntime>,
+    pub state: &'a LdCanvasState,
+    pub lang: UiLanguage,
+}
+
+impl<'a> LdCanvasProgram<'a> {
+    pub fn lookup_element<'b>(
+        elements: &'b [LdElement],
+        branch_path: &[LdBranchPathSegment],
+        index: usize,
+    ) -> Option<&'b LdElement> {
+        let mut curr_slice = elements;
+        for seg in branch_path {
+            if let Some(LdElement::Branch { paths }) = curr_slice.get(seg.branch_idx) {
+                let sub_path = paths.get(seg.path_idx)?;
+                curr_slice = sub_path.as_slice();
+            } else {
+                return None;
+            }
+        }
+        curr_slice.get(index)
+    }
+}
+
+impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
+    type State = LdCanvasState;
+
+    fn update(
+        &self,
+        _state: &mut Self::State,
+        _event: canvas::Event,
+        _bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> (event::Status, Option<Message>) {
+        (event::Status::Ignored, None)
+    }
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &iced::Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+
+        // Background grid dots
+        let dot_spacing = 20.0 * state.zoom;
+        if dot_spacing >= 8.0 {
+            let offset_x = (state.pan.x * state.zoom) % dot_spacing;
+            let offset_y = (state.pan.y * state.zoom) % dot_spacing;
+            let dot_color = Color::from_rgba(0.25, 0.35, 0.5, 0.18);
+            let mut x = offset_x;
+            while x < bounds.width {
+                let mut y = offset_y;
+                while y < bounds.height {
+                    frame.fill_rectangle(
+                        Point::new(x, y),
+                        iced::Size::new(1.5, 1.5),
+                        dot_color,
+                    );
+                    y += dot_spacing;
+                }
+                x += dot_spacing;
+            }
+        }
+
+        // Apply pan and zoom
+        frame.translate(state.pan);
+        frame.scale(state.zoom);
+
+        let layout = LdLayoutEngine::compute_layout(self.program, self.runtime);
+
+        if layout.rungs.is_empty() {
+            frame.fill_text(Text {
+                content: "No rungs in program. Click '+ Add Rung' to begin.".to_string(),
+                position: Point::new(80.0, 60.0),
+                color: StudioTheme::TEXT_MUTED,
+                size: 13.0.into(),
+                ..Default::default()
+            });
+            return vec![frame.into_geometry()];
+        }
+
+        let first_wire_y = layout.rungs.first().map(|r| r.wire_y).unwrap_or(60.0);
+        let last_wire_y = layout
+            .rungs
+            .last()
+            .map(|last_rung| {
+                last_rung.wire_y
+                    + (last_rung.branches.len().max(last_rung.coils.len()).saturating_sub(1)) as f32
+                        * BRANCH_VERTICAL_STEP
+            })
+            .unwrap_or(first_wire_y);
+
+        let rail_top_y = (first_wire_y - 20.0).max(20.0);
+        let rail_bottom_y = last_wire_y + 30.0;
+
+        // Draw Left Power Rail (Energized emerald)
+        frame.stroke(
+            &Path::line(Point::new(layout.rail_left_x, rail_top_y), Point::new(layout.rail_left_x, rail_bottom_y)),
+            Stroke::default().with_color(StudioTheme::ACCENT_EMERALD).with_width(5.0),
+        );
+
+        // Draw Right Power Rail (Neutral card border)
+        frame.stroke(
+            &Path::line(Point::new(layout.rail_right_x, rail_top_y), Point::new(layout.rail_right_x, rail_bottom_y)),
+            Stroke::default().with_color(StudioTheme::BORDER_CARD).with_width(5.0),
+        );
+
+        // Render each rung
+        for rung_layout in &layout.rungs {
+            let r_idx = rung_layout.rung_idx;
+            let rung = &self.program.rungs[r_idx];
+
+            // Rung ID badge & comment
+            let rung_header_y = rung_layout.bounds.y + 4.0;
+            frame.fill_text(Text {
+                content: format!("[{}]", rung.id),
+                position: Point::new(layout.rail_left_x - 45.0, rung_header_y),
+                color: StudioTheme::ACCENT_CYAN,
+                size: 11.5.into(),
+                ..Default::default()
+            });
+
+            if !rung.comment.is_empty() {
+                frame.fill_text(Text {
+                    content: format!("// {}", rung.comment),
+                    position: Point::new(layout.rail_left_x + 10.0, rung_header_y),
+                    color: StudioTheme::TEXT_MUTED,
+                    size: 10.5.into(),
+                    ..Default::default()
+                });
+            }
+
+            // Power flow wire color for main rung feeder
+            let wire_color = if rung_layout.power_flowing {
+                StudioTheme::ACCENT_EMERALD
+            } else {
+                StudioTheme::BORDER_CARD
+            };
+            let wire_stroke = Stroke::default().with_color(wire_color).with_width(2.5);
+
+            // Left rail to first contact / branch
+            let first_elem_x = rung_layout.elements.first().map(|e| e.bounds.x).unwrap_or(layout.rail_right_x - 120.0);
+            frame.stroke(
+                &Path::line(Point::new(layout.rail_left_x, rung_layout.wire_y), Point::new(first_elem_x, rung_layout.wire_y)),
+                Stroke::default().with_color(StudioTheme::ACCENT_EMERALD).with_width(2.5),
+            );
+
+            // Last contact / branch to coils
+            let last_contact_x = rung_layout.elements.last().map(|e| e.bounds.x + e.bounds.width).unwrap_or(layout.rail_left_x + WIRE_PAD);
+            let first_coil_x = rung_layout.coils.first().map(|c| c.bounds.x).unwrap_or(layout.rail_right_x);
+            frame.stroke(
+                &Path::line(Point::new(last_contact_x, rung_layout.wire_y), Point::new(first_coil_x, rung_layout.wire_y)),
+                wire_stroke,
+            );
+
+            // Inter-contact wire segments
+            for i in 0..rung_layout.elements.len().saturating_sub(1) {
+                let e1 = &rung_layout.elements[i];
+                let e2 = &rung_layout.elements[i + 1];
+                let inter_wire_color = if e1.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::BORDER_CARD };
+                frame.stroke(
+                    &Path::line(Point::new(e1.bounds.x + e1.bounds.width, rung_layout.wire_y), Point::new(e2.bounds.x, rung_layout.wire_y)),
+                    Stroke::default().with_color(inter_wire_color).with_width(2.5),
+                );
+            }
+
+            // Draw contacts & inline FBs
+            for elem in &rung_layout.elements {
+                let is_selected = state.selected_elements.contains(&elem.key) || state.selected == Some(elem.key.clone());
+                let border_color = if is_selected {
+                    StudioTheme::ACCENT_CYAN
+                } else if elem.energized {
+                    StudioTheme::ACCENT_EMERALD
+                } else {
+                    StudioTheme::BORDER_CARD
+                };
+                let bg_color = if elem.energized {
+                    Color::from_rgba(0.063, 0.725, 0.506, 0.15)
+                } else {
+                    StudioTheme::BG_BASE
+                };
+
+                // Card background & border
+                frame.fill_rectangle(
+                    Point::new(elem.bounds.x, elem.bounds.y),
+                    elem.bounds.size(),
+                    bg_color,
+                );
+                frame.stroke(
+                    &Path::rectangle(Point::new(elem.bounds.x, elem.bounds.y), elem.bounds.size()),
+                    Stroke::default().with_color(border_color).with_width(if is_selected { 2.0 } else { 1.0 }),
+                );
+
+                // Symbol text and glyph
+                match &elem.key {
+                    LdElementKey::Contact { index, branch_path, .. } => {
+                        let contact_elem = Self::lookup_element(&rung.elements, branch_path, *index);
+                        if let Some(LdElement::Contact { symbol, kind }) = contact_elem {
+                            frame.fill_text(Text {
+                                content: symbol.clone(),
+                                position: Point::new(elem.bounds.x + 6.0, elem.bounds.y + 6.0),
+                                color: StudioTheme::ACCENT_CYAN,
+                                size: 10.5.into(),
+                                ..Default::default()
+                            });
+                            let glyph_str = match kind {
+                                ContactKind::NormallyOpen => "--| |--",
+                                ContactKind::NormallyClosed => "--|/|--",
+                                ContactKind::RisingEdge => "--|P|--",
+                                ContactKind::FallingEdge => "--|N|--",
+                            };
+                            frame.fill_text(Text {
+                                content: glyph_str.to_string(),
+                                position: Point::new(elem.bounds.x + 12.0, elem.bounds.y + 24.0),
+                                color: if elem.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_MUTED },
+                                size: 12.0.into(),
+                                font: iced::Font::MONOSPACE,
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    LdElementKey::InlineFb { index, branch_path, .. } => {
+                        let fb_elem = Self::lookup_element(&rung.elements, branch_path, *index);
+                        if let Some(LdElement::InlineFb { instance, .. }) = fb_elem {
+                            frame.fill_text(Text {
+                                content: format!("[FB: {instance}]"),
+                                position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 14.0),
+                                color: if elem.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::ACCENT_CYAN },
+                                size: 11.0.into(),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Draw parallel branches
+            for branch in &rung_layout.branches {
+                let is_branch_selected = state.selected_elements.contains(&branch.key) || state.selected == Some(branch.key.clone());
+                let branch_wire_color = if branch.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::BORDER_CARD };
+                let b_stroke = Stroke::default().with_color(branch_wire_color).with_width(2.0);
+
+                if let Some(&lowest_y) = branch.paths_y.last() {
+                    // Vertical drop wire at split_x
+                    frame.stroke(
+                        &Path::line(Point::new(branch.split_x, branch.start_y), Point::new(branch.split_x, lowest_y)),
+                        b_stroke,
+                    );
+                    // Vertical rise wire at merge_x
+                    frame.stroke(
+                        &Path::line(Point::new(branch.merge_x, branch.start_y), Point::new(branch.merge_x, lowest_y)),
+                        b_stroke,
+                    );
+                    // Horizontal feeder wires for each path
+                    for &py in &branch.paths_y {
+                        frame.stroke(
+                            &Path::line(Point::new(branch.split_x, py), Point::new(branch.merge_x, py)),
+                            b_stroke,
+                        );
+                    }
+                }
+
+                if is_branch_selected {
+                    let min_y = branch.start_y - 6.0;
+                    let max_y = branch.paths_y.last().copied().unwrap_or(branch.start_y) + 6.0;
+                    frame.stroke(
+                        &Path::rectangle(
+                            Point::new(branch.split_x - 4.0, min_y),
+                            iced::Size::new((branch.merge_x - branch.split_x) + 8.0, (max_y - min_y) + 12.0),
+                        ),
+                        Stroke::default().with_color(StudioTheme::ACCENT_CYAN).with_width(1.5),
+                    );
+                }
+            }
+
+            // Draw coils
+            for coil_placed in &rung_layout.coils {
+                let is_coil_selected = state.selected_elements.contains(&coil_placed.key) || state.selected == Some(coil_placed.key.clone());
+                let border_color = if is_coil_selected {
+                    StudioTheme::ACCENT_CYAN
+                } else if coil_placed.energized {
+                    StudioTheme::ACCENT_EMERALD
+                } else {
+                    StudioTheme::BORDER_CARD
+                };
+                let bg_color = if coil_placed.energized {
+                    Color::from_rgba(0.063, 0.725, 0.506, 0.15)
+                } else {
+                    StudioTheme::BG_BASE
+                };
+
+                // Coil wire to coil card
+                let coil_wire_y = coil_placed.bounds.y + coil_placed.bounds.height / 2.0;
+                let feeder_color = if coil_placed.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::BORDER_CARD };
+                frame.stroke(
+                    &Path::line(Point::new(first_coil_x, coil_wire_y), Point::new(coil_placed.bounds.x, coil_wire_y)),
+                    Stroke::default().with_color(feeder_color).with_width(2.0),
+                );
+
+                // Coil card to Right Rail
+                frame.stroke(
+                    &Path::line(Point::new(coil_placed.bounds.x + coil_placed.bounds.width, coil_wire_y), Point::new(layout.rail_right_x, coil_wire_y)),
+                    Stroke::default().with_color(StudioTheme::BORDER_CARD).with_width(2.0),
+                );
+
+                // Coil card box
+                frame.fill_rectangle(
+                    Point::new(coil_placed.bounds.x, coil_placed.bounds.y),
+                    coil_placed.bounds.size(),
+                    bg_color,
+                );
+                frame.stroke(
+                    &Path::rectangle(Point::new(coil_placed.bounds.x, coil_placed.bounds.y), coil_placed.bounds.size()),
+                    Stroke::default().with_color(border_color).with_width(if is_coil_selected { 2.0 } else { 1.0 }),
+                );
+
+                // Coil text & glyph
+                if let LdElementKey::Coil { index, .. } = coil_placed.key
+                    && let Some(coil) = rung.coils.get(index)
+                {
+                        frame.fill_text(Text {
+                            content: coil.symbol.clone(),
+                            position: Point::new(coil_placed.bounds.x + 6.0, coil_placed.bounds.y + 6.0),
+                            color: Color::from_rgb(0.98, 0.75, 0.14),
+                            size: 10.5.into(),
+                            ..Default::default()
+                        });
+                        let glyph_str = match coil.kind {
+                            CoilKind::Normal => "--( )--",
+                            CoilKind::Set => "--[S]--",
+                            CoilKind::Reset => "--[R]--",
+                        };
+                        frame.fill_text(Text {
+                            content: glyph_str.to_string(),
+                            position: Point::new(coil_placed.bounds.x + 16.0, coil_placed.bounds.y + 24.0),
+                            color: if coil_placed.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_MUTED },
+                            size: 12.0.into(),
+                            font: iced::Font::MONOSPACE,
+                            ..Default::default()
+                        });
+                    }
+            }
+        }
+
+        // Draw Marquee selection box if active
+        if let Some((p1, p2)) = state.drag_marquee {
+            let min_x = p1.x.min(p2.x);
+            let min_y = p1.y.min(p2.y);
+            let w = (p1.x - p2.x).abs();
+            let h = (p1.y - p2.y).abs();
+            frame.fill_rectangle(
+                Point::new(min_x, min_y),
+                iced::Size::new(w, h),
+                Color::from_rgba(0.22, 0.74, 0.97, 0.15),
+            );
+            frame.stroke(
+                &Path::rectangle(Point::new(min_x, min_y), iced::Size::new(w, h)),
+                Stroke::default().with_color(StudioTheme::ACCENT_CYAN).with_width(1.0),
+            );
+        }
+
+        vec![frame.into_geometry()]
     }
 }
 
@@ -990,5 +1364,48 @@ pub mod tests {
         assert_eq!(l_multi.rungs[0].coils.len(), 3);
         assert!(l_multi.rungs[0].coils[0].bounds.y < l_multi.rungs[0].coils[1].bounds.y);
         assert!(l_multi.rungs[0].coils[1].bounds.y < l_multi.rungs[0].coils[2].bounds.y);
+    }
+
+    #[test]
+    fn test_ld_canvas_draw_without_panic() {
+        let program = LdProgram {
+            name: "test_draw".to_string(),
+            comment: "".to_string(),
+            rungs: vec![LdRung {
+                id: "R0".to_string(),
+                comment: "Rung 0".to_string(),
+                elements: vec![
+                    LdElement::Contact {
+                        symbol: "PB1".to_string(),
+                        kind: ContactKind::NormallyOpen,
+                    },
+                    LdElement::Branch {
+                        paths: vec![
+                            vec![LdElement::Contact {
+                                symbol: "B1".to_string(),
+                                kind: ContactKind::NormallyClosed,
+                            }],
+                            vec![LdElement::Contact {
+                                symbol: "B2".to_string(),
+                                kind: ContactKind::RisingEdge,
+                            }],
+                        ],
+                    },
+                ],
+                coils: vec![LdCoil {
+                    symbol: "Out1".to_string(),
+                    kind: CoilKind::Normal,
+                }],
+            }],
+        };
+
+        let state = LdCanvasState::default();
+        let canvas_prog = LdCanvasProgram {
+            program: &program,
+            runtime: None,
+            state: &state,
+            lang: UiLanguage::En,
+        };
+        assert_eq!(canvas_prog.program.name, "test_draw");
     }
 }
