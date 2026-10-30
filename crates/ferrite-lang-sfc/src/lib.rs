@@ -213,6 +213,22 @@ pub enum SfcValidationError {
         transition_id: String,
         reason: String,
     },
+    InvalidAndDivergence {
+        transition_id: String,
+        reason: String,
+    },
+    InvalidAndConvergence {
+        transition_id: String,
+        reason: String,
+    },
+    InvalidOrDivergence {
+        element_id: String,
+        reason: String,
+    },
+    InvalidOrConvergence {
+        element_id: String,
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for SfcValidationError {
@@ -257,6 +273,30 @@ impl std::fmt::Display for SfcValidationError {
                     f,
                     "Unclosed AND divergence at transition '{transition_id}': {reason}"
                 )
+            }
+            Self::InvalidAndDivergence {
+                transition_id,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "Invalid AND divergence at transition '{transition_id}': {reason}"
+                )
+            }
+            Self::InvalidAndConvergence {
+                transition_id,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "Invalid AND convergence at transition '{transition_id}': {reason}"
+                )
+            }
+            Self::InvalidOrDivergence { element_id, reason } => {
+                write!(f, "Invalid OR divergence at '{element_id}': {reason}")
+            }
+            Self::InvalidOrConvergence { element_id, reason } => {
+                write!(f, "Invalid OR convergence at '{element_id}': {reason}")
             }
         }
     }
@@ -330,6 +370,57 @@ pub fn validate_sfc_topology(program: &SfcProgram) -> SfcValidationReport {
                     is_from_step: false,
                 });
             }
+        }
+
+        // 2b. Validate IEC 60848 Divergence & Convergence structural rules
+        // Rule 1: AND Divergence (===) must be preceded by an upstream step/transition
+        if tr.divergence == DivergenceKind::And && tr.to_steps.len() > 1 {
+            if tr.from_steps.is_empty() {
+                errors.push(SfcValidationError::InvalidAndDivergence {
+                    transition_id: tr.id.clone(),
+                    reason: "IEC 60848: AND divergence must be preceded by an upstream step/transition".to_string(),
+                });
+            }
+            let unique_targets: HashSet<&String> = tr.to_steps.iter().collect();
+            if unique_targets.len() < tr.to_steps.len() {
+                errors.push(SfcValidationError::InvalidAndDivergence {
+                    transition_id: tr.id.clone(),
+                    reason: "IEC 60848: AND divergence targets contain duplicate steps".to_string(),
+                });
+            }
+        }
+
+        // Rule 2: AND Convergence (===) must synchronize multiple steps into a transition that targets a step
+        if tr.convergence == ConvergenceKind::And && tr.from_steps.len() > 1 {
+            if tr.to_steps.is_empty() {
+                errors.push(SfcValidationError::InvalidAndConvergence {
+                    transition_id: tr.id.clone(),
+                    reason: "IEC 60848: AND convergence must transition into a target step".to_string(),
+                });
+            }
+            let unique_sources: HashSet<&String> = tr.from_steps.iter().collect();
+            if unique_sources.len() < tr.from_steps.len() {
+                errors.push(SfcValidationError::InvalidAndConvergence {
+                    transition_id: tr.id.clone(),
+                    reason: "IEC 60848: AND convergence sources contain duplicate steps".to_string(),
+                });
+            }
+        }
+
+        // Rule 3: OR Divergence (—) cannot be driven by a single transition; each alternative branch must have its own transition
+        if tr.divergence == DivergenceKind::Or && tr.to_steps.len() > 1 {
+            errors.push(SfcValidationError::InvalidOrDivergence {
+                element_id: tr.id.clone(),
+                reason: "IEC 60848: OR divergence cannot be driven by a single transition; each alternative branch must have its own transition".to_string(),
+            });
+        }
+
+        // Rule 4: OR Convergence (—) cannot merge multiple steps into a single transition; each alternative branch must end in its own transition into the destination step
+        if tr.convergence == ConvergenceKind::Or && tr.from_steps.len() > 1 {
+            errors.push(SfcValidationError::InvalidOrConvergence {
+                element_id: tr.id.clone(),
+                reason: "IEC 60848: OR convergence cannot merge multiple steps into a single transition; each alternative branch must end in its own transition into the destination step".to_string(),
+            });
         }
     }
 
@@ -2134,5 +2225,249 @@ mod tests {
         assert!(ctx3.read_bool("test_reset.X0.state")?);
         assert!(!ctx3.read_bool("test_reset.X1.state")?);
         Ok(())
+    }
+
+    #[test]
+    fn test_sfc_validation_and_divergence_rule() {
+        // Valid AND divergence: Transition T0 connects Step 0 to Steps 1 and 2
+        let valid_and_div = SfcProgram {
+            name: "valid_and_div".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Initial", StepKind::Initial),
+                SfcStep::new("1", "Step1", StepKind::Normal),
+                SfcStep::new("2", "Step2", StepKind::Normal),
+            ],
+            transitions: vec![SfcTransition {
+                id: "T0".to_string(),
+                from_steps: vec!["0".to_string()],
+                to_steps: vec!["1".to_string(), "2".to_string()],
+                receptivity: "TRUE".to_string(),
+                convergence: ConvergenceKind::And,
+                divergence: DivergenceKind::And,
+                ..Default::default()
+            }],
+        };
+        let rep_valid = validate_sfc_topology(&valid_and_div);
+        assert!(
+            rep_valid.errors.iter().all(|e| !matches!(e, SfcValidationError::InvalidAndDivergence { .. })),
+            "Valid AND divergence should not have InvalidAndDivergence errors"
+        );
+
+        // Invalid AND divergence: T0 has multiple to_steps but empty from_steps
+        let invalid_and_div = SfcProgram {
+            name: "invalid_and_div".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Initial", StepKind::Initial),
+                SfcStep::new("1", "Step1", StepKind::Normal),
+                SfcStep::new("2", "Step2", StepKind::Normal),
+            ],
+            transitions: vec![SfcTransition {
+                id: "T0".to_string(),
+                from_steps: vec![],
+                to_steps: vec!["1".to_string(), "2".to_string()],
+                receptivity: "TRUE".to_string(),
+                convergence: ConvergenceKind::And,
+                divergence: DivergenceKind::And,
+                ..Default::default()
+            }],
+        };
+        let rep_invalid = validate_sfc_topology(&invalid_and_div);
+        assert!(
+            rep_invalid.errors.iter().any(|e| matches!(e, SfcValidationError::InvalidAndDivergence { transition_id, .. } if transition_id == "T0")),
+            "Expected InvalidAndDivergence error on T0"
+        );
+    }
+
+    #[test]
+    fn test_sfc_validation_and_convergence_rule() {
+        // Valid AND convergence: Steps 1 and 2 synchronize into Transition T0 -> Step 3
+        let valid_and_conv = SfcProgram {
+            name: "valid_and_conv".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Initial", StepKind::Initial),
+                SfcStep::new("1", "Step1", StepKind::Normal),
+                SfcStep::new("2", "Step2", StepKind::Normal),
+                SfcStep::new("3", "Step3", StepKind::Normal),
+            ],
+            transitions: vec![
+                SfcTransition {
+                    id: "T_start".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["1".to_string(), "2".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    ..Default::default()
+                },
+                SfcTransition {
+                    id: "T_conv".to_string(),
+                    from_steps: vec!["1".to_string(), "2".to_string()],
+                    to_steps: vec!["3".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    ..Default::default()
+                },
+            ],
+        };
+        let rep_valid = validate_sfc_topology(&valid_and_conv);
+        assert!(
+            rep_valid.errors.iter().all(|e| !matches!(e, SfcValidationError::InvalidAndConvergence { .. })),
+            "Valid AND convergence should not have InvalidAndConvergence errors"
+        );
+
+        // Invalid AND convergence: T_conv has multiple from_steps but empty to_steps
+        let invalid_and_conv = SfcProgram {
+            name: "invalid_and_conv".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Initial", StepKind::Initial),
+                SfcStep::new("1", "Step1", StepKind::Normal),
+                SfcStep::new("2", "Step2", StepKind::Normal),
+            ],
+            transitions: vec![SfcTransition {
+                id: "T_conv".to_string(),
+                from_steps: vec!["1".to_string(), "2".to_string()],
+                to_steps: vec![],
+                receptivity: "TRUE".to_string(),
+                convergence: ConvergenceKind::And,
+                divergence: DivergenceKind::And,
+                ..Default::default()
+            }],
+        };
+        let rep_invalid = validate_sfc_topology(&invalid_and_conv);
+        assert!(
+            rep_invalid.errors.iter().any(|e| matches!(e, SfcValidationError::InvalidAndConvergence { transition_id, .. } if transition_id == "T_conv")),
+            "Expected InvalidAndConvergence error on T_conv"
+        );
+    }
+
+    #[test]
+    fn test_sfc_validation_or_divergence_rule() {
+        // Valid OR divergence: Step 0 diverges to two branches, each having its own transition
+        let valid_or_div = SfcProgram {
+            name: "valid_or_div".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Initial", StepKind::Initial),
+                SfcStep::new("1", "Step1", StepKind::Normal),
+                SfcStep::new("2", "Step2", StepKind::Normal),
+            ],
+            transitions: vec![
+                SfcTransition {
+                    id: "T0_A".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["1".to_string()],
+                    receptivity: "BranchA".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::Or,
+                    ..Default::default()
+                },
+                SfcTransition {
+                    id: "T0_B".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["2".to_string()],
+                    receptivity: "BranchB".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::Or,
+                    ..Default::default()
+                },
+            ],
+        };
+        let rep_valid = validate_sfc_topology(&valid_or_div);
+        assert!(
+            rep_valid.errors.iter().all(|e| !matches!(e, SfcValidationError::InvalidOrDivergence { .. })),
+            "Valid OR divergence should not have InvalidOrDivergence errors"
+        );
+
+        // Invalid OR divergence: A single transition T0 attempts an OR divergence to multiple target steps
+        let invalid_or_div = SfcProgram {
+            name: "invalid_or_div".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Initial", StepKind::Initial),
+                SfcStep::new("1", "Step1", StepKind::Normal),
+                SfcStep::new("2", "Step2", StepKind::Normal),
+            ],
+            transitions: vec![SfcTransition {
+                id: "T0".to_string(),
+                from_steps: vec!["0".to_string()],
+                to_steps: vec!["1".to_string(), "2".to_string()],
+                receptivity: "TRUE".to_string(),
+                convergence: ConvergenceKind::And,
+                divergence: DivergenceKind::Or,
+                ..Default::default()
+            }],
+        };
+        let rep_invalid = validate_sfc_topology(&invalid_or_div);
+        assert!(
+            rep_invalid.errors.iter().any(|e| matches!(e, SfcValidationError::InvalidOrDivergence { element_id, .. } if element_id == "T0")),
+            "Expected InvalidOrDivergence error on single transition T0 branching to multiple target steps"
+        );
+    }
+
+    #[test]
+    fn test_sfc_validation_or_convergence_rule() {
+        // Valid OR convergence: Two independent transitions T1 and T2 converge into target Step 3
+        let valid_or_conv = SfcProgram {
+            name: "valid_or_conv".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Initial", StepKind::Initial),
+                SfcStep::new("1", "Step1", StepKind::Normal),
+                SfcStep::new("2", "Step2", StepKind::Normal),
+                SfcStep::new("3", "Step3", StepKind::Normal),
+            ],
+            transitions: vec![
+                SfcTransition {
+                    id: "T1".to_string(),
+                    from_steps: vec!["1".to_string()],
+                    to_steps: vec!["3".to_string()],
+                    receptivity: "Done1".to_string(),
+                    ..Default::default()
+                },
+                SfcTransition {
+                    id: "T2".to_string(),
+                    from_steps: vec!["2".to_string()],
+                    to_steps: vec!["3".to_string()],
+                    receptivity: "Done2".to_string(),
+                    ..Default::default()
+                },
+            ],
+        };
+        let rep_valid = validate_sfc_topology(&valid_or_conv);
+        assert!(
+            rep_valid.errors.iter().all(|e| !matches!(e, SfcValidationError::InvalidOrConvergence { .. })),
+            "Valid OR convergence should not produce InvalidOrConvergence errors"
+        );
+
+        // Invalid OR convergence: A single transition T_conv attempts to merge multiple steps with ConvergenceKind::Or
+        let invalid_or_conv = SfcProgram {
+            name: "invalid_or_conv".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Initial", StepKind::Initial),
+                SfcStep::new("1", "Step1", StepKind::Normal),
+                SfcStep::new("2", "Step2", StepKind::Normal),
+                SfcStep::new("3", "Step3", StepKind::Normal),
+            ],
+            transitions: vec![SfcTransition {
+                id: "T_conv".to_string(),
+                from_steps: vec!["1".to_string(), "2".to_string()],
+                to_steps: vec!["3".to_string()],
+                receptivity: "TRUE".to_string(),
+                convergence: ConvergenceKind::Or,
+                divergence: DivergenceKind::And,
+                ..Default::default()
+            }],
+        };
+        let rep_invalid = validate_sfc_topology(&invalid_or_conv);
+        assert!(
+            rep_invalid.errors.iter().any(|e| matches!(e, SfcValidationError::InvalidOrConvergence { element_id, .. } if element_id == "T_conv")),
+            "Expected InvalidOrConvergence error when a single transition has multiple from_steps with ConvergenceKind::Or"
+        );
     }
 }
