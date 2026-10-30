@@ -2402,9 +2402,9 @@ impl FerriteStudioApp {
 
                     if selected_steps.len() >= 2 {
                         // In IEC 60848: OR divergence requires an independent transition on each branch
-                        let mut next_t = sfc.transitions.len() + 1;
-                        for target_id in &selected_steps {
-                            let trans_id = format!("T{next_t}_Or_{target_id}");
+                        let base_t = sfc.transitions.len() + 1;
+                        for (idx, target_id) in selected_steps.iter().enumerate() {
+                            let trans_id = format!("T{}_Or_{target_id}", base_t + idx);
                             let s_pos = sfc.steps.iter().find(|s| &s.id == target_id).and_then(|s| s.grid_pos);
                             let grid_pos = s_pos.map(|(sx, sy)| (sx + 50, (sy - 80).max(40)));
                             sfc.transitions.push(SfcTransition {
@@ -2416,7 +2416,6 @@ impl FerriteStudioApp {
                                 divergence: DivergenceKind::And,
                                 grid_pos,
                             });
-                            next_t += 1;
                         }
                     } else {
                         // Create 2 alternative branch transitions originating from the selected source step (or default)
@@ -2424,10 +2423,11 @@ impl FerriteStudioApp {
                         let source_pos = source_id.as_ref().and_then(|sid| {
                             sfc.steps.iter().find(|s| &s.id == sid).and_then(|s| s.grid_pos)
                         });
-                        let mut next_t = sfc.transitions.len() + 1;
+                        let base_t = sfc.transitions.len() + 1;
                         for i in 1..=2 {
-                            let trans_id = format!("T{next_t}_Or{i}");
-                            let grid_pos = source_pos.map(|(sx, sy)| (sx + (i - 1) * 120, sy + 100));
+                            let trans_id = format!("T{}_Or{i}", base_t + i - 1);
+                            let offset = ((i - 1) * 120) as i32;
+                            let grid_pos = source_pos.map(|(sx, sy)| (sx + offset, sy + 100));
                             sfc.transitions.push(SfcTransition {
                                 id: trans_id,
                                 from_steps: source_id.as_ref().map(|s| vec![s.clone()]).unwrap_or_default(),
@@ -2437,7 +2437,6 @@ impl FerriteStudioApp {
                                 divergence: DivergenceKind::And,
                                 grid_pos,
                             });
-                            next_t += 1;
                         }
                     }
                     self.track_history();
@@ -2461,9 +2460,9 @@ impl FerriteStudioApp {
 
                     if selected_steps.len() >= 2 {
                         // In IEC 60848: OR convergence requires a transition on each branch before the common state
-                        let mut next_t = sfc.transitions.len() + 1;
-                        for src_id in &selected_steps {
-                            let trans_id = format!("T{next_t}_Conv_{src_id}");
+                        let base_t = sfc.transitions.len() + 1;
+                        for (idx, src_id) in selected_steps.iter().enumerate() {
+                            let trans_id = format!("T{}_Conv_{src_id}", base_t + idx);
                             let s_pos = sfc.steps.iter().find(|s| &s.id == src_id).and_then(|s| s.grid_pos);
                             let grid_pos = s_pos.map(|(sx, sy)| (sx + 50, sy + 100));
                             sfc.transitions.push(SfcTransition {
@@ -2475,7 +2474,6 @@ impl FerriteStudioApp {
                                 divergence: DivergenceKind::And,
                                 grid_pos,
                             });
-                            next_t += 1;
                         }
                     } else if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) =
                         self.sfc_selected

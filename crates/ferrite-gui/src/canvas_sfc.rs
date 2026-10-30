@@ -1704,17 +1704,17 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                             err = Some("Unlinked Step");
                             break;
                         }
-                        SfcValidationError::InvalidOrDivergence { element_id, .. } => {
-                            if element_id == &step.id {
-                                err = Some("Invalid OR Divergence");
-                                break;
-                            }
+                        SfcValidationError::InvalidOrDivergence { element_id, .. }
+                            if element_id == &step.id =>
+                        {
+                            err = Some("Invalid OR Divergence");
+                            break;
                         }
-                        SfcValidationError::InvalidOrConvergence { element_id, .. } => {
-                            if element_id == &step.id {
-                                err = Some("Invalid OR Convergence");
-                                break;
-                            }
+                        SfcValidationError::InvalidOrConvergence { element_id, .. }
+                            if element_id == &step.id =>
+                        {
+                            err = Some("Invalid OR Convergence");
+                            break;
                         }
                         _ => {}
                     }
@@ -1992,29 +1992,29 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                             err = Some("Unlinked Transition");
                             break;
                         }
-                        SfcValidationError::InvalidAndDivergence { transition_id, .. } => {
-                            if transition_id == &tr.id {
-                                err = Some("Invalid AND Divergence");
-                                break;
-                            }
+                        SfcValidationError::InvalidAndDivergence { transition_id, .. }
+                            if transition_id == &tr.id =>
+                        {
+                            err = Some("Invalid AND Divergence");
+                            break;
                         }
-                        SfcValidationError::InvalidAndConvergence { transition_id, .. } => {
-                            if transition_id == &tr.id {
-                                err = Some("Invalid AND Convergence");
-                                break;
-                            }
+                        SfcValidationError::InvalidAndConvergence { transition_id, .. }
+                            if transition_id == &tr.id =>
+                        {
+                            err = Some("Invalid AND Convergence");
+                            break;
                         }
-                        SfcValidationError::InvalidOrDivergence { element_id, .. } => {
-                            if element_id == &tr.id {
-                                err = Some("Invalid OR Divergence");
-                                break;
-                            }
+                        SfcValidationError::InvalidOrDivergence { element_id, .. }
+                            if element_id == &tr.id =>
+                        {
+                            err = Some("Invalid OR Divergence");
+                            break;
                         }
-                        SfcValidationError::InvalidOrConvergence { element_id, .. } => {
-                            if element_id == &tr.id {
-                                err = Some("Invalid OR Convergence");
-                                break;
-                            }
+                        SfcValidationError::InvalidOrConvergence { element_id, .. }
+                            if element_id == &tr.id =>
+                        {
+                            err = Some("Invalid OR Convergence");
+                            break;
                         }
                         _ => {}
                     }
