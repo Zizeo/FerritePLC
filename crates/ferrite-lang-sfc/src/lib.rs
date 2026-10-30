@@ -48,11 +48,19 @@ pub enum SfcError {
         source: CoreError,
     },
 
-    #[error("Topology validation error in SFC POU '{pou}': {errors:?}")]
+    #[error("Topology validation error in SFC POU '{pou}': {}", format_sfc_validation_errors(.errors))]
     TopologyValidation {
         pou: String,
         errors: Vec<SfcValidationError>,
     },
+}
+
+fn format_sfc_validation_errors(errors: &[SfcValidationError]) -> String {
+    errors
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

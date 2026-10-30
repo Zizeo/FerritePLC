@@ -2413,7 +2413,7 @@ impl FerriteStudioApp {
                                 to_steps: vec![target_id.clone()],
                                 receptivity: "TRUE".to_string(),
                                 convergence: ConvergenceKind::And,
-                                divergence: DivergenceKind::And,
+                                divergence: DivergenceKind::Or,
                                 grid_pos,
                             });
                         }
@@ -2434,7 +2434,7 @@ impl FerriteStudioApp {
                                 to_steps: Vec::new(),
                                 receptivity: format!("Branch{i}_Cond"),
                                 convergence: ConvergenceKind::And,
-                                divergence: DivergenceKind::And,
+                                divergence: DivergenceKind::Or,
                                 grid_pos,
                             });
                         }

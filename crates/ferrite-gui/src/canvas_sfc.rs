@@ -3616,6 +3616,9 @@ mod tests {
             assert_eq!(branch1.to_steps, vec!["1".to_string()]);
             assert_eq!(branch2.to_steps, vec!["2".to_string()]);
             assert_eq!(branch3.to_steps, vec!["3".to_string()]);
+            assert_eq!(branch1.divergence, DivergenceKind::Or);
+            assert_eq!(branch2.divergence, DivergenceKind::Or);
+            assert_eq!(branch3.divergence, DivergenceKind::Or);
         }
 
         // 4. Test delete: single-item selection deletes immediately without confirmation modal
