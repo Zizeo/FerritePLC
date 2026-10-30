@@ -29,7 +29,9 @@ use ferrite_runtime::{PlcRuntime, ScanTelemetry};
 
 use crate::alarms_panel::render_alarms_panel;
 use crate::canvas_fbd::{delete_fbd_block, render_fbd_editor};
-use crate::canvas_ld::{render_ld_editor, LdBranchPathSegment, LdDropTarget, LdElementKey};
+use crate::canvas_ld::{
+    lookup_element_mut, render_ld_editor, LdBranchPathSegment, LdDropTarget, LdElementKey,
+};
 use crate::canvas_sfc::render_sfc_editor;
 use crate::digital_twin::{
     DigitalTwinWorkspace, SharedIoHandle, SharedIoState, render_digital_twin,
@@ -180,6 +182,7 @@ pub enum Message {
     CheckProject,
     Undo,
     Redo,
+    DeletePressed,
     AddPouClicked,
     NewPouNameChanged(String),
     NewPouLangSelected(LanguageKind),
@@ -241,8 +244,8 @@ pub enum Message {
     LdAddContact(String, usize),
     LdAddContactWithKind(String, usize, ContactKind),
     LdRemoveContact(String, usize, usize),
-    LdContactSymbolChanged(String, usize, usize, String),
-    LdContactKindChanged(String, usize, usize, ContactKind),
+    LdContactSymbolChanged(String, usize, Vec<LdBranchPathSegment>, usize, String),
+    LdContactKindChanged(String, usize, Vec<LdBranchPathSegment>, usize, ContactKind),
     LdAddCoil(String, usize),
     LdAddCoilWithKind(String, usize, CoilKind),
     LdRemoveCoil(String, usize, usize),
@@ -251,10 +254,10 @@ pub enum Message {
     LdSelectElement(String, Option<LdElementKey>),
     LdSelectElements(String, Vec<LdElementKey>),
     LdCanvasPanChanged(String, Vector),
-    LdCanvasZoomChanged(String, f32),
+    LdCanvasZoomChanged(String, f32, Vector),
     LdRequestDeleteSelected(String),
     LdMoveElements(String, Vec<LdElementKey>, LdDropTarget),
-    LdAddParallelBranch(String, usize, Vec<LdBranchPathSegment>),
+    LdAddParallelBranch(String, usize, Vec<LdBranchPathSegment>, Option<usize>),
 
     // Sequential Function Chart (SFC / Grafcet)
     SfcAddStep(String),
@@ -408,7 +411,7 @@ pub fn handle_keyboard_shortcut(
     } else {
         match key {
             iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
-                Some(Message::SfcRequestDeleteSelected(String::new()))
+                Some(Message::DeletePressed)
             }
             _ => None,
         }
@@ -832,17 +835,13 @@ impl FerriteStudioApp {
                     rung,
                     branch_path,
                     index,
-                } => {
-                    contacts_to_delete.push((*rung, branch_path.clone(), *index));
                 }
-                LdElementKey::Branch {
+                | LdElementKey::Branch {
                     rung,
                     branch_path,
                     index,
-                } => {
-                    contacts_to_delete.push((*rung, branch_path.clone(), *index));
                 }
-                LdElementKey::InlineFb {
+                | LdElementKey::InlineFb {
                     rung,
                     branch_path,
                     index,
@@ -854,12 +853,39 @@ impl FerriteStudioApp {
 
         rungs_to_delete.sort_unstable();
         rungs_to_delete.dedup();
-        for r_idx in rungs_to_delete.into_iter().rev() {
-            if r_idx < ld.rungs.len() {
-                ld.rungs.remove(r_idx);
-            }
-        }
 
+        // 1. Skip items whose entire rung is scheduled for deletion
+        coils_to_delete.retain(|(r_idx, _)| !rungs_to_delete.contains(r_idx));
+        contacts_to_delete.retain(|(r_idx, _, _)| !rungs_to_delete.contains(r_idx));
+
+        // 2. Filter out child elements if a parent branch is also scheduled for deletion
+        let branches_to_delete: Vec<(usize, Vec<LdBranchPathSegment>, usize)> = keys
+            .iter()
+            .filter_map(|k| match k {
+                LdElementKey::Branch {
+                    rung,
+                    branch_path,
+                    index,
+                } => Some((*rung, branch_path.clone(), *index)),
+                _ => None,
+            })
+            .collect();
+
+        contacts_to_delete.retain(|(r_idx, bp, _)| {
+            for (br_r, br_bp, br_idx) in &branches_to_delete {
+                if r_idx == br_r
+                    && bp.len() > br_bp.len()
+                    && bp[..br_bp.len()] == br_bp[..]
+                    && let Some(next_seg) = bp.get(br_bp.len())
+                    && next_seg.branch_idx == *br_idx
+                {
+                    return false;
+                }
+            }
+            true
+        });
+
+        // 3. Delete coils first in descending index order
         coils_to_delete.sort_by_key(|a| std::cmp::Reverse(a.1));
         for (r_idx, c_idx) in coils_to_delete {
             if let Some(rung) = ld.rungs.get_mut(r_idx)
@@ -869,15 +895,29 @@ impl FerriteStudioApp {
             }
         }
 
-        contacts_to_delete.sort_by_key(|a| std::cmp::Reverse(a.2));
+        // 4. Delete contacts/branches: deepest branches first, then descending index
+        contacts_to_delete.sort_by(|a, b| {
+            b.1.len()
+                .cmp(&a.1.len())
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| b.2.cmp(&a.2))
+        });
         for (r_idx, branch_path, c_idx) in contacts_to_delete {
             if let Some(rung) = ld.rungs.get_mut(r_idx) {
                 remove_from_elements(&mut rung.elements, &branch_path, c_idx);
             }
         }
 
+        // 5. Dissolve redundant / empty branches
         for rung in &mut ld.rungs {
             dissolve_branches_recursive(&mut rung.elements);
+        }
+
+        // 6. Delete whole rungs LAST in descending order
+        for r_idx in rungs_to_delete.into_iter().rev() {
+            if r_idx < ld.rungs.len() {
+                ld.rungs.remove(r_idx);
+            }
         }
 
         self.ld_selected = None;
@@ -897,29 +937,50 @@ impl FerriteStudioApp {
             return;
         };
 
+        // Guard against mixed dragging
+        let has_coil = keys.iter().any(|k| matches!(k, LdElementKey::Coil { .. }));
+        let has_contact = keys.iter().any(|k| {
+            matches!(
+                k,
+                LdElementKey::Contact { .. }
+                    | LdElementKey::Branch { .. }
+                    | LdElementKey::InlineFb { .. }
+            )
+        });
+        if has_coil && has_contact {
+            return;
+        }
+
         let mut extracted_contacts = Vec::new();
         let mut extracted_coils = Vec::new();
 
         let mut sorted_keys = keys.to_vec();
         sorted_keys.sort_by(|a, b| {
-            let idx_a = match a {
-                LdElementKey::Contact { index, .. }
-                | LdElementKey::Coil { index, .. }
-                | LdElementKey::InlineFb { index, .. } => *index,
-                _ => 0,
+            let (depth_a, idx_a) = match a {
+                LdElementKey::Contact { branch_path, index, .. }
+                | LdElementKey::Branch { branch_path, index, .. }
+                | LdElementKey::InlineFb { branch_path, index, .. } => (branch_path.len(), *index),
+                LdElementKey::Coil { index, .. } => (0, *index),
+                _ => (0, 0),
             };
-            let idx_b = match b {
-                LdElementKey::Contact { index, .. }
-                | LdElementKey::Coil { index, .. }
-                | LdElementKey::InlineFb { index, .. } => *index,
-                _ => 0,
+            let (depth_b, idx_b) = match b {
+                LdElementKey::Contact { branch_path, index, .. }
+                | LdElementKey::Branch { branch_path, index, .. }
+                | LdElementKey::InlineFb { branch_path, index, .. } => (branch_path.len(), *index),
+                LdElementKey::Coil { index, .. } => (0, *index),
+                _ => (0, 0),
             };
-            idx_b.cmp(&idx_a)
+            depth_b.cmp(&depth_a).then_with(|| idx_b.cmp(&idx_a))
         });
 
         for key in &sorted_keys {
             match key {
                 LdElementKey::Contact {
+                    rung,
+                    branch_path,
+                    index,
+                }
+                | LdElementKey::Branch {
                     rung,
                     branch_path,
                     index,
@@ -944,10 +1005,6 @@ impl FerriteStudioApp {
                 }
                 _ => {}
             }
-        }
-
-        for rung in &mut ld.rungs {
-            dissolve_branches_recursive(&mut rung.elements);
         }
 
         match target {
@@ -976,10 +1033,11 @@ impl FerriteStudioApp {
             LdDropTarget::NewBranch {
                 rung,
                 branch_path,
+                index,
             } => {
                 if let Some(r) = ld.rungs.get_mut(rung) {
                     for elem in extracted_contacts {
-                        wrap_in_new_branch(&mut r.elements, &branch_path, 0, elem);
+                        wrap_in_new_branch(&mut r.elements, &branch_path, index, elem);
                     }
                 }
             }
@@ -1005,6 +1063,11 @@ impl FerriteStudioApp {
             }
         }
 
+        // Dissolve redundant branches only AFTER re-insertion is complete
+        for rung in &mut ld.rungs {
+            dissolve_branches_recursive(&mut rung.elements);
+        }
+
         self.ld_selected = None;
         self.ld_selected_elements.clear();
         self.track_history();
@@ -1017,6 +1080,7 @@ impl FerriteStudioApp {
         pou_name: &str,
         rung_idx: usize,
         path: &[LdBranchPathSegment],
+        elem_idx: Option<usize>,
     ) {
         let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(pou_name) else {
             return;
@@ -1030,7 +1094,9 @@ impl FerriteStudioApp {
             kind: ContactKind::NormallyOpen,
         };
 
-        if path.is_empty() {
+        if let Some(idx) = elem_idx {
+            wrap_in_new_branch(&mut rung.elements, path, idx, new_contact);
+        } else if path.is_empty() {
             if rung.elements.is_empty() {
                 rung.elements.push(new_contact);
             } else {
@@ -1043,9 +1109,23 @@ impl FerriteStudioApp {
                 );
             }
         } else {
-            let seg = path[0];
-            if let Some(LdElement::Branch { paths }) = rung.elements.get_mut(seg.branch_idx) {
-                paths.push(vec![new_contact]);
+            // Add a new branch path to the targeted branch
+            let mut curr = &mut rung.elements;
+            for (i, seg) in path.iter().enumerate() {
+                if i == path.len() - 1 {
+                    if let Some(LdElement::Branch { paths }) = curr.get_mut(seg.branch_idx) {
+                        paths.push(vec![new_contact]);
+                        break;
+                    }
+                } else if let Some(LdElement::Branch { paths }) = curr.get_mut(seg.branch_idx) {
+                    if let Some(sub_path) = paths.get_mut(seg.path_idx) {
+                        curr = sub_path;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
             }
         }
 
@@ -1764,6 +1844,24 @@ impl FerriteStudioApp {
                 self.redo();
                 Task::none()
             }
+            Message::DeletePressed => {
+                if let WorkspaceTab::Pou(pou_name) = &self.active_tab
+                    && let Some(pou) = self.project.pous.get(pou_name)
+                {
+                    match pou {
+                        PouSource::Ld(_) => {
+                            let p = pou_name.clone();
+                            return self.update(Message::LdRequestDeleteSelected(p));
+                        }
+                        PouSource::Sfc(_) => {
+                            let p = pou_name.clone();
+                            return self.update(Message::SfcRequestDeleteSelected(p));
+                        }
+                        _ => {}
+                    }
+                }
+                Task::none()
+            }
             Message::AddPouClicked => {
                 if !self.new_pou_name.trim().is_empty() {
                     let name = self.new_pou_name.trim().to_string();
@@ -2118,6 +2216,7 @@ impl FerriteStudioApp {
                 {
                     ld.rungs.remove(r_idx);
                     self.track_history();
+                    self.recompile_runtime();
                     self.modified = true;
                 }
                 Task::none()
@@ -2128,6 +2227,7 @@ impl FerriteStudioApp {
                 {
                     rung.comment = c;
                     self.track_history();
+                    self.recompile_runtime();
                     self.modified = true;
                 }
                 Task::none()
@@ -2141,6 +2241,7 @@ impl FerriteStudioApp {
                         kind: ContactKind::NormallyOpen,
                     });
                     self.track_history();
+                    self.recompile_runtime();
                     self.modified = true;
                 }
                 Task::none()
@@ -2157,6 +2258,7 @@ impl FerriteStudioApp {
                     };
                     rung.elements.push(LdElement::Contact { symbol: sym, kind });
                     self.track_history();
+                    self.recompile_runtime();
                     self.modified = true;
                 }
                 Task::none()
@@ -2168,28 +2270,33 @@ impl FerriteStudioApp {
                 {
                     rung.elements.remove(e_idx);
                     self.track_history();
+                    self.recompile_runtime();
                     self.modified = true;
                 }
                 Task::none()
             }
-            Message::LdContactSymbolChanged(pou_name, r_idx, e_idx, s) => {
+            Message::LdContactSymbolChanged(pou_name, r_idx, branch_path, e_idx, s) => {
                 if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
                     && let Some(rung) = ld.rungs.get_mut(r_idx)
-                    && let Some(LdElement::Contact { symbol, .. }) = rung.elements.get_mut(e_idx)
+                    && let Some(LdElement::Contact { symbol, .. }) =
+                        lookup_element_mut(&mut rung.elements, &branch_path, e_idx)
                 {
                     *symbol = s;
                     self.track_history();
+                    self.recompile_runtime();
                     self.modified = true;
                 }
                 Task::none()
             }
-            Message::LdContactKindChanged(pou_name, r_idx, e_idx, k) => {
+            Message::LdContactKindChanged(pou_name, r_idx, branch_path, e_idx, k) => {
                 if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
                     && let Some(rung) = ld.rungs.get_mut(r_idx)
-                    && let Some(LdElement::Contact { kind, .. }) = rung.elements.get_mut(e_idx)
+                    && let Some(LdElement::Contact { kind, .. }) =
+                        lookup_element_mut(&mut rung.elements, &branch_path, e_idx)
                 {
                     *kind = k;
                     self.track_history();
+                    self.recompile_runtime();
                     self.modified = true;
                 }
                 Task::none()
@@ -2203,6 +2310,7 @@ impl FerriteStudioApp {
                         kind: CoilKind::Normal,
                     });
                     self.track_history();
+                    self.recompile_runtime();
                     self.modified = true;
                 }
                 Task::none()
@@ -2216,6 +2324,7 @@ impl FerriteStudioApp {
                         kind,
                     });
                     self.track_history();
+                    self.recompile_runtime();
                     self.modified = true;
                 }
                 Task::none()
@@ -2227,6 +2336,7 @@ impl FerriteStudioApp {
                 {
                     rung.coils.remove(c_idx);
                     self.track_history();
+                    self.recompile_runtime();
                     self.modified = true;
                 }
                 Task::none()
@@ -2238,6 +2348,7 @@ impl FerriteStudioApp {
                 {
                     coil.symbol = s;
                     self.track_history();
+                    self.recompile_runtime();
                     self.modified = true;
                 }
                 Task::none()
@@ -2249,6 +2360,7 @@ impl FerriteStudioApp {
                 {
                     coil.kind = k;
                     self.track_history();
+                    self.recompile_runtime();
                     self.modified = true;
                 }
                 Task::none()
@@ -2271,8 +2383,9 @@ impl FerriteStudioApp {
                 self.ld_canvas_pan.insert(pou_name, pan);
                 Task::none()
             }
-            Message::LdCanvasZoomChanged(pou_name, zoom) => {
-                self.ld_canvas_zoom.insert(pou_name, zoom);
+            Message::LdCanvasZoomChanged(pou_name, zoom, pan) => {
+                self.ld_canvas_zoom.insert(pou_name.clone(), zoom);
+                self.ld_canvas_pan.insert(pou_name, pan);
                 Task::none()
             }
             Message::LdRequestDeleteSelected(pou_name) => {
@@ -2303,8 +2416,8 @@ impl FerriteStudioApp {
                 self.perform_ld_move(&pou_name, &keys, target);
                 Task::none()
             }
-            Message::LdAddParallelBranch(pou_name, rung_idx, path) => {
-                self.perform_ld_add_parallel_branch(&pou_name, rung_idx, &path);
+            Message::LdAddParallelBranch(pou_name, rung_idx, path, elem_idx) => {
+                self.perform_ld_add_parallel_branch(&pou_name, rung_idx, &path, elem_idx);
                 Task::none()
             }
             Message::SfcAddStep(pou_name) => {
@@ -4648,12 +4761,16 @@ impl FerriteStudioApp {
                             } else {
                                 &[][..]
                             };
+                            let pan = self.ld_canvas_pan.get(name).copied().unwrap_or(Vector::new(0.0, 0.0));
+                            let zoom = self.ld_canvas_zoom.get(name).copied().unwrap_or(1.0);
                             render_ld_editor(
                                 ld,
                                 self.runtime.as_ref(),
                                 sel,
                                 sel_elems,
                                 self.ui_lang,
+                                pan,
+                                zoom,
                             )
                         }
                         PouSource::Sfc(sfc) => {

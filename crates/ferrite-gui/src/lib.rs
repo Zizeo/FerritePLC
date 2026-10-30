@@ -746,7 +746,7 @@ mod tests {
             &iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete),
             iced::keyboard::Modifiers::empty(),
         );
-        assert!(matches!(del, Some(Message::SfcRequestDeleteSelected(_))));
+        assert!(matches!(del, Some(Message::DeletePressed)));
 
         let backspace = handle_keyboard_shortcut(
             &iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace),
