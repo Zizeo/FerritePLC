@@ -25,7 +25,7 @@ This design elevates the Ladder editor to the same first-class vector canvas exp
 - **Interactions**:
   - **Single & Multi-Select**: Click to select, `Ctrl+Click` to toggle/add, and click-drag marquee box to select multiple elements across or within rungs.
   - **Drag-and-Drop**: Drag contacts, coils, or entire branches to move them along a rung, move them between rungs, or nest them into parallel branches, with clear visual drop targets.
-  - **Batch Delete**: Pressing `Delete` key or clicking the trash toolbar button removes all selected elements in one atomic operation, automatically closing wire gaps.
+  - **Batch Delete**: Pressing `Delete` key or clicking the trash toolbar button removes all selected elements in one atomic operation, automatically closing wire gaps and pruning degenerate branches.
   - **Pan & Zoom**: Mouse wheel zoom (0.25x to 3.0x) and middle-mouse or space-drag panning.
   - **Inspector**: Bottom context bar displaying selected element properties (tag name, contact kind NO/NC/P/N, coil kind ( )/[S]/[R], inline FB instance, rung comments).
   - **Live Power Flow**: Real-time evaluation of energized state from `PlcRuntime`, highlighting active rails, wires, contacts, and energized coils in emerald green.
@@ -65,19 +65,26 @@ This design elevates the Ladder editor to the same first-class vector canvas exp
 
 ---
 
-## 5. Detailed Technical Specification
+## 5. Detailed Technical Specification & Builder Calls
 
-### 5.1 Element Addressing & Identification
-To uniquely address elements for selection, dragging, and deletion inside nested rungs and parallel branches:
+### 5.1 Element Addressing & Branch Path Semantics (Builder Call: Unambiguous AST Addressing)
+To uniquely address elements for selection, dragging, and deletion inside arbitrarily nested rungs and parallel branches, we define unambiguous AST paths:
 
 ```rust
+/// Identifies a specific parallel branch step-down within an element list:
+/// `(branch_element_index, path_index)`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+pub struct LdBranchPathSegment {
+    pub branch_idx: usize,
+    pub path_idx: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LdElementKey {
     Rung(usize),
     Contact {
         rung: usize,
-        /// Path of branch indices if inside nested parallel branches (e.g. `vec![0, 1]`)
-        branch_path: Vec<usize>,
+        branch_path: Vec<LdBranchPathSegment>,
         index: usize,
     },
     Coil {
@@ -86,102 +93,84 @@ pub enum LdElementKey {
     },
     Branch {
         rung: usize,
-        branch_path: Vec<usize>,
+        branch_path: Vec<LdBranchPathSegment>,
         index: usize,
     },
     InlineFb {
         rung: usize,
-        branch_path: Vec<usize>,
+        branch_path: Vec<LdBranchPathSegment>,
         index: usize,
     },
 }
 ```
 
-### 5.2 Drop Target Identification
-```rust
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LdDropTarget {
-    BeforeElement {
-        rung: usize,
-        branch_path: Vec<usize>,
-        index: usize,
-    },
-    AfterElement {
-        rung: usize,
-        branch_path: Vec<usize>,
-        index: usize,
-    },
-    NewBranch {
-        rung: usize,
-        branch_path: Vec<usize>,
-    },
-    CoilSlot {
-        rung: usize,
-        index: usize,
-    },
-    NewRung {
-        index: usize,
-    },
-}
-```
+### 5.2 Element Creation Workflow (Builder Call: Top Toolbar & Canvas Insertion)
+Modeled after the SFC editor and industrial PLC tools (RSLogix/Codesys):
+- Top toolbar provides creation buttons: `+ Rung`, `+ NO Contact`, `+ NC Contact`, `+ |P|`, `+ |N|`, `+ Coil`, `+ Parallel Branch`.
+- **Insertion Rules:**
+  - If a Contact or Branch is selected: New elements are inserted immediately after the selected element.
+  - If a Rung is selected: New elements append to the selected rung.
+  - If a Coil is selected: New coils append to the coil group of that rung.
+  - If nothing is selected: Appends to the last rung in the POU (or creates Rung 0 if empty).
 
-### 5.3 Canvas State & Interaction Model
-In `crates/ferrite-gui/src/canvas_ld.rs`:
-```rust
-#[derive(Debug, Clone)]
-pub struct LdCanvasState {
-    pub pan: Vector,
-    pub zoom: f32,
-    pub selected: Option<LdElementKey>,
-    pub selected_elements: Vec<LdElementKey>,
-    pub drag_marquee: Option<(Point, Point)>,
-    pub dragging: Option<(LdElementKey, Point)>,
-    pub drop_hover: Option<LdDropTarget>,
-    pub is_panning: bool,
-    pub pan_start: Option<Point>,
-}
-```
-
-### 5.4 Layout Geometry & Rung Bounds
-The layout engine calculates the geometry of each rung:
-- `RAIL_LEFT_X = 60.0`: Left power rail position.
-- `RAIL_WIDTH = 5.0`: Power rail stroke.
-- `SLOT_WIDTH = 96.0`: Standard horizontal spacing per contact/block card.
+### 5.3 Dynamic Power Rail Geometry & Multiple Coils (Builder Call: Two-Pass Dynamic Layout)
+- `RAIL_LEFT_X = 60.0`: Continuous vertical left power rail.
+- `SLOT_WIDTH = 96.0`: Horizontal width per contact/block card.
 - `SLOT_HEIGHT = 44.0`: Card height.
+- `COIL_CARD_WIDTH = 100.0`: Width per coil card.
 - `BRANCH_VERTICAL_STEP = 54.0`: Vertical displacement per parallel branch path.
-- `RUNG_GAP_Y = 32.0`: Vertical space between consecutive rungs.
-- `COIL_AREA_WIDTH = 120.0`: Width reserved near right power rail for coils.
+- `RUNG_GAP_Y = 36.0`: Vertical gap between rungs.
+- **Dynamic Right Rail (`RAIL_RIGHT_X`):**
+  Calculated across all rungs in the program:
+  $$\text{max\_contact\_extent} = \max_{\text{rungs}} (\text{contact count along widest branch} \times \text{SLOT\_WIDTH})$$
+  $$\text{RAIL\_RIGHT\_X} = \max(650.0, \text{RAIL\_LEFT\_X} + \text{max\_contact\_extent} + \text{COIL\_CARD\_WIDTH} + 120.0)$$
+- **Multiple Coils:**
+  Rendered in parallel stacked vertically before the right rail. The rung height dynamically takes the maximum of the contact branch depth and the coil stack height:
+  $$\text{effective\_paths} = \max(\text{contact\_branch\_depth}, \text{rung.coils.len()})$$
+  $$\text{Rung Height} = \text{SLOT\_HEIGHT} + (\text{effective\_paths} - 1) \times \text{BRANCH\_VERTICAL_STEP} + \text{RUNG\_GAP\_Y}$$
 
-Each rung's total height is dynamically calculated based on the maximum parallel branch depth:
-$$\text{Rung Height} = \text{SLOT_HEIGHT} + \sum (\text{branch paths} - 1) \times \text{BRANCH_VERTICAL_STEP} + \text{RUNG_GAP_Y}$$
+### 5.4 Branch Pruning & Dissolution Rules (Builder Call: Logic-Preserving Dissolution)
+During deletion (`LdDeleteSelected`) or drag-out operations:
+1. **Empty Paths:** If elements are deleted from a branch path, a bare wire segment remains (representing an unconditional bypass / short circuit).
+2. **Branch Dissolution:** If an entire path in a 2-path branch is deleted (leaving 1 path remaining), the branch automatically dissolves and unwraps its remaining elements back into the parent rung sequence, eliminating redundant branch structures.
+3. **Empty Branch Removal:** If all paths in a branch are deleted, the branch element itself is removed from `rung.elements`.
 
-### 5.5 Graphical Parallel Branches (OR Branches)
-When an `LdElement::Branch { paths }` is encountered:
-1. A vertical drop line descends from the main horizontal rail at the split point `split_x`.
-2. Each path $p \in \text{paths}$ renders as its own horizontal sub-track at `y + p * BRANCH_VERTICAL_STEP`.
-3. Elements within each sub-track are placed sequentially along that branch.
-4. At the merge point `merge_x`, a vertical rise line connects all branch tracks back into the main horizontal rail.
-5. In live simulation, if any path in the branch evaluates to `true` (power flows), the merge point and subsequent wire segments are energized in emerald green.
+### 5.5 Drag-and-Drop & Multi-Element Operations (Builder Call: Multi-Selection Drag & Drop)
+- `LdCanvasState`:
+  ```rust
+  #[derive(Debug, Clone)]
+  pub struct LdCanvasState {
+      pub pan: Vector,
+      pub zoom: f32,
+      pub selected: Option<LdElementKey>,
+      pub selected_elements: Vec<LdElementKey>,
+      pub drag_marquee: Option<(Point, Point)>,
+      pub dragging: Option<(Vec<LdElementKey>, Point)>,
+      pub drop_hover: Option<LdDropTarget>,
+      pub is_panning: bool,
+      pub pan_start: Option<Point>,
+  }
+  ```
+- **Dragging:** Dragging any element inside `selected_elements` drags the whole selection group. A semi-transparent ghost preview renders under the mouse.
+- **Drop Target Validation:**
+  - Contacts and Inline FBs drop into contact slots (`BeforeElement`, `AfterElement`, `NewBranch`).
+  - Coils drop into `CoilSlot` near the right rail.
+  - Incompatible drop operations are rejected cleanly without mutating the AST.
 
-### 5.6 Messages in `crates/ferrite-gui/src/app.rs`
-- `LdSelectElement(String, Option<LdElementKey>)`: Select or deselect a single element.
-- `LdSelectElements(String, Vec<LdElementKey>)`: Set multi-selection (from marquee or Ctrl+Click).
-- `LdDeleteSelected(String)`: Delete all elements in `selected_elements` in a single transaction.
-- `LdMoveElements(String, Vec<LdElementKey>, LdDropTarget)`: Reorder or move elements to a new slot.
-- `LdAddParallelBranch(String, usize, Vec<usize>)`: Convert selected contacts or insert a new parallel bypass loop.
-- `LdCanvasPanChanged(String, Vector)`: Update pan offset.
-- `LdCanvasZoomChanged(String, f32)`: Update zoom level.
-
-### 5.7 Inspector & Context Bar
-Located at the bottom of the LD editor view:
-- When a **Contact** is selected: Tag name text input, dropdown for `NO`, `NC`, `|P|`, `|N|`, delete button.
-- When a **Coil** is selected: Tag name text input, dropdown for `( )`, `[S]`, `[R]`, delete button.
-- When a **Rung** is selected: Rung ID and comment editor, delete rung button.
-- When **Multiple Elements** are selected: Shows badge `"N elements selected"`, bulk delete button, and bulk action helpers.
+### 5.6 Canvas Actions & Messages in `ferrite-gui`
+- `LdSelectElement(String, Option<LdElementKey>)`
+- `LdSelectElements(String, Vec<LdElementKey>)`
+- `LdDeleteSelected(String)`
+- `LdMoveElements(String, Vec<LdElementKey>, LdDropTarget)`
+- `LdAddParallelBranch(String, usize, Vec<LdBranchPathSegment>)`
+- `LdAddContactWithKind(String, usize, ContactKind)`
+- `LdAddCoilWithKind(String, usize, CoilKind)`
+- `LdCanvasPanChanged(String, Vector)`
+- `LdCanvasZoomChanged(String, f32)`
 
 ---
 
 ## 6. What's Left to the Builder
-- Precise mouse click hit-testing thresholds for wire segments vs element cards.
-- Rendering styling details (e.g. rounded corners, contact glyph font size, rail glow intensity).
-- Unit tests verifying layout calculations, multi-selection bounds, and move/delete transactions.
+- Visual styling constants (colors for energized power wires: `#10B981`, inactive wires: `#334155`, selection cyan glow: `#38BDF8`).
+- Drag ghost rendering and marquee rectangle dashed stroke styling.
+- Comprehensive unit tests covering layout calculations, marquee hit-testing, branch dissolution, and drag-and-drop transactions.
