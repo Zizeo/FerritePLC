@@ -67,9 +67,36 @@ impl SharedIoState {
 
 pub type SharedIoHandle = Arc<RwLock<SharedIoState>>;
 
+/// Operating mode for the Digital Twin window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TwinMode {
+    #[default]
+    Edit,
+    Runtime,
+}
+
+/// Interactive button behavior in Runtime mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ButtonActionMode {
+    #[default]
+    Toggle,
+    Momentary,
+}
+
+/// Which color slot is currently targeted by the Color Picker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorEditTarget {
+    #[default]
+    InactiveColor,
+    ActiveColor,
+    BaseColor,
+}
+
 /// Geometric basic shape types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ShapeType {
+    Line,
+    Square,
     Rectangle,
     Circle,
     Triangle,
@@ -186,9 +213,52 @@ pub struct CanvasElement {
     pub element_type: ElementKind,
     pub binding: Option<VariableBinding>,
     pub base_color: [u8; 4],
+    #[serde(default)]
+    pub button_mode: ButtonActionMode,
 }
 
 impl CanvasElement {
+    pub fn center(&self) -> (f32, f32) {
+        (
+            self.position.0 + self.size.0 * 0.5,
+            self.position.1 + self.size.1 * 0.5,
+        )
+    }
+
+    /// Rotation-aware hit test in the element's local coordinate frame.
+    /// Ensures thin lines and pipes have at least a 12px clickable hit thickness.
+    pub fn contains_point(&self, x: f32, y: f32) -> bool {
+        let (cx, cy) = self.center();
+        let dx = x - cx;
+        let dy = y - cy;
+        let rad = -self.rotation.to_radians();
+        let cos_a = rad.cos();
+        let sin_a = rad.sin();
+        let local_x = dx * cos_a - dy * sin_a;
+        let local_y = dx * sin_a + dy * cos_a;
+        let half_w = (self.size.0.max(12.0)) * 0.5;
+        let half_h = (self.size.1.max(12.0)) * 0.5;
+        local_x.abs() <= half_w && local_y.abs() <= half_h
+    }
+
+    /// World-space coordinates of the top rotation handle stem circle.
+    pub fn rotation_handle_pos(&self) -> (f32, f32) {
+        let (cx, cy) = self.center();
+        let local_y = -(self.size.1 * 0.5 + 22.0);
+        let rad = self.rotation.to_radians();
+        let wx = cx - local_y * rad.sin();
+        let wy = cy + local_y * rad.cos();
+        (wx, wy)
+    }
+
+    /// Hit-tests the top rotation handle circle.
+    pub fn hit_test_rotation_handle(&self, x: f32, y: f32, radius: f32) -> bool {
+        let (rx, ry) = self.rotation_handle_pos();
+        let dx = x - rx;
+        let dy = y - ry;
+        (dx * dx + dy * dy) <= (radius * radius)
+    }
+
     pub fn rect(&self) -> Rect {
         Rect::from_min_size(
             pos2(self.position.0, self.position.1),
@@ -231,4 +301,79 @@ impl CanvasElement {
         }
         None
     }
+}
+
+/// Converts RGBA `[u8; 4]` to `(hue_deg: 0..360, saturation: 0..1, value: 0..1)`.
+pub fn rgb_to_hsv(rgba: [u8; 4]) -> (f32, f32, f32) {
+    let r = rgba[0] as f32 / 255.0;
+    let g = rgba[1] as f32 / 255.0;
+    let b = rgba[2] as f32 / 255.0;
+
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+
+    let h = if delta <= f32::EPSILON {
+        0.0
+    } else if (max - r).abs() <= f32::EPSILON {
+        60.0 * (((g - b) / delta).rem_euclid(6.0))
+    } else if (max - g).abs() <= f32::EPSILON {
+        60.0 * (((b - r) / delta) + 2.0)
+    } else {
+        60.0 * (((r - g) / delta) + 4.0)
+    };
+
+    let s = if max <= f32::EPSILON {
+        0.0
+    } else {
+        delta / max
+    };
+    (h.clamp(0.0, 360.0), s.clamp(0.0, 1.0), max.clamp(0.0, 1.0))
+}
+
+/// Converts `(hue_deg: 0..360, saturation: 0..1, value: 0..1, alpha)` to `[u8; 4]`.
+pub fn hsv_to_rgb(h: f32, s: f32, v: f32, a: u8) -> [u8; 4] {
+    let h = h.rem_euclid(360.0);
+    let s = s.clamp(0.0, 1.0);
+    let v = v.clamp(0.0, 1.0);
+
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0).rem_euclid(2.0) - 1.0).abs());
+    let m = v - c;
+
+    let (r1, g1, b1) = if h < 60.0 {
+        (c, x, 0.0)
+    } else if h < 120.0 {
+        (x, c, 0.0)
+    } else if h < 180.0 {
+        (0.0, c, x)
+    } else if h < 240.0 {
+        (0.0, x, c)
+    } else if h < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+
+    let r = ((r1 + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    let g = ((g1 + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    let b = ((b1 + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    [r, g, b, a]
+}
+
+/// Formats `[u8; 4]` as an uppercase `#RRGGBB` hex string.
+pub fn rgb_to_hex(rgba: [u8; 4]) -> String {
+    format!("#{:02X}{:02X}{:02X}", rgba[0], rgba[1], rgba[2])
+}
+
+/// Parses `#RRGGBB` or `RRGGBB` into `[u8; 4]`. Returns `None` if invalid.
+pub fn hex_to_rgb(hex: &str, alpha: u8) -> Option<[u8; 4]> {
+    let trimmed = hex.trim().strip_prefix('#').unwrap_or(hex.trim());
+    if trimmed.len() != 6 || !trimmed.is_ascii() {
+        return None;
+    }
+    let r = u8::from_str_radix(&trimmed[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&trimmed[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&trimmed[4..6], 16).ok()?;
+    Some([r, g, b, alpha])
 }

@@ -5,8 +5,9 @@ pub mod workspace;
 
 pub use draw::{draw_canvas_element, draw_selection_overlay};
 pub use model::{
-    AccessMode, ActiveResize, ActuatorKind, BlinkConfig, CanvasElement, ElementKind, ResizeHandle,
-    ShapeType, SharedIoHandle, SharedIoSnapshot, SharedIoState, VariableBinding,
+    AccessMode, ActiveResize, ActuatorKind, BlinkConfig, ButtonActionMode, CanvasElement,
+    ColorEditTarget, ElementKind, ResizeHandle, ShapeType, SharedIoHandle, SharedIoSnapshot,
+    SharedIoState, TwinMode, VariableBinding, hex_to_rgb, hsv_to_rgb, rgb_to_hex, rgb_to_hsv,
 };
 pub use theme::TwinTheme;
 pub use workspace::DigitalTwinWorkspace;
@@ -64,6 +65,7 @@ mod tests {
             element_type: ElementKind::Tank,
             binding: None,
             base_color: Color32::GRAY.to_array(),
+            button_mode: ButtonActionMode::default(),
         };
 
         // Top-Left corner is at (100.0, 100.0)
@@ -140,6 +142,124 @@ mod tests {
         // Delete action
         ws.execute_context_action("delete", dup_id);
         assert_eq!(ws.elements.len(), pre_len);
+        Ok(())
+    }
+
+    #[test]
+    fn test_twin_rotated_hit_test_and_line_square_shapes() -> Result<(), Box<dyn std::error::Error>> {
+        let mut ws = DigitalTwinWorkspace::default();
+        let line_id = ws.spawn_element_at(
+            ElementKind::BasicShape(ShapeType::Line),
+            Some((100.0, 200.0)),
+        );
+        let sq_id = ws.spawn_element_at(
+            ElementKind::BasicShape(ShapeType::Square),
+            Some((300.0, 300.0)),
+        );
+        assert!(ws.elements.iter().any(|e| e.id == line_id));
+        assert!(ws.elements.iter().any(|e| e.id == sq_id));
+
+        // Create a 120x12 horizontal line centered at (200, 200) -> position (140, 194)
+        let mut line_elem = CanvasElement {
+            id: 999,
+            label: "Process Line".to_string(),
+            position: (140.0, 194.0),
+            size: (120.0, 12.0),
+            rotation: 0.0,
+            flip_h: false,
+            flip_v: false,
+            z_index: 1,
+            element_type: ElementKind::BasicShape(ShapeType::Line),
+            binding: None,
+            base_color: [255, 255, 255, 255],
+            button_mode: ButtonActionMode::Toggle,
+        };
+
+        // Unrotated: hits (250, 200), misses (200, 250)
+        assert!(line_elem.contains_point(250.0, 200.0));
+        assert!(!line_elem.contains_point(200.0, 250.0));
+
+        // Rotate 90 degrees around center (200, 200) -> now vertical!
+        line_elem.rotation = 90.0;
+        assert!(!line_elem.contains_point(250.0, 200.0));
+        assert!(line_elem.contains_point(200.0, 250.0));
+
+        // Rotation handle hit test
+        let (rh_x, rh_y) = line_elem.rotation_handle_pos();
+        assert!(line_elem.hit_test_rotation_handle(rh_x, rh_y, 8.0));
+        assert!(!line_elem.hit_test_rotation_handle(0.0, 0.0, 8.0));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hsv_and_hex_color_conversions() {
+        let orig = [255, 0, 128, 255];
+        let hex = rgb_to_hex(orig);
+        assert_eq!(hex, "#FF0080");
+        assert_eq!(hex_to_rgb("#FF0080", 255), Some(orig));
+        assert_eq!(hex_to_rgb("00FF7F", 255), Some([0, 255, 127, 255]));
+        // Invalid hex inputs must return None safely
+        assert_eq!(hex_to_rgb("#GG0011", 255), None);
+        assert_eq!(hex_to_rgb("123", 255), None);
+        assert_eq!(hex_to_rgb("", 255), None);
+
+        let (h, s, v) = rgb_to_hsv([0, 255, 0, 255]);
+        assert!((h - 120.0).abs() < 1.0);
+        assert!((s - 1.0).abs() < 0.01);
+        assert!((v - 1.0).abs() < 0.01);
+        let back = hsv_to_rgb(h, s, v, 255);
+        assert_eq!(back, [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn test_twin_project_disk_persistence_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+        let now_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("ferrite_twin_test_{now_nanos}"));
+        std::fs::create_dir_all(&temp_dir)?;
+
+        let mut ws = DigitalTwinWorkspace::with_starter_plant();
+        let id = ws.spawn_element_at(
+            ElementKind::BasicShape(ShapeType::Line),
+            Some((420.0, 180.0)),
+        );
+        ws.selected_id = Some(id);
+        ws.active_color_target = ColorEditTarget::ActiveColor;
+        if let Some(elem) = ws.elements.iter_mut().find(|e| e.id == id) {
+            elem.binding = Some(VariableBinding {
+                variable_id: "Alarm_Out".to_string(),
+                access_mode: AccessMode::ReadOnly,
+                active_color: [0, 255, 0, 255],
+                inactive_color: [255, 0, 0, 255],
+                blink: Some(BlinkConfig {
+                    enabled: true,
+                    trigger_state: true,
+                    interval_ms: 250,
+                }),
+            });
+        }
+        ws.apply_color_to_selected([10, 240, 80, 255]);
+
+        ws.save_to_project(&temp_dir)?;
+        let loaded = DigitalTwinWorkspace::load_or_default(&temp_dir);
+        assert_eq!(loaded.elements.len(), ws.elements.len());
+        let loaded_line = loaded
+            .elements
+            .iter()
+            .find(|e| e.id == id)
+            .ok_or("saved line element missing")?;
+        let binding = loaded_line.binding.as_ref().ok_or("binding missing")?;
+        assert_eq!(binding.variable_id, "Alarm_Out");
+        assert_eq!(binding.active_color, [10, 240, 80, 255]);
+        assert_eq!(binding.inactive_color, [255, 0, 0, 255]);
+        assert_eq!(
+            binding.blink.as_ref().map(|b| b.interval_ms),
+            Some(250)
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
 }

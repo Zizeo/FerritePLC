@@ -32,7 +32,16 @@ pub fn draw_canvas_element(
     };
 
     match elem.element_type {
-        ElementKind::BasicShape(ShapeType::Rectangle) => {
+        ElementKind::BasicShape(ShapeType::Line) => {
+            painter.line_segment(
+                [
+                    pos2(rect.min.x, rect.center().y),
+                    pos2(rect.max.x, rect.center().y),
+                ],
+                Stroke::new(rect.height().clamp(2.0, 24.0), display_color),
+            );
+        }
+        ElementKind::BasicShape(ShapeType::Rectangle | ShapeType::Square) => {
             painter.rect_filled(rect, 0.0, display_color);
             painter.rect_stroke(
                 rect,

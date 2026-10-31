@@ -6,19 +6,35 @@ use serde::{Deserialize, Serialize};
 
 use crate::draw::{draw_canvas_element, draw_selection_overlay};
 use crate::model::{
-    AccessMode, ActiveResize, ActuatorKind, BlinkConfig, CanvasElement, ElementKind, ResizeHandle,
-    ShapeType, SharedIoHandle, VariableBinding,
+    AccessMode, ActiveResize, ActuatorKind, BlinkConfig, ButtonActionMode, CanvasElement,
+    ColorEditTarget, ElementKind, ResizeHandle, ShapeType, SharedIoHandle, TwinMode,
+    VariableBinding, rgb_to_hex, rgb_to_hsv,
 };
 use crate::theme::TwinTheme;
 
 const HANDLE_HIT_RADIUS: f32 = 8.0;
 const MIN_ELEMENT_SIZE: f32 = 24.0;
+pub const TWIN_REL_PATH: &str = "sim/digital_twin.json";
 
 /// State for the Digital Twin Visual Canvas and Equipment Inspector.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DigitalTwinWorkspace {
     pub elements: Vec<CanvasElement>,
     pub selected_id: Option<u64>,
+    #[serde(skip)]
+    pub mode: TwinMode,
+    #[serde(skip)]
+    pub inspector_open_for: Option<u64>,
+    #[serde(skip)]
+    pub active_color_target: ColorEditTarget,
+    #[serde(skip)]
+    pub hsv_state: (f32, f32, f32),
+    #[serde(skip)]
+    pub hex_input: String,
+    #[serde(skip)]
+    pub active_rotate_id: Option<u64>,
+    #[serde(skip)]
+    pub active_momentary_id: Option<u64>,
     #[serde(skip)]
     pub drag_target_id: Option<u64>,
     #[serde(skip)]
@@ -48,6 +64,13 @@ impl DigitalTwinWorkspace {
         Self {
             elements: Self::starter_model(),
             selected_id: None,
+            mode: TwinMode::Edit,
+            inspector_open_for: None,
+            active_color_target: ColorEditTarget::InactiveColor,
+            hsv_state: (0.0, 0.8, 0.8),
+            hex_input: "#E74C3C".to_string(),
+            active_rotate_id: None,
+            active_momentary_id: None,
             drag_target_id: None,
             drag_start_mouse: None,
             drag_start_elem_pos: (0.0, 0.0),
@@ -81,6 +104,7 @@ impl DigitalTwinWorkspace {
                     blink: None,
                 }),
                 base_color: Color32::from_rgb(120, 140, 160).to_array(),
+                button_mode: ButtonActionMode::default(),
             },
             // 2. Chemical Inlet Valve
             CanvasElement {
@@ -99,6 +123,7 @@ impl DigitalTwinWorkspace {
                     Color32::from_rgb(108, 122, 137),
                 )),
                 base_color: Color32::from_rgb(180, 190, 200).to_array(),
+                button_mode: ButtonActionMode::default(),
             },
             // 3. Inlet Feed Pipe Line
             CanvasElement {
@@ -117,6 +142,7 @@ impl DigitalTwinWorkspace {
                     Color32::from_rgb(70, 80, 95),
                 )),
                 base_color: Color32::from_rgb(70, 80, 95).to_array(),
+                button_mode: ButtonActionMode::default(),
             },
             // 4. Secondary Reagent Dosing Valve
             CanvasElement {
@@ -135,6 +161,7 @@ impl DigitalTwinWorkspace {
                     Color32::from_rgb(108, 122, 137),
                 )),
                 base_color: Color32::from_rgb(180, 190, 200).to_array(),
+                button_mode: ButtonActionMode::default(),
             },
             // 5. Agitator Mixer Motor
             CanvasElement {
@@ -153,6 +180,7 @@ impl DigitalTwinWorkspace {
                     Color32::from_rgb(80, 90, 105),
                 )),
                 base_color: Color32::from_rgb(80, 90, 105).to_array(),
+                button_mode: ButtonActionMode::default(),
             },
             // 6. Tank Bottom Drain Valve
             CanvasElement {
@@ -171,6 +199,7 @@ impl DigitalTwinWorkspace {
                     Color32::from_rgb(108, 122, 137),
                 )),
                 base_color: Color32::from_rgb(180, 190, 200).to_array(),
+                button_mode: ButtonActionMode::default(),
             },
             // 7. Discharge Transfer Pump
             CanvasElement {
@@ -189,6 +218,7 @@ impl DigitalTwinWorkspace {
                     Color32::from_rgb(100, 110, 125),
                 )),
                 base_color: Color32::from_rgb(100, 110, 125).to_array(),
+                button_mode: ButtonActionMode::default(),
             },
             // 8. Operator HMI Push Buttons
             CanvasElement {
@@ -209,6 +239,7 @@ impl DigitalTwinWorkspace {
                     blink: None,
                 }),
                 base_color: Color32::from_rgb(46, 204, 113).to_array(),
+                button_mode: ButtonActionMode::Toggle,
             },
             CanvasElement {
                 id: 9,
@@ -228,6 +259,7 @@ impl DigitalTwinWorkspace {
                     blink: None,
                 }),
                 base_color: Color32::from_rgb(231, 76, 60).to_array(),
+                button_mode: ButtonActionMode::Toggle,
             },
             // 10. Alarm Annunciator Beacon
             CanvasElement {
@@ -252,6 +284,7 @@ impl DigitalTwinWorkspace {
                     }),
                 }),
                 base_color: Color32::from_rgb(180, 50, 50).to_array(),
+                button_mode: ButtonActionMode::default(),
             },
         ]
     }
@@ -789,6 +822,14 @@ impl DigitalTwinWorkspace {
                 if self.selected_id == Some(elem_id) {
                     self.selected_id = None;
                 }
+                if self.inspector_open_for == Some(elem_id) {
+                    self.inspector_open_for = None;
+                }
+            }
+            "inspect" => {
+                self.selected_id = Some(elem_id);
+                self.inspector_open_for = Some(elem_id);
+                self.sync_color_picker_from_selected();
             }
             "duplicate" => {
                 if let Some(elem) = self.elements.iter().find(|e| e.id == elem_id).cloned() {
@@ -804,7 +845,12 @@ impl DigitalTwinWorkspace {
             }
             "rotate" => {
                 if let Some(elem) = self.elements.iter_mut().find(|e| e.id == elem_id) {
-                    elem.rotation = (elem.rotation + 90.0) % 360.0;
+                    elem.rotation = (elem.rotation + 90.0).rem_euclid(360.0);
+                }
+            }
+            "rotate_ccw" => {
+                if let Some(elem) = self.elements.iter_mut().find(|e| e.id == elem_id) {
+                    elem.rotation = (elem.rotation - 90.0).rem_euclid(360.0);
                 }
             }
             "flip_h" => {
@@ -839,19 +885,38 @@ impl DigitalTwinWorkspace {
         }
     }
 
-    /// Spawns a new element onto the canvas.
+    /// Spawns a new element onto the canvas at the default position.
     fn spawn_element(&mut self, kind: ElementKind) {
+        self.spawn_element_at(kind, None);
+    }
+
+    /// Spawns a new element onto the canvas at an optional coordinate and returns its ID.
+    pub fn spawn_element_at(&mut self, kind: ElementKind, pos: Option<(f32, f32)>) -> u64 {
+        let max_existing = self.elements.iter().map(|e| e.id).max().unwrap_or(0);
+        if self.next_id <= max_existing {
+            self.next_id = max_existing;
+        }
         self.next_id = self.next_id.saturating_add(1);
         let id = self.next_id;
         let (label, size, color) = match kind {
+            ElementKind::BasicShape(ShapeType::Line) => (
+                "Line".to_string(),
+                (140.0, 6.0),
+                Color32::from_rgb(140, 160, 185),
+            ),
+            ElementKind::BasicShape(ShapeType::Square) => (
+                "Square".to_string(),
+                (80.0, 80.0),
+                Color32::from_rgb(100, 110, 130),
+            ),
             ElementKind::BasicShape(ShapeType::Rectangle) => (
                 "Rectangle".to_string(),
-                (100.0, 60.0),
+                (110.0, 65.0),
                 Color32::from_rgb(100, 110, 130),
             ),
             ElementKind::BasicShape(ShapeType::RoundedRect) => (
                 "Rounded Box".to_string(),
-                (100.0, 60.0),
+                (110.0, 65.0),
                 Color32::from_rgb(90, 120, 140),
             ),
             ElementKind::BasicShape(ShapeType::Circle) => (
@@ -866,55 +931,58 @@ impl DigitalTwinWorkspace {
             ),
             ElementKind::PushButton => (
                 "Push Button".to_string(),
-                (90.0, 36.0),
+                (96.0, 38.0),
                 Color32::from_rgb(52, 152, 219),
             ),
             ElementKind::Switch => (
                 "Toggle Switch".to_string(),
-                (60.0, 30.0),
+                (64.0, 32.0),
                 Color32::from_rgb(45, 55, 70),
             ),
             ElementKind::IndicatorLed => (
                 "LED".to_string(),
-                (40.0, 40.0),
+                (44.0, 44.0),
                 Color32::from_rgb(231, 76, 60),
             ),
             ElementKind::Valve => (
                 "Valve".to_string(),
-                (60.0, 44.0),
+                (64.0, 48.0),
                 Color32::from_rgb(180, 190, 200),
             ),
             ElementKind::Pipe => (
                 "Pipe".to_string(),
-                (120.0, 14.0),
+                (140.0, 14.0),
                 Color32::from_rgb(80, 90, 105),
             ),
             ElementKind::Tank => (
                 "Tank".to_string(),
-                (140.0, 200.0),
+                (150.0, 210.0),
                 Color32::from_rgb(120, 140, 160),
             ),
             ElementKind::Actuator(ActuatorKind::CentrifugalPump) => (
                 "Pump".to_string(),
-                (70.0, 70.0),
+                (72.0, 72.0),
                 Color32::from_rgb(100, 110, 125),
             ),
             ElementKind::Actuator(ActuatorKind::AgitatorMixer) => (
                 "Mixer".to_string(),
-                (70.0, 60.0),
+                (72.0, 64.0),
                 Color32::from_rgb(80, 90, 105),
             ),
             ElementKind::Actuator(ActuatorKind::ElectricMotor) => (
                 "Motor".to_string(),
-                (60.0, 60.0),
+                (68.0, 68.0),
                 Color32::from_rgb(90, 100, 115),
             ),
         };
 
+        let offset = ((self.elements.len() % 8) as f32) * 16.0;
+        let position = pos.unwrap_or((180.0 + offset, 160.0 + offset));
+
         let elem = CanvasElement {
             id,
             label,
-            position: (200.0, 200.0),
+            position,
             size,
             rotation: 0.0,
             flip_h: false,
@@ -923,10 +991,97 @@ impl DigitalTwinWorkspace {
             element_type: kind,
             binding: None,
             base_color: color.to_array(),
+            button_mode: ButtonActionMode::default(),
         };
 
         self.elements.push(elem);
         self.selected_id = Some(id);
+        self.sync_color_picker_from_selected();
+        id
+    }
+
+    /// Synchronizes `hsv_state` and `hex_input` from the currently selected element and target color slot.
+    pub fn sync_color_picker_from_selected(&mut self) {
+        let Some(sel_id) = self.selected_id.or(self.inspector_open_for) else {
+            return;
+        };
+        let Some(elem) = self.elements.iter().find(|e| e.id == sel_id) else {
+            return;
+        };
+        let rgba = match self.active_color_target {
+            ColorEditTarget::BaseColor => elem.base_color,
+            ColorEditTarget::ActiveColor => elem
+                .binding
+                .as_ref()
+                .map(|b| b.active_color)
+                .unwrap_or([46, 204, 113, 255]),
+            ColorEditTarget::InactiveColor => elem
+                .binding
+                .as_ref()
+                .map(|b| b.inactive_color)
+                .unwrap_or([231, 76, 60, 255]),
+        };
+        self.hsv_state = rgb_to_hsv(rgba);
+        self.hex_input = rgb_to_hex(rgba);
+    }
+
+    /// Applies an RGBA color to the currently selected element's active color target slot.
+    pub fn apply_color_to_selected(&mut self, rgba: [u8; 4]) {
+        let Some(sel_id) = self.inspector_open_for.or(self.selected_id) else {
+            return;
+        };
+        if let Some(elem) = self.elements.iter_mut().find(|e| e.id == sel_id) {
+            match self.active_color_target {
+                ColorEditTarget::BaseColor => {
+                    elem.base_color = rgba;
+                }
+                ColorEditTarget::ActiveColor => {
+                    if let Some(ref mut b) = elem.binding {
+                        b.active_color = rgba;
+                    } else {
+                        elem.base_color = rgba;
+                    }
+                }
+                ColorEditTarget::InactiveColor => {
+                    if let Some(ref mut b) = elem.binding {
+                        b.inactive_color = rgba;
+                    } else {
+                        elem.base_color = rgba;
+                    }
+                }
+            }
+        }
+        self.hsv_state = rgb_to_hsv(rgba);
+        self.hex_input = rgb_to_hex(rgba);
+    }
+
+    /// Loads `<project_root>/sim/digital_twin.json` if present and valid; otherwise returns starter plant.
+    pub fn load_or_default(project_root: &std::path::Path) -> Self {
+        let path = project_root.join(TWIN_REL_PATH);
+        if let Ok(raw) = std::fs::read_to_string(&path)
+            && let Ok(mut ws) = serde_json::from_str::<Self>(&raw)
+        {
+            ws.mode = TwinMode::Edit;
+            ws.session_start = Some(Instant::now());
+            let max_id = ws.elements.iter().map(|e| e.id).max().unwrap_or(100);
+            if ws.next_id <= max_id {
+                ws.next_id = max_id;
+            }
+            return ws;
+        }
+        Self::with_starter_plant()
+    }
+
+    /// Atomically saves the Digital Twin workspace to `<project_root>/sim/digital_twin.json`.
+    pub fn save_to_project(&self, project_root: &std::path::Path) -> Result<(), String> {
+        let sim_dir = project_root.join("sim");
+        std::fs::create_dir_all(&sim_dir).map_err(|e| e.to_string())?;
+        let target = project_root.join(TWIN_REL_PATH);
+        let temp = project_root.join("sim/digital_twin.json.tmp");
+        let serialized = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        std::fs::write(&temp, serialized).map_err(|e| e.to_string())?;
+        std::fs::rename(&temp, &target).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// 3. Sidebar Properties Inspector for the selected element
