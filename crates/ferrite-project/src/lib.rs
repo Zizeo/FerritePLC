@@ -1295,6 +1295,124 @@ END_PROGRAM
         Ok(root.join(rel_path))
     }
 
+    /// Renames a POU across manifest, pous map, task execution orders, and on-disk files.
+    pub fn rename_pou(&mut self, old_name: &str, new_name: &str) -> Result<(), ProjectError> {
+        let clean_new = new_name.trim();
+        if clean_new.is_empty() {
+            return Err(ProjectError::ValidationFailed(1));
+        }
+        if old_name == clean_new {
+            return Ok(());
+        }
+        if self.pous.contains_key(clean_new) {
+            return Err(ProjectError::DuplicatePou(clean_new.to_string()));
+        }
+        let mut pou_src = self
+            .pous
+            .remove(old_name)
+            .ok_or_else(|| ProjectError::ValidationFailed(1))?;
+
+        // Update the internal name within the POU data structure
+        match &mut pou_src {
+            PouSource::Ld(ld) => ld.name = clean_new.to_string(),
+            PouSource::Sfc(sfc) => sfc.name = clean_new.to_string(),
+            PouSource::St(st) => st.name = clean_new.to_string(),
+            PouSource::Fbd(fbd) => fbd.name = clean_new.to_string(),
+        }
+
+        // Locate manifest entry
+        let mut old_file_path = None;
+        let mut new_file_path = None;
+        if let Some(entry) = self.manifest.pous.iter_mut().find(|p| p.name == old_name) {
+            entry.name = clean_new.to_string();
+            let old_path_str = entry.path.clone();
+            let ext = match entry.language {
+                LanguageKind::Ld => "ld.json",
+                LanguageKind::Sfc => "sfc.json",
+                LanguageKind::St => "st",
+                LanguageKind::Fbd => "fbd.json",
+            };
+            let new_path_str = format!("pous/{clean_new}.{ext}");
+            entry.path = new_path_str.clone();
+
+            if self.root_dir.exists() {
+                old_file_path = Some(self.root_dir.join(old_path_str));
+                new_file_path = Some(self.root_dir.join(new_path_str));
+            }
+        }
+
+        // Rename the on-disk file if it exists
+        if let (Some(old_path), Some(new_path)) = (old_file_path, new_file_path) {
+            if old_path.exists() {
+                let _ = std::fs::rename(&old_path, &new_path);
+            }
+        }
+
+        // Update tasks pou_order
+        for task in &mut self.manifest.tasks {
+            for name in &mut task.pou_order {
+                if name == old_name {
+                    *name = clean_new.to_string();
+                }
+            }
+        }
+
+        self.pous.insert(clean_new.to_string(), pou_src);
+
+        // Save project state to disk if root_dir exists
+        if self.root_dir.exists() {
+            let root = self.root_dir.clone();
+            self.save(&root)?;
+        }
+        Ok(())
+    }
+
+    /// Moves a POU up by one position in the manifest and updates task execution orders.
+    pub fn move_pou_up(&mut self, name: &str) -> bool {
+        let Some(idx) = self.manifest.pous.iter().position(|p| p.name == name) else {
+            return false;
+        };
+        if idx == 0 {
+            return false;
+        }
+        let prev_name = self.manifest.pous[idx - 1].name.clone();
+        self.manifest.pous.swap(idx, idx - 1);
+
+        // Update task pou_orders where both appear adjacently
+        for task in &mut self.manifest.tasks {
+            if let Some(pos_cur) = task.pou_order.iter().position(|p| p == name)
+                && pos_cur > 0
+                && task.pou_order[pos_cur - 1] == prev_name
+            {
+                task.pou_order.swap(pos_cur, pos_cur - 1);
+            }
+        }
+        true
+    }
+
+    /// Moves a POU down by one position in the manifest and updates task execution orders.
+    pub fn move_pou_down(&mut self, name: &str) -> bool {
+        let Some(idx) = self.manifest.pous.iter().position(|p| p.name == name) else {
+            return false;
+        };
+        if idx + 1 >= self.manifest.pous.len() {
+            return false;
+        }
+        let next_name = self.manifest.pous[idx + 1].name.clone();
+        self.manifest.pous.swap(idx, idx + 1);
+
+        // Update task pou_orders where both appear adjacently
+        for task in &mut self.manifest.tasks {
+            if let Some(pos_cur) = task.pou_order.iter().position(|p| p == name)
+                && pos_cur + 1 < task.pou_order.len()
+                && task.pou_order[pos_cur + 1] == next_name
+            {
+                task.pou_order.swap(pos_cur, pos_cur + 1);
+            }
+        }
+        true
+    }
+
     /// Builds the unified `TagTable` (including all Grafcet `X<i>.state` & `X<i>.t` introspection symbols).
     pub fn build_tag_table(&self) -> Result<TagTable, ProjectError> {
         let mut table = TagTable::new();
@@ -1546,6 +1664,77 @@ mod tests {
                 }
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_project_rename_pou() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_rename_pou_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let mut proj = Project::scaffold(&temp_dir, "test_rename")?;
+        assert!(proj.pous.contains_key("pump_ctrl"));
+
+        // Rename pump_ctrl -> boiler_fbd
+        proj.rename_pou("pump_ctrl", "boiler_fbd")?;
+        assert!(!proj.pous.contains_key("pump_ctrl"));
+        assert!(proj.pous.contains_key("boiler_fbd"));
+
+        // Verify manifest updated
+        let manifest_entry = proj.manifest.pous.iter().find(|p| p.name == "boiler_fbd");
+        assert!(manifest_entry.is_some());
+        assert_eq!(manifest_entry.unwrap().path, "pous/boiler_fbd.fbd.json");
+        assert!(!proj.manifest.pous.iter().any(|p| p.name == "pump_ctrl"));
+
+        // Verify tasks updated
+        for task in &proj.manifest.tasks {
+            assert!(!task.pou_order.contains(&"pump_ctrl".to_string()));
+            assert!(task.pou_order.contains(&"boiler_fbd".to_string()));
+        }
+
+        // Test error on duplicate name
+        let err = proj.rename_pou("boiler_fbd", "main_safety");
+        assert!(err.is_err());
+
+        // Test error on empty name
+        let err_empty = proj.rename_pou("boiler_fbd", "   ");
+        assert!(err_empty.is_err());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_project_reorder_pous() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_reorder_pou_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let mut proj = Project::scaffold(&temp_dir, "test_reorder")?;
+        let orig_order: Vec<String> = proj.manifest.pous.iter().map(|p| p.name.clone()).collect();
+        assert!(orig_order.len() >= 2);
+
+        // Move first item up should return false (boundary)
+        assert!(!proj.move_pou_up(&orig_order[0]));
+
+        // Move second item up should swap with first
+        let second = orig_order[1].clone();
+        let first = orig_order[0].clone();
+        assert!(proj.move_pou_up(&second));
+        assert_eq!(proj.manifest.pous[0].name, second);
+        assert_eq!(proj.manifest.pous[1].name, first);
+
+        // Move it down should restore
+        assert!(proj.move_pou_down(&second));
+        assert_eq!(proj.manifest.pous[0].name, first);
+        assert_eq!(proj.manifest.pous[1].name, second);
+
+        // Move last item down should return false (boundary)
+        let last = orig_order.last().unwrap().clone();
+        assert!(!proj.move_pou_down(&last));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
 }
