@@ -3010,6 +3010,9 @@ impl FerriteStudioApp {
                         .max()
                         .unwrap_or(0)
                         + 1;
+                    while sfc.steps.iter().any(|s| s.id == format!("{next_s}")) {
+                        next_s += 1;
+                    }
 
                     let base_t = sfc
                         .transitions
