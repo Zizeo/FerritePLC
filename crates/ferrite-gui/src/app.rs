@@ -2833,6 +2833,7 @@ impl FerriteStudioApp {
                     });
                     self.track_history();
                     self.modified = true;
+                    self.recompile_runtime();
                 }
                 Task::none()
             }
@@ -2912,6 +2913,7 @@ impl FerriteStudioApp {
                     });
                     self.track_history();
                     self.modified = true;
+                    self.recompile_runtime();
                 }
                 Task::none()
             }
@@ -2950,7 +2952,7 @@ impl FerriteStudioApp {
                                 id: trans_id,
                                 from_steps: from_step.as_ref().map(|s| vec![s.clone()]).unwrap_or_default(),
                                 to_steps: vec![target_id.clone()],
-                                receptivity: "TRUE".to_string(),
+                                receptivity: format!("Branch{}_Cond", idx + 1),
                                 convergence: ConvergenceKind::And,
                                 divergence: DivergenceKind::Or,
                                 grid_pos,
@@ -2980,6 +2982,7 @@ impl FerriteStudioApp {
                     }
                     self.track_history();
                     self.modified = true;
+                    self.recompile_runtime();
                 }
                 Task::none()
             }
@@ -2997,42 +3000,165 @@ impl FerriteStudioApp {
                         })
                         .collect();
 
-                    if selected_steps.len() >= 2 {
-                        // In IEC 60848: OR convergence requires a transition on each branch before the common state
-                        let base_t = sfc.transitions.len() + 1;
-                        for (idx, src_id) in selected_steps.iter().enumerate() {
-                            let trans_id = format!("T{}_Conv_{src_id}", base_t + idx);
-                            let s_pos = sfc.steps.iter().find(|s| &s.id == src_id).and_then(|s| s.grid_pos);
-                            let grid_pos = s_pos.map(|(sx, sy)| (sx + 50, sy + 100));
-                            sfc.transitions.push(SfcTransition {
-                                id: trans_id,
-                                from_steps: vec![src_id.clone()],
-                                to_steps: Vec::new(),
-                                receptivity: "TRUE".to_string(),
-                                convergence: ConvergenceKind::And,
-                                divergence: DivergenceKind::And,
-                                grid_pos,
-                            });
+                    let mut source_steps: Vec<String> = Vec::new();
+                    let mut created_steps: Vec<SfcStep> = Vec::new();
+
+                    let mut next_s = sfc
+                        .steps
+                        .iter()
+                        .filter_map(|s| s.id.trim_start_matches(['X', 'x']).parse::<usize>().ok())
+                        .max()
+                        .unwrap_or(0)
+                        + 1;
+
+                    let mut next_t = sfc
+                        .transitions
+                        .iter()
+                        .filter_map(|t| {
+                            t.id.trim_start_matches(['T', 't'])
+                                .split('_')
+                                .next()
+                                .and_then(|p| p.parse::<usize>().ok())
+                        })
+                        .max()
+                        .unwrap_or(0)
+                        + 1;
+
+                    let (dest_id, dest_name, dest_pos) = if selected_steps.len() >= 2 {
+                        source_steps = selected_steps.clone();
+                        let step_positions: Vec<(i32, i32)> = sfc
+                            .steps
+                            .iter()
+                            .filter(|s| selected_steps.contains(&s.id))
+                            .filter_map(|s| s.grid_pos)
+                            .collect();
+                        let (avg_x, max_y) = if !step_positions.is_empty() {
+                            let avg = step_positions.iter().map(|(x, _)| x).sum::<i32>()
+                                / step_positions.len() as i32;
+                            let max = step_positions.iter().map(|(_, y)| *y).max().unwrap_or(100);
+                            (avg, max)
+                        } else {
+                            (160, 100)
+                        };
+                        let id = format!("{next_s}");
+                        let name = format!("Step_{next_s}");
+                        (id, name, (avg_x, max_y + 160))
+                    } else if let Some(sid) = selected_steps.first().cloned().or_else(|| {
+                        if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) = self.sfc_selected
+                            && p == &pou_name
+                        {
+                            Some(sid.clone())
+                        } else {
+                            None
                         }
-                    } else if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) =
-                        self.sfc_selected
-                        && p == &pou_name
-                    {
-                        let next_t = sfc.transitions.len() + 1;
-                        let s_pos = sfc.steps.iter().find(|s| &s.id == sid).and_then(|s| s.grid_pos);
-                        let grid_pos = s_pos.map(|(sx, sy)| (sx + 50, sy + 100));
-                        sfc.transitions.push(SfcTransition {
-                            id: format!("T{next_t}_Conv_{sid}"),
-                            from_steps: vec![sid.clone()],
-                            to_steps: Vec::new(),
-                            receptivity: "TRUE".to_string(),
+                    }) {
+                        // 1 source step selected: create a 2nd parallel branch step and a common target step
+                        source_steps.push(sid.clone());
+                        let s1_pos = sfc
+                            .steps
+                            .iter()
+                            .find(|s| &s.id == &sid)
+                            .and_then(|s| s.grid_pos)
+                            .unwrap_or((100, 100));
+                        let s2_id = format!("{next_s}");
+                        let s2_name = format!("Step_{next_s}");
+                        next_s += 1;
+                        let s2_pos = (s1_pos.0 + 160, s1_pos.1);
+                        created_steps.push(SfcStep {
+                            id: s2_id.clone(),
+                            name: s2_name,
+                            kind: StepKind::Normal,
+                            actions: vec![],
+                            grid_pos: Some(s2_pos),
+                        });
+                        source_steps.push(s2_id);
+
+                        let dest_id = format!("{next_s}");
+                        let dest_name = format!("Step_{next_s}");
+                        (dest_id, dest_name, (s1_pos.0 + 80, s1_pos.1 + 160))
+                    } else {
+                        // 0 steps selected: create 2 starter branch steps and 1 destination step
+                        let base_y = sfc
+                            .steps
+                            .iter()
+                            .filter_map(|s| s.grid_pos.map(|(_, y)| y + 60))
+                            .chain(sfc.transitions.iter().filter_map(|t| t.grid_pos.map(|(_, y)| y + 20)))
+                            .max()
+                            .unwrap_or(60);
+                        let base_x = 100;
+                        let s1_id = format!("{next_s}");
+                        let s1_name = format!("Step_{next_s}");
+                        next_s += 1;
+                        let s2_id = format!("{next_s}");
+                        let s2_name = format!("Step_{next_s}");
+                        next_s += 1;
+                        created_steps.push(SfcStep {
+                            id: s1_id.clone(),
+                            name: s1_name,
+                            kind: StepKind::Normal,
+                            actions: vec![],
+                            grid_pos: Some((base_x, base_y + 40)),
+                        });
+                        created_steps.push(SfcStep {
+                            id: s2_id.clone(),
+                            name: s2_name,
+                            kind: StepKind::Normal,
+                            actions: vec![],
+                            grid_pos: Some((base_x + 160, base_y + 40)),
+                        });
+                        source_steps.push(s1_id);
+                        source_steps.push(s2_id);
+
+                        let dest_id = format!("{next_s}");
+                        let dest_name = format!("Step_{next_s}");
+                        (dest_id, dest_name, (base_x + 80, base_y + 200))
+                    };
+
+                    created_steps.push(SfcStep {
+                        id: dest_id.clone(),
+                        name: dest_name,
+                        kind: StepKind::Normal,
+                        actions: vec![],
+                        grid_pos: Some(dest_pos),
+                    });
+
+                    // For each source step, create an individual transition converging into dest_step
+                    let mut created_transitions = Vec::new();
+                    for (idx, src_id) in source_steps.iter().enumerate() {
+                        let trans_id = format!("T{next_t}_Conv_{src_id}");
+                        next_t += 1;
+                        let s_pos = sfc
+                            .steps
+                            .iter()
+                            .chain(created_steps.iter())
+                            .find(|s| &s.id == src_id)
+                            .and_then(|s| s.grid_pos)
+                            .unwrap_or((dest_pos.0 + (idx as i32 - 1) * 80, dest_pos.1 - 80));
+                        let t_pos = (s_pos.0 + 50, (s_pos.1 + 80).min(dest_pos.1 - 40));
+
+                        created_transitions.push(SfcTransition {
+                            id: trans_id,
+                            from_steps: vec![src_id.clone()],
+                            to_steps: vec![dest_id.clone()],
+                            receptivity: format!("Branch{}_Done", idx + 1),
                             convergence: ConvergenceKind::And,
                             divergence: DivergenceKind::And,
-                            grid_pos,
+                            grid_pos: Some(t_pos),
                         });
                     }
+
+                    sfc.steps.extend(created_steps);
+                    sfc.transitions.extend(created_transitions);
+
+                    self.sfc_selected = Some((
+                        pou_name.clone(),
+                        crate::canvas_sfc::SfcElementKey::Step(dest_id.clone()),
+                    ));
+                    self.sfc_selected_elements = vec![crate::canvas_sfc::SfcElementKey::Step(dest_id)];
+
                     self.track_history();
                     self.modified = true;
+                    self.recompile_runtime();
                 }
                 Task::none()
             }

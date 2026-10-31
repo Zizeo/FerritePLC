@@ -3624,6 +3624,39 @@ mod tests {
             }
         }
 
+        // 4b. Test SfcAddOrConvergence with Steps 1 and 3 selected:
+        // Spawns individual branch transitions converging into a common destination step
+        let _ = app.update(Message::SfcSelectElements(
+            "seq_test".to_string(),
+            vec![
+                SfcElementKey::Step("1".to_string()),
+                SfcElementKey::Step("3".to_string()),
+            ],
+        ));
+        let _ = app.update(Message::SfcAddOrConvergence("seq_test".to_string()));
+        if let Some(ferrite_project::PouSource::Sfc(sfc)) = app.project.pous.get("seq_test") {
+            let dest_step = sfc
+                .steps
+                .iter()
+                .find(|s| s.id != "1" && s.id != "3")
+                .ok_or("Destination step must be created")?;
+            let dest_id = dest_step.id.clone();
+            let branch1_conv = sfc
+                .transitions
+                .iter()
+                .find(|t| t.from_steps.contains(&"1".to_string()) && t.to_steps.contains(&dest_id))
+                .ok_or("Branch 1 convergence transition must exist")?;
+            let branch3_conv = sfc
+                .transitions
+                .iter()
+                .find(|t| t.from_steps.contains(&"3".to_string()) && t.to_steps.contains(&dest_id))
+                .ok_or("Branch 3 convergence transition must exist")?;
+            assert_eq!(branch1_conv.from_steps, vec!["1".to_string()]);
+            assert_eq!(branch3_conv.from_steps, vec!["3".to_string()]);
+            assert_eq!(branch1_conv.to_steps, vec![dest_id.clone()]);
+            assert_eq!(branch3_conv.to_steps, vec![dest_id]);
+        }
+
         // 5. Test delete: multiple-item selection prompts confirmation modal
         let _ = app.update(Message::SfcSelectElements(
             "seq_test".to_string(),
