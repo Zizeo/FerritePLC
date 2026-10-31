@@ -77,7 +77,7 @@ Tank_Temp = 45.0
 
 [[scenarios.steps]]
 scan = 6
-description = "Scan 6: T5_OrConv merges into Step 6 -> triggers subordinate cip_clean.X1 via cross-SFC transition"
+description = "Scan 6: T5a_Merge_Fast / T5b_Merge_Slow (OR Convergence) merges into Step 6 -> triggers subordinate cip_clean.X1 via cross-SFC transition"
 
 [scenarios.steps.set]
 

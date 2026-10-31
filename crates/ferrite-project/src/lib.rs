@@ -1522,6 +1522,14 @@ mod tests {
                 let proj = Project::load(path)?;
                 for (name, pou) in &proj.pous {
                     if let PouSource::Sfc(sfc) = pou {
+                        let report = ferrite_lang_sfc::validate_sfc_topology(sfc);
+                        assert!(
+                            report.is_valid,
+                            "SFC validation errors in {}::{}: {:?}",
+                            path.display(),
+                            name,
+                            report.errors
+                        );
                         assert!(
                             sfc.steps.iter().all(|s| s.grid_pos.is_some()),
                             "Step without grid_pos in {}::{}",

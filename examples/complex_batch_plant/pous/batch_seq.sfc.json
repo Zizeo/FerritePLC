@@ -202,19 +202,34 @@
       ]
     },
     {
-      "id": "T5_OrConv",
+      "id": "T5a_Merge_Fast",
       "from_steps": [
-        "4",
+        "4"
+      ],
+      "to_steps": [
+        "6"
+      ],
+      "receptivity": "Mix_Done",
+      "convergence": "and",
+      "divergence": "and",
+      "grid_pos": [
+        110,
+        820
+      ]
+    },
+    {
+      "id": "T5b_Merge_Slow",
+      "from_steps": [
         "5"
       ],
       "to_steps": [
         "6"
       ],
-      "receptivity": "Mix_Done OR Tank_Temp >= 60.0",
-      "convergence": "or",
+      "receptivity": "Tank_Temp >= 60.0",
+      "convergence": "and",
       "divergence": "and",
       "grid_pos": [
-        390,
+        670,
         820
       ]
     },
