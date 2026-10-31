@@ -3011,7 +3011,7 @@ impl FerriteStudioApp {
                         .unwrap_or(0)
                         + 1;
 
-                    let mut next_t = sfc
+                    let base_t = sfc
                         .transitions
                         .iter()
                         .filter_map(|t| {
@@ -3057,7 +3057,7 @@ impl FerriteStudioApp {
                         let s1_pos = sfc
                             .steps
                             .iter()
-                            .find(|s| &s.id == &sid)
+                            .find(|s| s.id == sid)
                             .and_then(|s| s.grid_pos)
                             .unwrap_or((100, 100));
                         let s2_id = format!("{next_s}");
@@ -3125,8 +3125,7 @@ impl FerriteStudioApp {
                     // For each source step, create an individual transition converging into dest_step
                     let mut created_transitions = Vec::new();
                     for (idx, src_id) in source_steps.iter().enumerate() {
-                        let trans_id = format!("T{next_t}_Conv_{src_id}");
-                        next_t += 1;
+                        let trans_id = format!("T{}_Conv_{src_id}", base_t + idx);
                         let s_pos = sfc
                             .steps
                             .iter()
