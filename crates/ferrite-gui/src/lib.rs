@@ -6,6 +6,7 @@ pub mod canvas_sfc;
 pub mod digital_twin;
 pub mod editor_st;
 pub mod editor_symbols;
+pub mod help_window;
 pub mod i18n;
 pub mod theme;
 pub mod trend_plotter;
