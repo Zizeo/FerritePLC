@@ -1,5 +1,5 @@
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, Text};
-use iced::widget::{button, column, container, pick_list, row, text, text_input};
+use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
 use iced::{event, mouse};
 use iced::{Alignment, Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
 use serde::{Deserialize, Serialize};
@@ -1504,21 +1504,29 @@ pub fn render_ld_editor<'a>(
             .style(StudioTheme::ghost_button)
             .padding([3, 8]);
 
-        container(
-            row![
-                count_label,
-                delete_btn,
-                iced::widget::Space::with_width(Length::Fill),
-                deselect_btn,
-            ]
-            .spacing(10)
-            .align_y(Alignment::Center),
-        )
-        .padding([4, 8])
-        .style(StudioTheme::subtle_badge_style(Color::from_rgba(
-            0.2, 0.4, 0.6, 0.15,
-        )))
-        .into()
+        let multi_row = row![
+            count_label,
+            delete_btn,
+            iced::widget::Space::with_width(Length::Fill),
+            deselect_btn,
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+
+        let scrollable_multi = scrollable(multi_row).direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new()
+                .width(4)
+                .scroller_width(4)
+                .margin(1),
+        ));
+
+        container(scrollable_multi)
+            .width(Length::Fill)
+            .padding([4, 8])
+            .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+                0.2, 0.4, 0.6, 0.15,
+            )))
+            .into()
     } else {
         let title = text(format!(
             "{} — {}",
@@ -1588,28 +1596,36 @@ pub fn render_ld_editor<'a>(
             .style(StudioTheme::danger_button)
             .padding([4, 8]);
 
-        container(
-            row![
-                title,
-                iced::widget::Space::with_width(Length::Fixed(12.0)),
-                add_rung_btn,
-                add_no_btn,
-                add_nc_btn,
-                add_p_btn,
-                add_n_btn,
-                add_coil_btn,
-                add_branch_btn,
-                iced::widget::Space::with_width(Length::Fill),
-                clear_btn,
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .padding([4, 8])
-        .style(StudioTheme::subtle_badge_style(Color::from_rgba(
-            0.2, 0.4, 0.6, 0.15,
-        )))
-        .into()
+        let toolbar_row = row![
+            title,
+            iced::widget::Space::with_width(Length::Fixed(12.0)),
+            add_rung_btn,
+            add_no_btn,
+            add_nc_btn,
+            add_p_btn,
+            add_n_btn,
+            add_coil_btn,
+            add_branch_btn,
+            iced::widget::Space::with_width(Length::Fixed(12.0)),
+            clear_btn,
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+
+        let scrollable_toolbar = scrollable(toolbar_row).direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new()
+                .width(4)
+                .scroller_width(4)
+                .margin(1),
+        ));
+
+        container(scrollable_toolbar)
+            .width(Length::Fill)
+            .padding([4, 8])
+            .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+                0.2, 0.4, 0.6, 0.15,
+            )))
+            .into()
     };
 
     // 3. Vector Canvas Widget

@@ -407,7 +407,7 @@ pub fn render_fbd_editor<'a>(
     let pou_name = program.name.clone();
 
     // 1. Header Toolbar with Quick Standard Blocks & Corrector Suite
-    let header = row![
+    let header_row = row![
         text(format!(
             "{} — {}",
             lang.tr(
@@ -417,7 +417,7 @@ pub fn render_fbd_editor<'a>(
             program.name
         ))
         .size(18),
-        iced::widget::Space::with_width(Length::Fill),
+        iced::widget::Space::with_width(Length::Fixed(16.0)),
         button(text(lang.tr("+ AND", "+ ET")).size(11))
             .on_press(Message::FbdAddBlock(pou_name.clone(), FbdBlockKind::And))
             .style(StudioTheme::secondary_button)
@@ -494,6 +494,7 @@ pub fn render_fbd_editor<'a>(
             ))
             .style(StudioTheme::secondary_button)
             .padding([4, 8]),
+        iced::widget::Space::with_width(Length::Fixed(16.0)),
         button(text(lang.tr("Clear POU", "Vider")).size(11))
             .on_press(Message::ConfirmClearPou(pou_name.clone()))
             .style(StudioTheme::danger_button)
@@ -502,6 +503,20 @@ pub fn render_fbd_editor<'a>(
     .spacing(6)
     .align_y(Alignment::Center);
 
+    let scrollable_header = scrollable(header_row).direction(scrollable::Direction::Horizontal(
+        scrollable::Scrollbar::new()
+            .width(4)
+            .scroller_width(4)
+            .margin(1),
+    ));
+
+    let header_container = container(scrollable_header)
+        .width(Length::Fill)
+        .padding([4, 6])
+        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+            0.2, 0.4, 0.6, 0.12,
+        )));
+
     let tip = text(lang.tr(
         "Tip: FBD blocks render with 2-column industrial schematic signal-flow ports. Green indicator dots glow when signals are active in real-time.",
         "Astuce : Les blocs FBD s'affichent en schéma industriel sur 2 colonnes avec ports de signal. Les points verts s'allument en direct lorsque le signal est actif.",
@@ -509,7 +524,7 @@ pub fn render_fbd_editor<'a>(
     .size(12)
     .color(StudioTheme::TEXT_MUTED);
 
-    let mut blocks_column = column![header, tip].spacing(14);
+    let mut blocks_column = column![header_container, tip].spacing(14);
 
     // Render blocks in 2-column grid layout
     let chunk_size = 2;

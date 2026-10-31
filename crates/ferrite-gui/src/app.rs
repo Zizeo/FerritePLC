@@ -195,6 +195,7 @@ pub enum Message {
     MovePouUp(String),
     MovePouDown(String),
     StartRenamePou(String),
+    DeletePou(String),
     PouRenameInputChanged(String),
     ConfirmRenamePou,
     CancelRenamePou,
@@ -2033,6 +2034,39 @@ impl FerriteStudioApp {
                         Err(e) => {
                             self.status_banner = format!("Rename failed: {e}");
                         }
+                    }
+                }
+                Task::none()
+            }
+            Message::DeletePou(pou_name) => {
+                match self.project.delete_pou(&pou_name) {
+                    Ok(()) => {
+                        if self.active_tab == WorkspaceTab::Pou(pou_name.clone()) {
+                            if let Some(first_pou) = self.project.manifest.pous.first() {
+                                self.active_tab = WorkspaceTab::Pou(first_pou.name.clone());
+                            } else {
+                                self.active_tab = WorkspaceTab::SymbolsAndConfig;
+                            }
+                        }
+                        self.st_contents.remove(&pou_name);
+                        self.ld_canvas_pan.remove(&pou_name);
+                        self.ld_canvas_zoom.remove(&pou_name);
+                        if let Some((ref p, _)) = self.sfc_selected
+                            && p == &pou_name
+                        {
+                            self.sfc_selected = None;
+                        }
+                        if let Some((ref p, _)) = self.ld_selected
+                            && p == &pou_name
+                        {
+                            self.ld_selected = None;
+                        }
+                        self.track_history();
+                        self.modified = true;
+                        self.recompile_runtime();
+                    }
+                    Err(e) => {
+                        self.status_banner = format!("Delete POU failed: {e}");
                     }
                 }
                 Task::none()
@@ -5050,14 +5084,22 @@ impl FerriteStudioApp {
                         .width(Length::Fill)
                         .padding([2, 5])
                         .style(StudioTheme::styled_input),
-                    button(text("\u{2713}").size(11))
-                        .on_press(Message::ConfirmRenamePou)
-                        .style(StudioTheme::primary_button)
-                        .padding([2, 5]),
-                    button(text("\u{2715}").size(11))
-                        .on_press(Message::CancelRenamePou)
-                        .style(StudioTheme::ghost_button)
-                        .padding([2, 5]),
+                    button(
+                        text(crate::icons::icon_check())
+                            .size(11)
+                            .shaping(iced::widget::text::Shaping::Advanced),
+                    )
+                    .on_press(Message::ConfirmRenamePou)
+                    .style(StudioTheme::primary_button)
+                    .padding([2, 5]),
+                    button(
+                        text(crate::icons::icon_close())
+                            .size(11)
+                            .shaping(iced::widget::text::Shaping::Advanced),
+                    )
+                    .on_press(Message::CancelRenamePou)
+                    .style(StudioTheme::ghost_button)
+                    .padding([2, 5]),
                 ]
                 .spacing(4)
                 .align_y(Alignment::Center);
@@ -5071,7 +5113,9 @@ impl FerriteStudioApp {
                             .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
                                 1.0, 1.0, 1.0, 0.05
                             ))),
-                        text(&p.name).size(12),
+                        text(&p.name)
+                            .size(12)
+                            .shaping(iced::widget::text::Shaping::Advanced),
                     ]
                     .spacing(8)
                     .align_y(Alignment::Center),
@@ -5084,21 +5128,34 @@ impl FerriteStudioApp {
                 let p_up = p.name.clone();
                 let p_down = p.name.clone();
                 let p_ren = p.name.clone();
+                let p_del = p.name.clone();
 
                 let pou_row = row![
                     btn,
-                    button(text("\u{25B2}").size(9.0))
+                    button(text("▲").size(9.0))
                         .on_press(Message::MovePouUp(p_up))
                         .style(StudioTheme::ghost_button)
                         .padding([2, 3]),
-                    button(text("\u{25BC}").size(9.0))
+                    button(text("▼").size(9.0))
                         .on_press(Message::MovePouDown(p_down))
                         .style(StudioTheme::ghost_button)
                         .padding([2, 3]),
-                    button(text("\u{270F}").size(9.5))
-                        .on_press(Message::StartRenamePou(p_ren))
-                        .style(StudioTheme::ghost_button)
-                        .padding([2, 3]),
+                    button(
+                        text(crate::icons::icon_pencil())
+                            .size(9.5)
+                            .shaping(iced::widget::text::Shaping::Advanced),
+                    )
+                    .on_press(Message::StartRenamePou(p_ren))
+                    .style(StudioTheme::ghost_button)
+                    .padding([2, 3]),
+                    button(
+                        text(crate::icons::icon_close())
+                            .size(9.5)
+                            .shaping(iced::widget::text::Shaping::Advanced),
+                    )
+                    .on_press(Message::DeletePou(p_del))
+                    .style(StudioTheme::danger_button)
+                    .padding([2, 3]),
                 ]
                 .spacing(2)
                 .align_y(Alignment::Center);

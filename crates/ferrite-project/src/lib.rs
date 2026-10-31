@@ -1422,6 +1422,28 @@ END_PROGRAM
         true
     }
 
+    /// Deletes a POU across manifest, pous map, task execution orders, and on-disk files.
+    pub fn delete_pou(&mut self, name: &str) -> Result<(), ProjectError> {
+        self.pous.remove(name);
+        if let Some(pos) = self.manifest.pous.iter().position(|p| p.name == name) {
+            let entry = self.manifest.pous.remove(pos);
+            if self.root_dir.exists() {
+                let file_path = self.root_dir.join(&entry.path);
+                if file_path.exists() {
+                    let _ = std::fs::remove_file(file_path);
+                }
+            }
+        }
+        for task in &mut self.manifest.tasks {
+            task.pou_order.retain(|p| p != name);
+        }
+        if self.root_dir.exists() {
+            let root = self.root_dir.clone();
+            self.save(&root)?;
+        }
+        Ok(())
+    }
+
     /// Builds the unified `TagTable` (including all Grafcet `X<i>.state` & `X<i>.t` introspection symbols).
     pub fn build_tag_table(&self) -> Result<TagTable, ProjectError> {
         let mut table = TagTable::new();
@@ -1755,6 +1777,26 @@ mod tests {
             .ok_or("orig_order should not be empty")?
             .clone();
         assert!(!proj.move_pou_down(&last));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_project_delete_pou() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_delete_pou_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let mut proj = Project::scaffold(&temp_dir, "test_delete")?;
+        assert!(proj.pous.contains_key("pump_ctrl"));
+
+        proj.delete_pou("pump_ctrl")?;
+        assert!(!proj.pous.contains_key("pump_ctrl"));
+        assert!(!proj.manifest.pous.iter().any(|p| p.name == "pump_ctrl"));
+        for task in &proj.manifest.tasks {
+            assert!(!task.pou_order.contains(&"pump_ctrl".to_string()));
+        }
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())

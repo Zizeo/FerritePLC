@@ -2455,7 +2455,127 @@ pub fn render_sfc_editor<'a>(
         None => None,
     };
 
-    let top_row: Element<'a, Message> = if selected_elements.len() > 1 {
+    // Toolbar buttons: always visible at the top, scrollable horizontally so never squished
+    let add_step_btn = button(text("+ Step").size(11.5))
+        .on_press(Message::SfcAddStep(pou_name.clone()))
+        .style(sfc_subtle_button)
+        .padding([4, 8]);
+
+    let add_trans_btn = button(text("+ Transition").size(11.5))
+        .on_press(Message::SfcAddTransition(pou_name.clone()))
+        .style(sfc_subtle_button)
+        .padding([4, 8]);
+
+    let add_and_div_btn = button(text("+ AND Div (===)").size(11.5))
+        .on_press(Message::SfcAddAndDivergence(pou_name.clone()))
+        .style(sfc_subtle_button)
+        .padding([4, 8]);
+
+    let add_and_conv_btn = button(text("+ AND Conv (===)").size(11.5))
+        .on_press(Message::SfcAddAndConvergence(pou_name.clone()))
+        .style(sfc_subtle_button)
+        .padding([4, 8]);
+
+    let add_or_div_btn = button(text("+ OR Div (—)").size(11.5))
+        .on_press(Message::SfcAddOrDivergence(pou_name.clone()))
+        .style(sfc_subtle_button)
+        .padding([4, 8]);
+
+    let add_or_conv_btn = button(text("+ OR Conv (—)").size(11.5))
+        .on_press(Message::SfcAddOrConvergence(pou_name.clone()))
+        .style(sfc_subtle_button)
+        .padding([4, 8]);
+
+    let auto_layout_btn = button(text("Auto-Sort Layout").size(11.5))
+        .on_press(Message::SfcAutoLayout(pou_name.clone()))
+        .style(sfc_subtle_button)
+        .padding([4, 8]);
+
+    let validate_btn = button(text("Check Topology").size(11.5))
+        .on_press(Message::SfcValidate(pou_name.clone()))
+        .style(StudioTheme::primary_button)
+        .padding([4, 8]);
+
+    let tree_badge = container(
+        text(format!(
+            "{tree_count} Parallel Tree{}",
+            if tree_count == 1 { "" } else { "s" }
+        ))
+        .size(11)
+        .color(COLOR_ACTIVE_STEP),
+    )
+    .padding([3, 8])
+    .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+        0.18, 0.835, 0.45, 0.15,
+    )));
+
+    let status_badge: Option<Element<'a, Message>> = if !validation_report.is_valid {
+        Some(
+            container(
+                text(format!(
+                    "{} error{}",
+                    validation_report.errors.len(),
+                    if validation_report.errors.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                ))
+                .size(11)
+                .color(Color::from_rgb(1.0, 0.4, 0.4)),
+            )
+            .padding([3, 8])
+            .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+                1.0, 0.2, 0.2, 0.15,
+            )))
+            .into(),
+        )
+    } else {
+        None
+    };
+
+    let mut toolbar_row = row![
+        add_step_btn,
+        add_trans_btn,
+        add_and_div_btn,
+        add_and_conv_btn,
+        add_or_div_btn,
+        add_or_conv_btn,
+        auto_layout_btn,
+        validate_btn,
+        tree_badge,
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+
+    if let Some(sb) = status_badge {
+        toolbar_row = toolbar_row.push(sb);
+    }
+
+    let scrollable_toolbar = scrollable(toolbar_row).direction(scrollable::Direction::Horizontal(
+        scrollable::Scrollbar::new()
+            .width(4)
+            .scroller_width(4)
+            .margin(1),
+    ));
+
+    let tip = text("Tip: Click 'Auto-Sort Layout' to auto-align all branches. Drag elements (snaps to 20px). Drag wires (● to ●). Right-click any port to disconnect. Box drag to multi-select.")
+        .size(10.5)
+        .color(StudioTheme::TEXT_MUTED);
+
+    let top_bar = column![
+        container(scrollable_toolbar)
+            .width(Length::Fill)
+            .padding([4, 8])
+            .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+                0.2, 0.4, 0.6, 0.12,
+            ))),
+        tip,
+    ]
+    .spacing(4);
+
+    // Bottom Bar: Inspector or multi-selection actions pop at the bottom
+    let bottom_bar: Option<Element<'a, Message>> = if selected_elements.len() > 1 {
         let count_label = text(format!("{} items selected", selected_elements.len()))
             .size(12)
             .font(iced::Font::MONOSPACE)
@@ -2491,34 +2611,49 @@ pub fn render_sfc_editor<'a>(
             .style(StudioTheme::ghost_button)
             .padding([3, 8]);
 
-        container(
-            row![
-                count_label,
-                delete_btn,
-                and_conv_btn,
-                or_conv_btn,
-                and_div_btn,
-                or_div_btn,
-                Space::with_width(Length::Fill),
-                deselect_btn
-            ]
-            .spacing(10)
-            .align_y(Alignment::Center),
+        let multi_row = row![
+            count_label,
+            delete_btn,
+            and_conv_btn,
+            or_conv_btn,
+            and_div_btn,
+            or_div_btn,
+            Space::with_width(Length::Fill),
+            deselect_btn
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+
+        let scrollable_multi = scrollable(multi_row).direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new()
+                .width(4)
+                .scroller_width(4)
+                .margin(1),
+        ));
+
+        Some(
+            container(scrollable_multi)
+                .width(Length::Fill)
+                .padding([4, 8])
+                .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+                    0.2, 0.4, 0.6, 0.15,
+                )))
+                .into(),
         )
-        .padding([4, 8])
-        .style(StudioTheme::subtle_badge_style(Color::from_rgba(
-            0.2, 0.4, 0.6, 0.15,
-        )))
-        .into()
     } else if let Some(insp) = inspector_elem {
-        let deselect_btn = button(text("Close [x]").size(11))
-            .on_press(Message::SfcSelectElement(pou_name.to_string(), None))
-            .style(StudioTheme::ghost_button)
-            .padding([4, 8]);
+        let deselect_btn = button(
+            text(crate::icons::icon_close())
+                .size(11)
+                .shaping(iced::widget::text::Shaping::Advanced),
+        )
+        .on_press(Message::SfcSelectElement(pou_name.to_string(), None))
+        .style(StudioTheme::ghost_button)
+        .padding([4, 8]);
+
         let scrollable_insp = scrollable(container(insp).padding(Padding {
             top: 2.0,
             right: 8.0,
-            bottom: 12.0,
+            bottom: 8.0,
             left: 2.0,
         }))
         .direction(scrollable::Direction::Horizontal(
@@ -2527,132 +2662,35 @@ pub fn render_sfc_editor<'a>(
                 .scroller_width(5)
                 .margin(1),
         ));
-        container(
-            row![
-                container(scrollable_insp)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .align_y(Alignment::Center),
-                deselect_btn
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        )
-        .height(Length::Fixed(56.0))
-        .padding(Padding {
-            top: 4.0,
-            right: 8.0,
-            bottom: 4.0,
-            left: 8.0,
-        })
-        .style(StudioTheme::subtle_badge_style(Color::from_rgba(
-            0.2, 0.4, 0.6, 0.15,
-        )))
-        .into()
-    } else {
-        // Toolbar buttons
-        let add_step_btn = button(text("+ Step").size(11.5))
-            .on_press(Message::SfcAddStep(pou_name.clone()))
-            .style(sfc_subtle_button)
-            .padding([4, 8]);
 
-        let add_trans_btn = button(text("+ Transition").size(11.5))
-            .on_press(Message::SfcAddTransition(pou_name.clone()))
-            .style(sfc_subtle_button)
-            .padding([4, 8]);
-
-        let add_and_div_btn = button(text("+ AND Div (===)").size(11.5))
-            .on_press(Message::SfcAddAndDivergence(pou_name.clone()))
-            .style(sfc_subtle_button)
-            .padding([4, 8]);
-
-        let add_and_conv_btn = button(text("+ AND Conv (===)").size(11.5))
-            .on_press(Message::SfcAddAndConvergence(pou_name.clone()))
-            .style(sfc_subtle_button)
-            .padding([4, 8]);
-
-        let add_or_div_btn = button(text("+ OR Div (—)").size(11.5))
-            .on_press(Message::SfcAddOrDivergence(pou_name.clone()))
-            .style(sfc_subtle_button)
-            .padding([4, 8]);
-
-        let add_or_conv_btn = button(text("+ OR Conv (—)").size(11.5))
-            .on_press(Message::SfcAddOrConvergence(pou_name.clone()))
-            .style(sfc_subtle_button)
-            .padding([4, 8]);
-
-        let auto_layout_btn = button(text("Auto-Sort Layout").size(11.5))
-            .on_press(Message::SfcAutoLayout(pou_name.clone()))
-            .style(sfc_subtle_button)
-            .padding([4, 8]);
-
-        let validate_btn = button(text("Check Topology").size(11.5))
-            .on_press(Message::SfcValidate(pou_name.clone()))
-            .style(StudioTheme::primary_button)
-            .padding([4, 8]);
-
-        let tree_badge = container(
-            text(format!(
-                "{tree_count} Parallel Tree{}",
-                if tree_count == 1 { "" } else { "s" }
-            ))
-            .size(11)
-            .color(COLOR_ACTIVE_STEP),
-        )
-        .padding([3, 8])
-        .style(StudioTheme::subtle_badge_style(Color::from_rgba(
-            0.18, 0.835, 0.45, 0.15,
-        )));
-
-        let status_badge: Option<Element<'a, Message>> = if !validation_report.is_valid {
-            Some(
-                container(
-                    text(format!(
-                        "{} error{}",
-                        validation_report.errors.len(),
-                        if validation_report.errors.len() == 1 {
-                            ""
-                        } else {
-                            "s"
-                        }
-                    ))
-                    .size(11)
-                    .color(Color::from_rgb(1.0, 0.4, 0.4)),
-                )
-                .padding([3, 8])
-                .style(StudioTheme::subtle_badge_style(Color::from_rgba(
-                    1.0, 0.2, 0.2, 0.15,
-                )))
-                .into(),
+        Some(
+            container(
+                row![
+                    container(scrollable_insp)
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .align_y(Alignment::Center),
+                    deselect_btn
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
             )
-        } else {
-            None
-        };
-
-        let mut toolbar_row = row![
-            add_step_btn,
-            add_trans_btn,
-            add_and_div_btn,
-            add_and_conv_btn,
-            add_or_div_btn,
-            add_or_conv_btn,
-            auto_layout_btn,
-            validate_btn,
-            tree_badge,
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center);
-
-        if let Some(sb) = status_badge {
-            toolbar_row = toolbar_row.push(sb);
-        }
-
-        toolbar_row.into()
+            .width(Length::Fill)
+            .height(Length::Fixed(56.0))
+            .padding(Padding {
+                top: 4.0,
+                right: 8.0,
+                bottom: 4.0,
+                left: 8.0,
+            })
+            .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+                0.2, 0.4, 0.6, 0.15,
+            )))
+            .into(),
+        )
+    } else {
+        None
     };
-
-    let tip = text("Tip: Click 'Auto-Sort Layout' to auto-align all branches. Drag elements (snaps to 20px). Drag wires (● to ●). Right-click any port to disconnect. Box drag to multi-select.")
-        .size(10.5)
-        .color(StudioTheme::TEXT_MUTED);
 
     // Compute bounding dimensions for the canvas
     let max_x = program
@@ -2699,14 +2737,17 @@ pub fn render_sfc_editor<'a>(
         horizontal: scrollable::Scrollbar::new(),
     });
 
-    let top_bar = column![top_row, tip].spacing(4);
-
-    column![top_bar, scrollable_canvas]
+    let mut main_col = column![top_bar, scrollable_canvas]
         .spacing(8)
         .padding(8)
         .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        .height(Length::Fill);
+
+    if let Some(bot) = bottom_bar {
+        main_col = main_col.push(bot);
+    }
+
+    main_col.into()
 }
 
 #[cfg(test)]

@@ -1261,6 +1261,12 @@ mod tests {
         assert!(app.project.manifest.pous.iter().any(|p| p.name == new_name));
         assert!(app.project.pous.contains_key(&new_name));
         assert!(!app.project.pous.contains_key(&p0));
+
+        // 4. Deleting a POU
+        let _ = app.update(Message::DeletePou(new_name.clone()));
+        assert!(!app.project.manifest.pous.iter().any(|p| p.name == new_name));
+        assert!(!app.project.pous.contains_key(&new_name));
+        assert_ne!(app.active_tab, WorkspaceTab::Pou(new_name));
     }
 
     #[test]
