@@ -1,7 +1,7 @@
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::{button, column, container, pick_list, row, text, text_input};
 use iced::{event, mouse};
-use iced::{Alignment, Color, Element, Length, Point, Rectangle, Theme, Vector};
+use iced::{Alignment, Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
 use serde::{Deserialize, Serialize};
 
 use ferrite_core::IecValue;
@@ -152,11 +152,11 @@ impl LdLayoutResult {
                     }
                 }
             }
-            // 4. Rung header / left margin
+            // 4. Rung header (left margin + title strip across the top of the rung)
             let rung_header = Rectangle {
                 x: self.rail_left_x - 70.0,
                 y: rung.bounds.y,
-                width: 70.0,
+                width: (self.rail_right_x - self.rail_left_x) + 70.0,
                 height: RUNG_HEADER_HEIGHT,
             };
             if rung_header.contains(point) {
@@ -732,18 +732,43 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
 
             // Rung ID badge & comment
             let rung_header_y = rung_layout.bounds.y + 4.0;
+            let is_rung_selected = self.selected == Some(&LdElementKey::Rung(r_idx))
+                || state.selected_elements.contains(&LdElementKey::Rung(r_idx));
+
+            if is_rung_selected {
+                frame.fill_rectangle(
+                    Point::new(layout.rail_left_x - 35.0, rung_layout.bounds.y + 1.0),
+                    Size::new((layout.rail_right_x - layout.rail_left_x) + 45.0, RUNG_HEADER_HEIGHT - 2.0),
+                    iced::Color::from_rgba(0.0, 0.85, 0.85, 0.10),
+                );
+            }
+
+            // Rung index in left margin (e.g. 0, 1, 2)
             frame.fill_text(Text {
-                content: format!("[{}]", rung.id),
-                position: Point::new(layout.rail_left_x - 45.0, rung_header_y),
+                content: format!("{r_idx}"),
+                position: Point::new(layout.rail_left_x - 24.0, rung_header_y),
+                color: if is_rung_selected { StudioTheme::ACCENT_CYAN } else { StudioTheme::TEXT_MUTED },
+                size: 11.0.into(),
+                ..Default::default()
+            });
+
+            // Rung Name badge (e.g. [Rung_0] or [Safety_Stop]) starting inside the rung at rail_left_x + 12.0
+            let header_x = layout.rail_left_x + 12.0;
+            let name_badge = format!("[{}]", rung.id);
+            frame.fill_text(Text {
+                content: name_badge.clone(),
+                position: Point::new(header_x, rung_header_y),
                 color: StudioTheme::ACCENT_CYAN,
                 size: 11.5.into(),
                 ..Default::default()
             });
 
             if !rung.comment.is_empty() {
+                // Dynamically offset comment so it never clips or overlaps with the rung name
+                let name_width = (name_badge.len() as f32 * 7.5 + 14.0).max(64.0);
                 frame.fill_text(Text {
                     content: format!("// {}", rung.comment),
-                    position: Point::new(layout.rail_left_x + 10.0, rung_header_y),
+                    position: Point::new(header_x + name_width, rung_header_y),
                     color: StudioTheme::TEXT_MUTED,
                     size: 10.5.into(),
                     ..Default::default()
@@ -1733,6 +1758,13 @@ pub fn render_ld_editor<'a>(
             let r_i = *r_idx;
 
             if let Some(rung) = program.rungs.get(r_i) {
+                let p_for_name = p_name.clone();
+                let name_input = text_input("Rung name (e.g. Safety_Stop)", &rung.id)
+                    .on_input(move |s| Message::LdRungNameChanged(p_for_name.clone(), r_i, s))
+                    .width(180)
+                    .padding([3, 7])
+                    .style(StudioTheme::styled_input);
+
                 let comment_input = text_input("Rung comment...", &rung.comment)
                     .on_input(move |s| Message::LdRungCommentChanged(p_name.clone(), r_i, s))
                     .width(Length::Fill)
@@ -1755,6 +1787,9 @@ pub fn render_ld_editor<'a>(
                         text(format!("Rung {r_i}:"))
                             .size(12)
                             .color(StudioTheme::ACCENT_CYAN),
+                        text("Name:").size(11).color(StudioTheme::TEXT_MUTED),
+                        name_input,
+                        text("Comment:").size(11).color(StudioTheme::TEXT_MUTED),
                         comment_input,
                         del_btn,
                         deselect_btn,
@@ -2781,5 +2816,64 @@ pub mod tests {
         assert_eq!(selected.len(), 1, "Only the contact should be selected");
         assert!(matches!(&selected[0], LdElementKey::Contact { .. }));
         assert!(!selected.iter().any(|k| matches!(k, LdElementKey::Branch { .. })), "Branch itself must not be selected by interior marquee");
+    }
+
+    #[test]
+    fn test_ld_rung_name_and_comment_header_layout_and_rename() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("test_ld_name_comment_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()));
+        let proj = crate::resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = crate::app::FerriteStudioApp::new(proj);
+
+        let ld_prog = LdProgram {
+            name: "safety_ld".to_string(),
+            comment: "".to_string(),
+            rungs: vec![LdRung {
+                id: "Rung_Safety_Master".to_string(),
+                comment: "Master EStop & Guard Door permissive".to_string(),
+                elements: vec![LdElement::Contact {
+                    symbol: "EStop_OK".to_string(),
+                    kind: ContactKind::NormallyOpen,
+                }],
+                coils: vec![LdCoil {
+                    symbol: "Permissive_OK".to_string(),
+                    kind: CoilKind::Normal,
+                }],
+            }],
+        };
+
+        app.project.pous.insert("safety_ld".to_string(), ferrite_project::PouSource::Ld(ld_prog.clone()));
+
+        // 1. Verify layout engine hit-tests header across the top of the rung
+        let layout = LdLayoutEngine::build(&ld_prog, None);
+        let header_pt = Point::new(layout.rail_left_x + 40.0, layout.rungs[0].bounds.y + 10.0);
+        assert_eq!(layout.hit_test(header_pt), Some(LdElementKey::Rung(0)));
+
+        // 2. Render editor canvas with both long name and comment without panic
+        let _elem = render_ld_editor(
+            &ld_prog,
+            None,
+            Some(&LdElementKey::Rung(0)),
+            &[LdElementKey::Rung(0)],
+            UiLanguage::En,
+            Vector::default(),
+            1.0,
+        );
+
+        // 3. Test LdRungNameChanged mutates rung.id cleanly
+        let _ = app.update(Message::LdRungNameChanged(
+            "safety_ld".to_string(),
+            0,
+            "Rung_EStop_Active".to_string(),
+        ));
+
+        let Some(ferrite_project::PouSource::Ld(updated_ld)) = app.project.pous.get("safety_ld") else {
+            panic!("POU not found");
+        };
+        assert_eq!(updated_ld.rungs[0].id, "Rung_EStop_Active");
+        assert_eq!(updated_ld.rungs[0].comment, "Master EStop & Guard Door permissive");
+        assert!(app.modified, "App should be marked modified after rung rename");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
     }
 }

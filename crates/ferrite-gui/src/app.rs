@@ -240,6 +240,7 @@ pub enum Message {
     // Ladder Diagram
     LdAddRung(String),
     LdRemoveRung(String, usize),
+    LdRungNameChanged(String, usize, String),
     LdRungCommentChanged(String, usize, String),
     LdAddContact(String, usize),
     LdAddContactWithKind(String, usize, ContactKind),
@@ -1636,7 +1637,7 @@ impl FerriteStudioApp {
                                 None => "Condition satisfied".to_string(),
                             };
                             self.status_banner = format!(
-                                "⚠️ Breakpoint hit at scan #{} (virtual time {}ms): {}",
+                                "[!] Breakpoint hit at scan #{} (virtual time {}ms): {}",
                                 tel.scan_count, tel.virtual_time_ms, bp_info
                             );
                             self.bottom_dock_tab = BottomDockTab::Diagnostics;
@@ -2215,6 +2216,17 @@ impl FerriteStudioApp {
                     && r_idx < ld.rungs.len()
                 {
                     ld.rungs.remove(r_idx);
+                    self.track_history();
+                    self.recompile_runtime();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::LdRungNameChanged(pou_name, r_idx, name) => {
+                if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(rung) = ld.rungs.get_mut(r_idx)
+                {
+                    rung.id = name;
                     self.track_history();
                     self.recompile_runtime();
                     self.modified = true;
@@ -4220,7 +4232,7 @@ impl FerriteStudioApp {
             row![
                 container(
                     text(format!(
-                        "⚠️ {} {}",
+                        "[!] {} {}",
                         active_forces,
                         self.ui_lang.tr("FORCES ACTIVE", "FORÇAGES ACTIFS")
                     ))

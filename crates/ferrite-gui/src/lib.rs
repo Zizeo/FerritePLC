@@ -899,4 +899,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
+
+    #[test]
+    fn test_forces_active_banner_no_bugged_characters() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join(format!("ferrite_forces_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()));
+        let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        // Force a tag to activate the forces banner
+        if let Some(ref mut rt) = app.runtime {
+            rt.force("Start_Button", ferrite_core::IecValue::Bool(true))?;
+        }
+
+        let count = app.runtime.as_ref().map(|rt| rt.active_forces_count()).unwrap_or(0);
+        assert!(count >= 1, "There should be active forces present");
+
+        // Format the banner text and assert it uses clean ASCII marker [!] and contains no emoji tofu
+        let forces_text = format!(
+            "[!] {} {}",
+            count,
+            app.ui_lang.tr("FORCES ACTIVE", "FORÇAGES ACTIFS")
+        );
+        assert!(forces_text.starts_with(&format!("[!] {count} FORCES ACTIVE")));
+        assert!(!forces_text.contains("⚠️"));
+        assert!(!forces_text.contains('\u{FE0F}'));
+
+        // Render main view without panic
+        let window_id = app.main_window_id.unwrap_or_else(iced::window::Id::unique);
+        let _view = app.view(window_id);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }
