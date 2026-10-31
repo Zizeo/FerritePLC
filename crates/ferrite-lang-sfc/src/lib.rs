@@ -2452,9 +2452,9 @@ mod tests {
             "Valid OR convergence should not produce InvalidOrConvergence errors"
         );
 
-        // Invalid OR convergence: A single transition T_conv attempts to merge multiple steps with ConvergenceKind::Or
-        let invalid_or_conv = SfcProgram {
-            name: "invalid_or_conv".to_string(),
+        // Invalid OR convergence: A single transition attempting to merge multiple steps with ConvergenceKind::Or
+        let invalid_single_or_conv = SfcProgram {
+            name: "invalid_single_or_conv".to_string(),
             comment: "".to_string(),
             steps: vec![
                 SfcStep::new("0", "Initial", StepKind::Initial),
@@ -2472,10 +2472,96 @@ mod tests {
                 ..Default::default()
             }],
         };
-        let rep_invalid = validate_sfc_topology(&invalid_or_conv);
+        let rep_invalid_single = validate_sfc_topology(&invalid_single_or_conv);
         assert!(
-            rep_invalid.errors.iter().any(|e| matches!(e, SfcValidationError::InvalidOrConvergence { element_id, .. } if element_id == "T_conv")),
+            rep_invalid_single.errors.iter().any(|e| matches!(e, SfcValidationError::InvalidOrConvergence { element_id, .. } if element_id == "T_conv")),
             "Expected InvalidOrConvergence error when a single transition has multiple from_steps with ConvergenceKind::Or"
         );
+    }
+
+    #[test]
+    fn test_sfc_or_convergence_state_passes_when_variables_true() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+        tags.register_tag(TagEntry::new(
+            "Merge_Permissive",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "Merge condition",
+        ))?;
+
+        let sfc = SfcProgram {
+            name: "or_conv_run".to_string(),
+            comment: "Test OR convergence state transition".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Initial", StepKind::Initial),
+                SfcStep::new("1", "BranchA", StepKind::Normal),
+                SfcStep::new("2", "BranchB", StepKind::Normal),
+                SfcStep::new("3", "MergedStep", StepKind::Normal),
+            ],
+            transitions: vec![
+                // Step 0 -> Step 1 (activated first)
+                SfcTransition {
+                    id: "T0".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["1".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    ..Default::default()
+                },
+                // Step 1 -> Step 3 (Branch A convergence transition)
+                SfcTransition {
+                    id: "T1_Merge".to_string(),
+                    from_steps: vec!["1".to_string()],
+                    to_steps: vec!["3".to_string()],
+                    receptivity: "Merge_Permissive".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    ..Default::default()
+                },
+                // Step 2 -> Step 3 (Branch B convergence transition)
+                SfcTransition {
+                    id: "T2_Merge".to_string(),
+                    from_steps: vec!["2".to_string()],
+                    to_steps: vec!["3".to_string()],
+                    receptivity: "Merge_Permissive".to_string(),
+                    convergence: ConvergenceKind::And,
+                    divergence: DivergenceKind::And,
+                    ..Default::default()
+                },
+            ],
+        };
+
+        sfc.register_introspection_symbols(&mut tags)?;
+        let mut compiled = sfc.compile(&tags)?;
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 50, 1);
+
+        // Scan 1: Initialize initial step 0
+        compiled.execute(&mut ctx)?;
+        assert!(ctx.read_bool("or_conv_run.X0.state")?, "Step 0 should be active on first scan");
+        assert!(!ctx.read_bool("or_conv_run.X1.state")?, "Step 1 should not be active yet");
+
+        // Scan 2: T0 (TRUE) fires -> Step 0 clears, Step 1 activates
+        compiled.execute(&mut ctx)?;
+        assert!(ctx.read_bool("or_conv_run.X1.state")?, "Step 1 should be active after T0 fires");
+        assert!(!ctx.read_bool("or_conv_run.X2.state")?, "Step 2 should be inactive");
+        assert!(!ctx.read_bool("or_conv_run.X3.state")?, "Step 3 should not be active yet");
+
+        // Scan 3: Merge_Permissive is still FALSE -> Step 1 remains active, Step 3 inactive.
+        compiled.execute(&mut ctx)?;
+        assert!(ctx.read_bool("or_conv_run.X1.state")?, "Step 1 should remain active");
+        assert!(!ctx.read_bool("or_conv_run.X3.state")?, "Step 3 should not be active yet");
+
+        // Set Merge_Permissive to TRUE:
+        ctx.write_symbol("Merge_Permissive", IecValue::Bool(true))?;
+
+        // Scan 4: OR convergence transition T1_Merge must fire because Step 1 is active and Merge_Permissive is TRUE!
+        compiled.execute(&mut ctx)?;
+        assert!(!ctx.read_bool("or_conv_run.X1.state")?, "Step 1 should clear when T1_Merge fires");
+        assert!(ctx.read_bool("or_conv_run.X3.state")?, "State MUST pass to Step 3 through OR convergence!");
+
+        Ok(())
     }
 }
