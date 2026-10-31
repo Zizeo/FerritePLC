@@ -353,6 +353,7 @@ mod tests {
                 id: (1000 + idx) as u64,
                 label: format!("Elem {idx}"),
                 element_type: kind,
+                button_mode: ferrite_twin::ButtonActionMode::default(),
                 position: (100.0 + (idx as f32) * 20.0, 100.0),
                 size: (60.0, 60.0),
                 rotation: 0.0,
@@ -1439,5 +1440,196 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_digital_twin_os_window_edit_and_runtime_modes() -> Result<(), Box<dyn std::error::Error>> {
+        use ferrite_twin::{
+            ActuatorKind, ButtonActionMode, ColorEditTarget, ElementKind, ShapeType, TwinMode,
+        };
+
+        let now_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("ferrite_test_twin_rework_{now_nanos}"));
+        std::fs::create_dir_all(&temp_dir)?;
+        let scaffold = ferrite_project::Project::scaffold(&temp_dir, "test_twin_rework")?;
+        let mut app = FerriteStudioApp::new(scaffold);
+
+        // 1. Open Digital Twin OS Window
+        assert!(app.digital_twin_window_id.is_none());
+        let _ = app.update(Message::OpenDigitalTwinWindow);
+        let twin_win_id = app
+            .digital_twin_window_id
+            .ok_or("Digital Twin OS window must be opened")?;
+        drop(app.view(twin_win_id));
+
+        // 2. Spawn industrial equipment and geometric shapes in Edit Mode
+        assert_eq!(app.digital_twin_workspace.mode, TwinMode::Edit);
+        let initial_len = app.digital_twin_workspace.elements.len();
+        let _ = app.update(Message::TwinSpawnElement(ElementKind::PushButton));
+        let pb_id = app
+            .digital_twin_workspace
+            .selected_id
+            .ok_or("spawned PB must be selected")?;
+        let _ = app.update(Message::TwinSpawnElement(ElementKind::Valve));
+        let _ = app.update(Message::TwinSpawnElement(ElementKind::Tank));
+        let _ = app.update(Message::TwinSpawnElement(ElementKind::Actuator(
+            ActuatorKind::ElectricMotor,
+        )));
+        let _ = app.update(Message::TwinSpawnElement(ElementKind::BasicShape(
+            ShapeType::Line,
+        )));
+        let _ = app.update(Message::TwinSpawnElement(ElementKind::BasicShape(
+            ShapeType::Square,
+        )));
+        let _ = app.update(Message::TwinSpawnElement(ElementKind::BasicShape(
+            ShapeType::Circle,
+        )));
+        let circle_id = app
+            .digital_twin_workspace
+            .selected_id
+            .ok_or("spawned Circle must be selected")?;
+        assert_eq!(app.digital_twin_workspace.elements.len(), initial_len + 7);
+
+        // 3. Move, resize, and rotate the Circle in Edit Mode
+        let orig_pos = app
+            .digital_twin_workspace
+            .elements
+            .iter()
+            .find(|e| e.id == circle_id)
+            .ok_or("circle exists")?
+            .position;
+        let click_pt = (orig_pos.0 + 10.0, orig_pos.1 + 10.0);
+        let _ = app.update(Message::TwinCanvasMouseDown {
+            pos: click_pt,
+            right_button: false,
+        });
+        let _ = app.update(Message::TwinCanvasMouseMove((
+            click_pt.0 + 50.0,
+            click_pt.1 + 40.0,
+        )));
+        let _ = app.update(Message::TwinCanvasMouseUp);
+        let moved_pos = app
+            .digital_twin_workspace
+            .elements
+            .iter()
+            .find(|e| e.id == circle_id)
+            .ok_or("circle exists")?
+            .position;
+        assert!(moved_pos.0 > orig_pos.0 && moved_pos.1 > orig_pos.1);
+
+        let _ = app.update(Message::TwinSetWidth(circle_id, "120".to_string()));
+        let _ = app.update(Message::TwinSetHeight(circle_id, "120".to_string()));
+        let _ = app.update(Message::TwinSetRotation(circle_id, 45.0));
+
+        // 4. Right-click context menu -> Open Parameters -> Bind variable, pick Red OFF / Green ON colors, enable blinking
+        let center_pt = (moved_pos.0 + 60.0, moved_pos.1 + 60.0);
+        let _ = app.update(Message::TwinCanvasMouseDown {
+            pos: center_pt,
+            right_button: true,
+        });
+        assert!(app.digital_twin_workspace.context_menu.is_some());
+        let _ = app.update(Message::TwinOpenInspector(circle_id));
+        assert_eq!(app.digital_twin_workspace.inspector_open_for, Some(circle_id));
+
+        let _ = app.update(Message::TwinToggleBinding(circle_id, true));
+        let _ = app.update(Message::TwinSetVariable(
+            circle_id,
+            "High_Temp_Alarm".to_string(),
+        ));
+        let _ = app.update(Message::TwinSelectColorTarget(ColorEditTarget::InactiveColor));
+        let _ = app.update(Message::TwinSetColorHex("#FF0000".to_string()));
+        // Invalid hex must be ignored safely
+        let _ = app.update(Message::TwinSetColorHex("#GG0011".to_string()));
+        let _ = app.update(Message::TwinSelectColorTarget(ColorEditTarget::ActiveColor));
+        let _ = app.update(Message::TwinSetColorHex("#00FF00".to_string()));
+        let _ = app.update(Message::TwinToggleBlink(circle_id, true));
+        let _ = app.update(Message::TwinSetBlinkInterval(circle_id, 250));
+
+        let circle = app
+            .digital_twin_workspace
+            .elements
+            .iter()
+            .find(|e| e.id == circle_id)
+            .ok_or("circle exists")?;
+        assert_eq!(circle.rotation, 45.0);
+        let c_bind = circle.binding.as_ref().ok_or("circle binding")?;
+        assert_eq!(c_bind.inactive_color, [255, 0, 0, 255]);
+        assert_eq!(c_bind.active_color, [0, 255, 0, 255]);
+        assert_eq!(c_bind.blink.as_ref().map(|b| b.interval_ms), Some(250));
+
+        // Bind spawned PushButton to Start_Button in Momentary mode
+        let _ = app.update(Message::TwinOpenInspector(pb_id));
+        let _ = app.update(Message::TwinToggleBinding(pb_id, true));
+        let _ = app.update(Message::TwinSetVariable(pb_id, "Start_Button".to_string()));
+        let _ = app.update(Message::TwinSetButtonMode(pb_id, ButtonActionMode::Momentary));
+
+        // 5. Save Digital Twin layout to project disk
+        let _ = app.update(Message::TwinSaveToProject);
+        assert!(temp_dir.join("sim/digital_twin.json").exists());
+
+        // 6. Switch to Runtime Mode -> PLC starts running, elements are fixed, button click modifies variable
+        app.sim_running = false;
+        let _ = app.update(Message::TwinSetMode(TwinMode::Runtime));
+        assert_eq!(app.digital_twin_workspace.mode, TwinMode::Runtime);
+        assert!(
+            app.sim_running,
+            "Switching Digital Twin to Runtime mode must start PLC runtime"
+        );
+        assert!(app.digital_twin_workspace.inspector_open_for.is_none());
+
+        // Attempting to drag in Runtime mode must NOT move the circle
+        let pos_before_rt_drag = app
+            .digital_twin_workspace
+            .elements
+            .iter()
+            .find(|e| e.id == circle_id)
+            .ok_or("circle")?
+            .position;
+        let _ = app.update(Message::TwinCanvasMouseDown {
+            pos: center_pt,
+            right_button: false,
+        });
+        let _ = app.update(Message::TwinCanvasMouseMove((
+            center_pt.0 + 100.0,
+            center_pt.1 + 100.0,
+        )));
+        let _ = app.update(Message::TwinCanvasMouseUp);
+        let pos_after_rt_drag = app
+            .digital_twin_workspace
+            .elements
+            .iter()
+            .find(|e| e.id == circle_id)
+            .ok_or("circle")?
+            .position;
+        assert_eq!(
+            pos_before_rt_drag, pos_after_rt_drag,
+            "Objects must remain fixed in Runtime mode"
+        );
+
+        // Press and release the Momentary PushButton in Runtime mode
+        let _ = app.update(Message::TwinRuntimePress(pb_id));
+        assert_eq!(
+            app.shared_io
+                .read()
+                .map_err(|e| e.to_string())?
+                .snapshot()
+                .get_bool("Start_Button"),
+            Some(true)
+        );
+        // Switching back to Edit mode must release held momentary button
+        let _ = app.update(Message::TwinSetMode(TwinMode::Edit));
+        assert_eq!(
+            app.shared_io
+                .read()
+                .map_err(|e| e.to_string())?
+                .snapshot()
+                .get_bool("Start_Button"),
+            Some(false)
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
     }
 }

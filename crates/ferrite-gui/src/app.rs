@@ -34,7 +34,9 @@ use crate::canvas_ld::{
 };
 use crate::canvas_sfc::render_sfc_editor;
 use crate::digital_twin::{
-    DigitalTwinWorkspace, SharedIoHandle, SharedIoState, render_digital_twin,
+    AccessMode, ActiveResize, BlinkConfig, ButtonActionMode, ColorEditTarget, DigitalTwinWorkspace,
+    ElementKind, ResizeHandle, SharedIoHandle, SharedIoState, TwinMode, VariableBinding,
+    hex_to_rgb, hsv_to_rgb, render_digital_twin, render_digital_twin_window,
 };
 use crate::editor_st::render_st_editor;
 use crate::editor_symbols::render_symbols_editor;
@@ -336,6 +338,47 @@ pub enum Message {
 
     // Digital Twin
     DigitalTwinToggleElement(u64),
+    OpenDigitalTwinWindow,
+    CloseDigitalTwinWindow,
+    TwinSetMode(TwinMode),
+    TwinSaveToProject,
+    TwinResetStarter,
+    TwinClearAll,
+    TwinToggleSnapGrid,
+    TwinSpawnElement(ElementKind),
+    TwinCanvasMouseDown {
+        pos: (f32, f32),
+        right_button: bool,
+    },
+    TwinCanvasMouseMove((f32, f32)),
+    TwinCanvasMouseUp,
+    TwinContextAction {
+        action: String,
+        id: u64,
+    },
+    TwinCloseContextMenu,
+    TwinOpenInspector(u64),
+    TwinCloseInspector,
+    TwinSetLabel(u64, String),
+    TwinSetPositionX(u64, String),
+    TwinSetPositionY(u64, String),
+    TwinSetWidth(u64, String),
+    TwinSetHeight(u64, String),
+    TwinSetRotation(u64, f32),
+    TwinSetButtonMode(u64, ButtonActionMode),
+    TwinToggleBinding(u64, bool),
+    TwinSetVariable(u64, String),
+    TwinSetAccessMode(u64, AccessMode),
+    TwinSelectColorTarget(ColorEditTarget),
+    TwinPickColorSv(f32, f32),
+    TwinPickColorHue(f32),
+    TwinSetColorRgb(u8, u8, u8),
+    TwinSetColorHex(String),
+    TwinToggleBlink(u64, bool),
+    TwinSetBlinkTrigger(u64, bool),
+    TwinSetBlinkInterval(u64, u64),
+    TwinRuntimePress(u64),
+    TwinRuntimeRelease(u64),
 }
 
 const MAX_HISTORY: usize = 100;
@@ -371,6 +414,8 @@ pub struct FerriteStudioApp {
     pub detached_right_id: Option<iced::window::Id>,
     pub detached_bottom_id: Option<iced::window::Id>,
     pub help_window_id: Option<iced::window::Id>,
+    pub digital_twin_window_id: Option<iced::window::Id>,
+    pub twin_elapsed_ms: u64,
     pub help_selected_topic: crate::help_window::HelpTopic,
     pub help_search_query: String,
     pub show_close_confirm_modal: bool,
@@ -504,7 +549,8 @@ impl FerriteStudioApp {
             }
         }
         let shared_io = Arc::new(RwLock::new(initial_shared_io));
-        let digital_twin_workspace = DigitalTwinWorkspace::with_starter_plant();
+        let digital_twin_workspace =
+            DigitalTwinWorkspace::load_or_default(&initial_project.root_dir);
 
         // Initialize ST editor contents from project
         let mut st_contents = HashMap::new();
@@ -558,6 +604,8 @@ impl FerriteStudioApp {
             detached_right_id: None,
             detached_bottom_id: None,
             help_window_id: None,
+            digital_twin_window_id: None,
+            twin_elapsed_ms: 0,
             help_selected_topic: crate::help_window::HelpTopic::ArchScanLoop,
             help_search_query: String::new(),
             show_close_confirm_modal: false,
@@ -630,6 +678,17 @@ impl FerriteStudioApp {
                     "FerritePLC — Manuel d'Aide & Référence Industrielle",
                 )
                 .to_string();
+        }
+        if Some(window_id) == self.digital_twin_window_id {
+            let mode_str = match self.digital_twin_workspace.mode {
+                TwinMode::Edit => self.ui_lang.tr("EDIT MODE", "MODE ÉDITION"),
+                TwinMode::Runtime => self.ui_lang.tr("RUNTIME MODE", "MODE EXÉCUTION"),
+            };
+            return format!(
+                "FerritePLC — {} [{}]",
+                self.ui_lang.tr("2D Digital Twin", "Jumeau Numérique 2D"),
+                mode_str
+            );
         }
         format!("FerritePLC Studio — {}", self.project.manifest.name)
     }
@@ -1518,6 +1577,13 @@ impl FerriteStudioApp {
                 } else if Some(id) == self.help_window_id {
                     self.help_window_id = None;
                     iced::window::close(id)
+                } else if Some(id) == self.digital_twin_window_id {
+                    if let Some(held_id) = self.digital_twin_workspace.active_momentary_id.take() {
+                        self.release_twin_momentary_button(held_id);
+                    }
+                    self.digital_twin_window_id = None;
+                    self.show_digital_twin_window = false;
+                    iced::window::close(id)
                 } else if Some(id) == self.main_window_id || self.main_window_id.is_none() {
                     if self.modified && !self.allowed_to_close {
                         self.show_close_confirm_modal = true;
@@ -1532,6 +1598,7 @@ impl FerriteStudioApp {
             Message::ConfirmCloseSaveAndExit => {
                 let root = self.project.root_dir.clone();
                 let _ = self.project.save(&root);
+                let _ = self.digital_twin_workspace.save_to_project(&root);
                 self.modified = false;
                 self.allowed_to_close = true;
                 self.show_close_confirm_modal = false;
@@ -1557,20 +1624,34 @@ impl FerriteStudioApp {
             }
             Message::ToggleRunSim => {
                 self.sim_running = !self.sim_running;
+                if !self.sim_running
+                    && let Some(held_id) = self.digital_twin_workspace.active_momentary_id.take()
+                {
+                    self.release_twin_momentary_button(held_id);
+                }
                 Task::none()
             }
             Message::StepSimTick => {
+                self.twin_elapsed_ms = self
+                    .twin_elapsed_ms
+                    .wrapping_add(self.project.manifest.scan_cycle_ms.max(20));
                 let _ = self.execute_plc_scan_tick();
                 Task::none()
             }
             Message::ResetSim => {
                 self.sim_running = false;
+                if let Some(held_id) = self.digital_twin_workspace.active_momentary_id.take() {
+                    self.release_twin_momentary_button(held_id);
+                }
                 self.recompile_runtime();
                 self.trend_plotter.clear_all();
                 Task::none()
             }
             Message::ResetSimWarm => {
                 self.sim_running = false;
+                if let Some(held_id) = self.digital_twin_workspace.active_momentary_id.take() {
+                    self.release_twin_momentary_button(held_id);
+                }
                 if let Some(rt) = &mut self.runtime {
                     let _ = rt.warm_restart();
                     if self.hal_enabled {
@@ -1603,6 +1684,9 @@ impl FerriteStudioApp {
             }
             Message::ResetSimCold => {
                 self.sim_running = false;
+                if let Some(held_id) = self.digital_twin_workspace.active_momentary_id.take() {
+                    self.release_twin_momentary_button(held_id);
+                }
                 if let Some(rt) = &mut self.runtime {
                     let _ = rt.cold_restart();
                     if self.hal_enabled {
@@ -1698,6 +1782,9 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::PlcTickTimer => {
+                self.twin_elapsed_ms = self
+                    .twin_elapsed_ms
+                    .wrapping_add(self.project.manifest.scan_cycle_ms.max(20));
                 match self.execute_plc_scan_batch(self.sim_speed.batch_size()) {
                     Ok(tel) => {
                         if tel.breakpoint_hit {
@@ -1739,6 +1826,7 @@ impl FerriteStudioApp {
             }
             Message::SaveProject => {
                 let root = self.project.root_dir.clone();
+                let _ = self.digital_twin_workspace.save_to_project(&root);
                 if let Err(e) = self.project.save(&root) {
                     self.status_banner = format!("Save failed: {e}");
                 } else {
@@ -1763,6 +1851,8 @@ impl FerriteStudioApp {
                     Ok(loaded) => {
                         let p_name = loaded.manifest.name.clone();
                         self.project = loaded;
+                        self.digital_twin_workspace =
+                            DigitalTwinWorkspace::load_or_default(&self.project.root_dir);
                         self.undo_stack.clear();
                         self.redo_stack.clear();
                         self.last_committed_project = self.project.clone();
@@ -1828,6 +1918,7 @@ impl FerriteStudioApp {
                 if let Some(folder) = dialog.pick_folder() {
                     match self.project.save(&folder) {
                         Ok(()) => {
+                            let _ = self.digital_twin_workspace.save_to_project(&folder);
                             self.project.root_dir = folder.clone();
                             self.modified = false;
                             self.status_banner = format!("Project saved to {}", folder.display());
@@ -1888,6 +1979,10 @@ impl FerriteStudioApp {
                                     Ok(imported_project) => {
                                         let p_name = imported_project.manifest.name.clone();
                                         self.project = imported_project;
+                                        self.digital_twin_workspace =
+                                            DigitalTwinWorkspace::load_or_default(
+                                                &self.project.root_dir,
+                                            );
                                         self.undo_stack.clear();
                                         self.redo_stack.clear();
                                         self.recompile_runtime();
@@ -1924,6 +2019,18 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::DeletePressed => {
+                if self.digital_twin_workspace.mode == TwinMode::Edit
+                    && let Some(sel_id) = self.digital_twin_workspace.selected_id
+                    && self.ld_selected.is_none()
+                    && self.ld_selected_elements.is_empty()
+                    && self.sfc_selected.is_none()
+                    && self.sfc_selected_elements.is_empty()
+                {
+                    return self.update(Message::TwinContextAction {
+                        action: "delete".to_string(),
+                        id: sel_id,
+                    });
+                }
                 if let WorkspaceTab::Pou(pou_name) = &self.active_tab
                     && let Some(pou) = self.project.pous.get(pou_name)
                 {
@@ -4124,33 +4231,783 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::DigitalTwinToggleElement(id) => {
+                self.update(Message::TwinRuntimePress(id))
+            }
+            Message::OpenDigitalTwinWindow => {
+                if self.digital_twin_window_id.is_none() {
+                    let (id, open_task) = iced::window::open(iced::window::Settings {
+                        size: iced::Size::new(1240.0, 820.0),
+                        min_size: Some(iced::Size::new(820.0, 560.0)),
+                        exit_on_close_request: false,
+                        ..Default::default()
+                    });
+                    self.digital_twin_window_id = Some(id);
+                    self.show_digital_twin_window = true;
+                    open_task.map(|_| Message::None)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::CloseDigitalTwinWindow => {
+                if let Some(held_id) = self.digital_twin_workspace.active_momentary_id.take() {
+                    self.release_twin_momentary_button(held_id);
+                }
+                self.show_digital_twin_window = false;
+                if let Some(id) = self.digital_twin_window_id.take() {
+                    iced::window::close(id)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::TwinSetMode(mode) => {
+                self.digital_twin_workspace.mode = mode;
+                match mode {
+                    TwinMode::Runtime => {
+                        self.digital_twin_workspace.selected_id = None;
+                        self.digital_twin_workspace.drag_target_id = None;
+                        self.digital_twin_workspace.drag_start_mouse = None;
+                        self.digital_twin_workspace.active_resize = None;
+                        self.digital_twin_workspace.active_rotate_id = None;
+                        self.digital_twin_workspace.context_menu = None;
+                        self.digital_twin_workspace.inspector_open_for = None;
+                        self.sim_running = true;
+                    }
+                    TwinMode::Edit => {
+                        if let Some(held_id) =
+                            self.digital_twin_workspace.active_momentary_id.take()
+                        {
+                            self.release_twin_momentary_button(held_id);
+                        }
+                        self.sim_running = false;
+                    }
+                }
+                Task::none()
+            }
+            Message::TwinSaveToProject => {
+                let root = self.project.root_dir.clone();
+                match self.digital_twin_workspace.save_to_project(&root) {
+                    Ok(()) => {
+                        self.status_banner = self
+                            .ui_lang
+                            .tr(
+                                "Digital Twin layout saved to sim/digital_twin.json.",
+                                "Schéma du Jumeau Numérique enregistré dans sim/digital_twin.json.",
+                            )
+                            .to_string();
+                    }
+                    Err(e) => {
+                        self.status_banner = format!("Failed to save Digital Twin: {e}");
+                    }
+                }
+                Task::none()
+            }
+            Message::TwinResetStarter => {
+                if self.digital_twin_workspace.mode == TwinMode::Edit {
+                    self.digital_twin_workspace = DigitalTwinWorkspace::with_starter_plant();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinClearAll => {
+                if self.digital_twin_workspace.mode == TwinMode::Edit {
+                    self.digital_twin_workspace.elements.clear();
+                    self.digital_twin_workspace.selected_id = None;
+                    self.digital_twin_workspace.context_menu = None;
+                    self.digital_twin_workspace.inspector_open_for = None;
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinToggleSnapGrid => {
+                self.digital_twin_workspace.snap_to_grid =
+                    !self.digital_twin_workspace.snap_to_grid;
+                Task::none()
+            }
+            Message::TwinSpawnElement(kind) => {
+                if self.digital_twin_workspace.mode == TwinMode::Edit {
+                    let offset = (self.digital_twin_workspace.elements.len() % 8) as f32 * 24.0;
+                    self.digital_twin_workspace
+                        .spawn_element_at(kind, Some((160.0 + offset, 140.0 + offset)));
+                    self.digital_twin_workspace.sync_color_picker_from_selected();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinCanvasMouseDown {
+                pos: (mx, my),
+                right_button,
+            } => {
+                if self.digital_twin_workspace.mode == TwinMode::Runtime {
+                    if !right_button {
+                        let mut indices: Vec<usize> =
+                            (0..self.digital_twin_workspace.elements.len()).collect();
+                        indices.sort_by_key(|&idx| {
+                            std::cmp::Reverse(self.digital_twin_workspace.elements[idx].z_index)
+                        });
+                        for idx in indices {
+                            if self.digital_twin_workspace.elements[idx].contains_point(mx, my) {
+                                let id = self.digital_twin_workspace.elements[idx].id;
+                                return self.update(Message::TwinRuntimePress(id));
+                            }
+                        }
+                    }
+                    return Task::none();
+                }
+
+                // Edit Mode
+                let mut indices: Vec<usize> =
+                    (0..self.digital_twin_workspace.elements.len()).collect();
+                indices.sort_by_key(|&idx| {
+                    std::cmp::Reverse(self.digital_twin_workspace.elements[idx].z_index)
+                });
+
+                if right_button {
+                    for idx in indices {
+                        if self.digital_twin_workspace.elements[idx].contains_point(mx, my) {
+                            let id = self.digital_twin_workspace.elements[idx].id;
+                            self.digital_twin_workspace.selected_id = Some(id);
+                            self.digital_twin_workspace.context_menu =
+                                Some(((mx, my).into(), id));
+                            self.digital_twin_workspace.sync_color_picker_from_selected();
+                            return Task::none();
+                        }
+                    }
+                    self.digital_twin_workspace.context_menu = None;
+                    return Task::none();
+                }
+
+                // Left click in Edit Mode
+                self.digital_twin_workspace.context_menu = None;
+
+                // First check rotation & resize handles of currently selected element
+                if let Some(sel_id) = self.digital_twin_workspace.selected_id
+                    && let Some(elem) = self
+                        .digital_twin_workspace
+                        .elements
+                        .iter()
+                        .find(|e| e.id == sel_id)
+                {
+                    if elem.hit_test_rotation_handle(mx, my, 10.0) {
+                        self.digital_twin_workspace.active_rotate_id = Some(sel_id);
+                        return Task::none();
+                    }
+                    let (cx, cy) = elem.center();
+                    let hw = elem.size.0 * 0.5;
+                    let hh = elem.size.1 * 0.5;
+                    let rad = elem.rotation.to_radians();
+                    let cos_r = rad.cos();
+                    let sin_r = rad.sin();
+                    let corners = [
+                        (ResizeHandle::TopLeft, -hw, -hh),
+                        (ResizeHandle::TopRight, hw, -hh),
+                        (ResizeHandle::BottomLeft, -hw, hh),
+                        (ResizeHandle::BottomRight, hw, hh),
+                    ];
+                    for (handle, lx, ly) in corners {
+                        let hx = cx + lx * cos_r - ly * sin_r;
+                        let hy = cy + lx * sin_r + ly * cos_r;
+                        let dx = mx - hx;
+                        let dy = my - hy;
+                        if dx * dx + dy * dy <= 100.0 {
+                            self.digital_twin_workspace.active_resize = Some(ActiveResize {
+                                elem_id: sel_id,
+                                handle,
+                                start_pos: elem.position,
+                                start_size: elem.size,
+                                start_mouse: (mx, my).into(),
+                            });
+                            return Task::none();
+                        }
+                    }
+                }
+
+                // Hit-test elements from top z-index to bottom
+                for idx in indices {
+                    if self.digital_twin_workspace.elements[idx].contains_point(mx, my) {
+                        let elem = &self.digital_twin_workspace.elements[idx];
+                        let id = elem.id;
+                        let pos = elem.position;
+                        self.digital_twin_workspace.selected_id = Some(id);
+                        self.digital_twin_workspace.drag_target_id = Some(id);
+                        self.digital_twin_workspace.drag_start_mouse = Some((mx, my).into());
+                        self.digital_twin_workspace.drag_start_elem_pos = pos;
+                        self.digital_twin_workspace.sync_color_picker_from_selected();
+                        return Task::none();
+                    }
+                }
+
+                self.digital_twin_workspace.selected_id = None;
+                Task::none()
+            }
+            Message::TwinCanvasMouseMove((mx, my)) => {
+                if self.digital_twin_workspace.mode != TwinMode::Edit {
+                    return Task::none();
+                }
+
+                let snap = self.digital_twin_workspace.snap_to_grid;
+                let grid_size = self.digital_twin_workspace.grid_size.max(1.0);
+
+                if let Some(rot_id) = self.digital_twin_workspace.active_rotate_id {
+                    if let Some(elem) = self
+                        .digital_twin_workspace
+                        .elements
+                        .iter_mut()
+                        .find(|e| e.id == rot_id)
+                    {
+                        let (cx, cy) = elem.center();
+                        let angle_deg = (my - cy).atan2(mx - cx).to_degrees() + 90.0;
+                        let normalized = angle_deg.rem_euclid(360.0);
+                        elem.rotation = if snap {
+                            ((normalized / 5.0).round() * 5.0).rem_euclid(360.0)
+                        } else {
+                            normalized
+                        };
+                        self.modified = true;
+                    }
+                } else if let Some(resize) = self.digital_twin_workspace.active_resize {
+                    if let Some(elem) = self
+                        .digital_twin_workspace
+                        .elements
+                        .iter_mut()
+                        .find(|e| e.id == resize.elem_id)
+                    {
+                        let dx = mx - resize.start_mouse.x;
+                        let dy = my - resize.start_mouse.y;
+                        let rad = -elem.rotation.to_radians();
+                        let ldx = dx * rad.cos() - dy * rad.sin();
+                        let ldy = dx * rad.sin() + dy * rad.cos();
+                        let min_h = if matches!(
+                            elem.element_type,
+                            ElementKind::BasicShape(ferrite_twin::ShapeType::Line)
+                                | ElementKind::Pipe
+                        ) {
+                            4.0
+                        } else {
+                            16.0
+                        };
+                        let mut new_x = resize.start_pos.0;
+                        let mut new_y = resize.start_pos.1;
+                        let (mut new_w, mut new_h) = match resize.handle {
+                            ResizeHandle::BottomRight => (
+                                (resize.start_size.0 + ldx).max(16.0),
+                                (resize.start_size.1 + ldy).max(min_h),
+                            ),
+                            ResizeHandle::TopRight => {
+                                let w = (resize.start_size.0 + ldx).max(16.0);
+                                let h = (resize.start_size.1 - ldy).max(min_h);
+                                new_y = resize.start_pos.1 + (resize.start_size.1 - h);
+                                (w, h)
+                            }
+                            ResizeHandle::BottomLeft => {
+                                let w = (resize.start_size.0 - ldx).max(16.0);
+                                let h = (resize.start_size.1 + ldy).max(min_h);
+                                new_x = resize.start_pos.0 + (resize.start_size.0 - w);
+                                (w, h)
+                            }
+                            ResizeHandle::TopLeft => {
+                                let w = (resize.start_size.0 - ldx).max(16.0);
+                                let h = (resize.start_size.1 - ldy).max(min_h);
+                                new_x = resize.start_pos.0 + (resize.start_size.0 - w);
+                                new_y = resize.start_pos.1 + (resize.start_size.1 - h);
+                                (w, h)
+                            }
+                        };
+                        if matches!(
+                            elem.element_type,
+                            ElementKind::BasicShape(
+                                ferrite_twin::ShapeType::Square | ferrite_twin::ShapeType::Circle
+                            )
+                        ) {
+                            let side = new_w.max(new_h);
+                            new_w = side;
+                            new_h = side;
+                        }
+                        elem.position = (new_x.max(0.0), new_y.max(0.0));
+                        elem.size = (new_w, new_h);
+                        self.modified = true;
+                    }
+                } else if let (Some(drag_id), Some(start_mouse)) = (
+                    self.digital_twin_workspace.drag_target_id,
+                    self.digital_twin_workspace.drag_start_mouse,
+                ) {
+                    let start_pos = self.digital_twin_workspace.drag_start_elem_pos;
+                    if let Some(elem) = self
+                        .digital_twin_workspace
+                        .elements
+                        .iter_mut()
+                        .find(|e| e.id == drag_id)
+                    {
+                        let mut nx = (start_pos.0 + (mx - start_mouse.x)).max(0.0);
+                        let mut ny = (start_pos.1 + (my - start_mouse.y)).max(0.0);
+                        if snap {
+                            nx = (nx / grid_size).round() * grid_size;
+                            ny = (ny / grid_size).round() * grid_size;
+                        }
+                        elem.position = (nx, ny);
+                        self.modified = true;
+                    }
+                }
+                Task::none()
+            }
+            Message::TwinCanvasMouseUp => {
+                if self.digital_twin_workspace.mode == TwinMode::Runtime {
+                    if let Some(held_id) =
+                        self.digital_twin_workspace.active_momentary_id.take()
+                    {
+                        self.release_twin_momentary_button(held_id);
+                    }
+                } else {
+                    self.digital_twin_workspace.drag_target_id = None;
+                    self.digital_twin_workspace.drag_start_mouse = None;
+                    self.digital_twin_workspace.active_resize = None;
+                    self.digital_twin_workspace.active_rotate_id = None;
+                }
+                Task::none()
+            }
+            Message::TwinContextAction { action, id } => {
+                if self.digital_twin_workspace.mode != TwinMode::Edit {
+                    return Task::none();
+                }
+                self.digital_twin_workspace.context_menu = None;
+                match action.as_str() {
+                    "parameters" => {
+                        self.digital_twin_workspace.selected_id = Some(id);
+                        self.digital_twin_workspace.inspector_open_for = Some(id);
+                        self.digital_twin_workspace.sync_color_picker_from_selected();
+                    }
+                    "duplicate" => {
+                        if let Some(orig) = self
+                            .digital_twin_workspace
+                            .elements
+                            .iter()
+                            .find(|e| e.id == id)
+                            .cloned()
+                        {
+                            let new_id = self.digital_twin_workspace.next_id;
+                            self.digital_twin_workspace.next_id += 1;
+                            let mut dup = orig;
+                            dup.id = new_id;
+                            dup.label = format!("{} (Copy)", dup.label);
+                            dup.position = (dup.position.0 + 24.0, dup.position.1 + 24.0);
+                            dup.z_index = self.digital_twin_workspace.elements.len();
+                            self.digital_twin_workspace.elements.push(dup);
+                            self.digital_twin_workspace.selected_id = Some(new_id);
+                            self.digital_twin_workspace.sync_color_picker_from_selected();
+                            self.modified = true;
+                        }
+                    }
+                    "rotate" | "rotate_cw" => {
+                        if let Some(elem) = self
+                            .digital_twin_workspace
+                            .elements
+                            .iter_mut()
+                            .find(|e| e.id == id)
+                        {
+                            elem.rotation = (elem.rotation + 90.0).rem_euclid(360.0);
+                            self.modified = true;
+                        }
+                    }
+                    "rotate_ccw" => {
+                        if let Some(elem) = self
+                            .digital_twin_workspace
+                            .elements
+                            .iter_mut()
+                            .find(|e| e.id == id)
+                        {
+                            elem.rotation = (elem.rotation - 90.0).rem_euclid(360.0);
+                            self.modified = true;
+                        }
+                    }
+                    "front" | "bring_front" => {
+                        let max_z = self
+                            .digital_twin_workspace
+                            .elements
+                            .iter()
+                            .map(|e| e.z_index)
+                            .max()
+                            .unwrap_or(0);
+                        if let Some(pos) = self
+                            .digital_twin_workspace
+                            .elements
+                            .iter()
+                            .position(|e| e.id == id)
+                        {
+                            let mut elem = self.digital_twin_workspace.elements.remove(pos);
+                            elem.z_index = max_z + 1;
+                            self.digital_twin_workspace.elements.push(elem);
+                            self.modified = true;
+                        }
+                    }
+                    "back" | "send_back" => {
+                        for e in &mut self.digital_twin_workspace.elements {
+                            e.z_index += 1;
+                        }
+                        if let Some(pos) = self
+                            .digital_twin_workspace
+                            .elements
+                            .iter()
+                            .position(|e| e.id == id)
+                        {
+                            let mut elem = self.digital_twin_workspace.elements.remove(pos);
+                            elem.z_index = 0;
+                            self.digital_twin_workspace.elements.insert(0, elem);
+                            self.modified = true;
+                        }
+                    }
+                    "delete" => {
+                        self.digital_twin_workspace.elements.retain(|e| e.id != id);
+                        if self.digital_twin_workspace.selected_id == Some(id) {
+                            self.digital_twin_workspace.selected_id = None;
+                        }
+                        if self.digital_twin_workspace.inspector_open_for == Some(id) {
+                            self.digital_twin_workspace.inspector_open_for = None;
+                        }
+                        self.modified = true;
+                    }
+                    _ => {}
+                }
+                Task::none()
+            }
+            Message::TwinCloseContextMenu => {
+                self.digital_twin_workspace.context_menu = None;
+                Task::none()
+            }
+            Message::TwinOpenInspector(id) => {
+                self.digital_twin_workspace.selected_id = Some(id);
+                self.digital_twin_workspace.inspector_open_for = Some(id);
+                self.digital_twin_workspace.context_menu = None;
+                self.digital_twin_workspace.sync_color_picker_from_selected();
+                Task::none()
+            }
+            Message::TwinCloseInspector => {
+                self.digital_twin_workspace.inspector_open_for = None;
+                Task::none()
+            }
+            Message::TwinSetLabel(id, label) => {
+                if let Some(elem) = self
+                    .digital_twin_workspace
+                    .elements
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                {
+                    elem.label = label;
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinSetPositionX(id, val_str) => {
+                if let Ok(v) = val_str.trim().parse::<f32>()
+                    && let Some(elem) = self
+                        .digital_twin_workspace
+                        .elements
+                        .iter_mut()
+                        .find(|e| e.id == id)
+                {
+                    elem.position.0 = v.max(0.0);
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinSetPositionY(id, val_str) => {
+                if let Ok(v) = val_str.trim().parse::<f32>()
+                    && let Some(elem) = self
+                        .digital_twin_workspace
+                        .elements
+                        .iter_mut()
+                        .find(|e| e.id == id)
+                {
+                    elem.position.1 = v.max(0.0);
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinSetWidth(id, val_str) => {
+                if let Ok(v) = val_str.trim().parse::<f32>()
+                    && let Some(elem) = self
+                        .digital_twin_workspace
+                        .elements
+                        .iter_mut()
+                        .find(|e| e.id == id)
+                {
+                    let clamped = v.max(8.0);
+                    elem.size.0 = clamped;
+                    if matches!(
+                        elem.element_type,
+                        ElementKind::BasicShape(
+                            ferrite_twin::ShapeType::Square | ferrite_twin::ShapeType::Circle
+                        )
+                    ) {
+                        elem.size.1 = clamped;
+                    }
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinSetHeight(id, val_str) => {
+                if let Ok(v) = val_str.trim().parse::<f32>()
+                    && let Some(elem) = self
+                        .digital_twin_workspace
+                        .elements
+                        .iter_mut()
+                        .find(|e| e.id == id)
+                {
+                    let clamped = v.max(4.0);
+                    elem.size.1 = clamped;
+                    if matches!(
+                        elem.element_type,
+                        ElementKind::BasicShape(
+                            ferrite_twin::ShapeType::Square | ferrite_twin::ShapeType::Circle
+                        )
+                    ) {
+                        elem.size.0 = clamped;
+                    }
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinSetRotation(id, deg) => {
+                if let Some(elem) = self
+                    .digital_twin_workspace
+                    .elements
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                {
+                    elem.rotation = deg.rem_euclid(360.0);
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinSetButtonMode(id, mode) => {
+                if let Some(elem) = self
+                    .digital_twin_workspace
+                    .elements
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                {
+                    elem.button_mode = mode;
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinToggleBinding(id, enabled) => {
+                let default_var = self
+                    .project
+                    .global_tags
+                    .tags
+                    .first()
+                    .map(|t| t.name.clone())
+                    .unwrap_or_else(|| "%IX0.0".to_string());
+                if let Some(elem) = self
+                    .digital_twin_workspace
+                    .elements
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                {
+                    if enabled {
+                        if elem.binding.is_none() {
+                            let default_access = match elem.element_type {
+                                ElementKind::PushButton | ElementKind::Switch => {
+                                    AccessMode::ReadWrite
+                                }
+                                _ => AccessMode::ReadOnly,
+                            };
+                            elem.binding = Some(VariableBinding {
+                                variable_id: default_var,
+                                access_mode: default_access,
+                                active_color: [16, 185, 129, 255],
+                                inactive_color: elem.base_color,
+                                blink: None,
+                            });
+                        }
+                    } else {
+                        elem.binding = None;
+                    }
+                    self.modified = true;
+                }
+                self.digital_twin_workspace.sync_color_picker_from_selected();
+                Task::none()
+            }
+            Message::TwinSetVariable(id, var_id) => {
+                if let Some(elem) = self
+                    .digital_twin_workspace
+                    .elements
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                    && let Some(ref mut binding) = elem.binding
+                {
+                    binding.variable_id = var_id;
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinSetAccessMode(id, access_mode) => {
+                if let Some(elem) = self
+                    .digital_twin_workspace
+                    .elements
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                    && let Some(ref mut binding) = elem.binding
+                {
+                    binding.access_mode = access_mode;
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinSelectColorTarget(target) => {
+                self.digital_twin_workspace.active_color_target = target;
+                self.digital_twin_workspace.sync_color_picker_from_selected();
+                Task::none()
+            }
+            Message::TwinPickColorSv(s, v) => {
+                self.digital_twin_workspace.hsv_state.1 = s.clamp(0.0, 1.0);
+                self.digital_twin_workspace.hsv_state.2 = v.clamp(0.0, 1.0);
+                let (h, s, v) = self.digital_twin_workspace.hsv_state;
+                let rgba = hsv_to_rgb(h, s, v, 255);
+                self.digital_twin_workspace.apply_color_to_selected(rgba);
+                self.modified = true;
+                Task::none()
+            }
+            Message::TwinPickColorHue(h) => {
+                self.digital_twin_workspace.hsv_state.0 = h.clamp(0.0, 360.0);
+                let (h, s, v) = self.digital_twin_workspace.hsv_state;
+                let rgba = hsv_to_rgb(h, s, v, 255);
+                self.digital_twin_workspace.apply_color_to_selected(rgba);
+                self.modified = true;
+                Task::none()
+            }
+            Message::TwinSetColorRgb(r, g, b) => {
+                self.digital_twin_workspace
+                    .apply_color_to_selected([r, g, b, 255]);
+                self.modified = true;
+                Task::none()
+            }
+            Message::TwinSetColorHex(hex_str) => {
+                self.digital_twin_workspace.hex_input = hex_str.clone();
+                if let Some(rgba) = hex_to_rgb(&hex_str, 255) {
+                    self.digital_twin_workspace.apply_color_to_selected(rgba);
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinToggleBlink(id, enabled) => {
+                if let Some(elem) = self
+                    .digital_twin_workspace
+                    .elements
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                    && let Some(ref mut binding) = elem.binding
+                {
+                    if enabled {
+                        if let Some(ref mut bl) = binding.blink {
+                            bl.enabled = true;
+                        } else {
+                            binding.blink = Some(BlinkConfig {
+                                enabled: true,
+                                trigger_state: true,
+                                interval_ms: 500,
+                            });
+                        }
+                    } else if let Some(ref mut bl) = binding.blink {
+                        bl.enabled = false;
+                    }
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinSetBlinkTrigger(id, trigger_state) => {
+                if let Some(elem) = self
+                    .digital_twin_workspace
+                    .elements
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                    && let Some(ref mut binding) = elem.binding
+                    && let Some(ref mut bl) = binding.blink
+                {
+                    bl.trigger_state = trigger_state;
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinSetBlinkInterval(id, interval_ms) => {
+                if let Some(elem) = self
+                    .digital_twin_workspace
+                    .elements
+                    .iter_mut()
+                    .find(|e| e.id == id)
+                    && let Some(ref mut binding) = elem.binding
+                    && let Some(ref mut bl) = binding.blink
+                {
+                    bl.interval_ms = interval_ms.max(50);
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::TwinRuntimePress(id) => {
+                if self.digital_twin_workspace.mode != TwinMode::Runtime {
+                    return Task::none();
+                }
                 if let Some(elem) = self
                     .digital_twin_workspace
                     .elements
                     .iter()
                     .find(|e| e.id == id)
+                    .cloned()
                     && let Some(ref binding) = elem.binding
+                    && binding.access_mode == AccessMode::ReadWrite
                 {
-                    let cur_val = if let Ok(lock) = self.shared_io.read() {
-                        lock.values
-                            .get(&binding.variable_id)
-                            .and_then(|v| v.as_bool().ok())
-                            .unwrap_or(false)
+                    if matches!(elem.element_type, ElementKind::PushButton)
+                        && elem.button_mode == ButtonActionMode::Momentary
+                    {
+                        self.digital_twin_workspace.active_momentary_id = Some(id);
+                        self.write_twin_bool_variable(&binding.variable_id, true);
                     } else {
-                        false
-                    };
-                    let next_val = IecValue::Bool(!cur_val);
-                    if let Ok(mut lock) = self.shared_io.write() {
-                        lock.request_write(&binding.variable_id, next_val.clone());
-                        lock.values
-                            .insert(binding.variable_id.clone(), next_val.clone());
-                    }
-                    if let Some(rt) = &mut self.runtime {
-                        let _ = rt.force(&binding.variable_id, next_val);
+                        let cur_val = if let Ok(lock) = self.shared_io.read() {
+                            lock.values
+                                .get(&binding.variable_id)
+                                .and_then(|v| v.as_bool().ok())
+                                .unwrap_or(false)
+                        } else {
+                            false
+                        };
+                        self.write_twin_bool_variable(&binding.variable_id, !cur_val);
                     }
                 }
                 Task::none()
             }
+            Message::TwinRuntimeRelease(id) => {
+                self.release_twin_momentary_button(id);
+                Task::none()
+            }
+        }
+    }
+
+    pub fn write_twin_bool_variable(&mut self, var_id: &str, value: bool) {
+        let next_val = IecValue::Bool(value);
+        if let Ok(mut lock) = self.shared_io.write() {
+            lock.request_write(var_id, next_val.clone());
+            lock.values.insert(var_id.to_string(), next_val.clone());
+        }
+        if let Some(rt) = &mut self.runtime {
+            let _ = rt.force(var_id, next_val);
+        }
+    }
+
+    pub fn release_twin_momentary_button(&mut self, id: u64) {
+        if self.digital_twin_workspace.active_momentary_id == Some(id) {
+            self.digital_twin_workspace.active_momentary_id = None;
+        }
+        if let Some(elem) = self
+            .digital_twin_workspace
+            .elements
+            .iter()
+            .find(|e| e.id == id)
+            .cloned()
+            && matches!(elem.element_type, ElementKind::PushButton)
+            && elem.button_mode == ButtonActionMode::Momentary
+            && let Some(ref binding) = elem.binding
+            && binding.access_mode == AccessMode::ReadWrite
+        {
+            self.write_twin_bool_variable(&binding.variable_id, false);
         }
     }
 
@@ -4166,6 +5023,9 @@ impl FerriteStudioApp {
         }
         if Some(window_id) == self.help_window_id {
             return self.view_help_window();
+        }
+        if Some(window_id) == self.digital_twin_window_id {
+            return render_digital_twin_window(self);
         }
         self.view_main()
     }
@@ -4400,6 +5260,17 @@ impl FerriteStudioApp {
                 } else {
                     Message::DetachBottomDock
                 })
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
+                text("|").size(11).color(StudioTheme::BORDER_CARD),
+                button(
+                    text(
+                        self.ui_lang
+                            .tr("Open Digital Twin 2D", "Ouvrir Jumeau Numérique 2D")
+                    )
+                    .size(11)
+                )
+                .on_press(Message::OpenDigitalTwinWindow)
                 .style(StudioTheme::ghost_button)
                 .padding([4, 8]),
                 iced::widget::Space::with_width(Length::Fill),
@@ -5210,7 +6081,8 @@ impl FerriteStudioApp {
         .width(Length::Fill)
         .padding([6, 10]);
 
-        let is_twin_active = self.active_tab == WorkspaceTab::DigitalTwin;
+        let is_twin_active =
+            self.digital_twin_window_id.is_some() || self.active_tab == WorkspaceTab::DigitalTwin;
         let twin_btn = button(
             row![
                 container(text("2D").size(9).color(StudioTheme::ACCENT_EMERALD))
@@ -5223,7 +6095,7 @@ impl FerriteStudioApp {
             .spacing(8)
             .align_y(Alignment::Center),
         )
-        .on_press(Message::SelectTab(WorkspaceTab::DigitalTwin))
+        .on_press(Message::OpenDigitalTwinWindow)
         .style(StudioTheme::tab_button(is_twin_active))
         .width(Length::Fill)
         .padding([6, 10]);
