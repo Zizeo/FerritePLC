@@ -117,12 +117,12 @@ fn operator_symbol(kind: &FbdBlockKind) -> (&str, &'static str) {
 fn pin_display_label(pin: &str, is_corrector: bool, lang: UiLanguage) -> String {
     if is_corrector {
         match pin.to_ascii_uppercase().as_str() {
-            "SP" => lang.tr("Consigne (SP)", "Consigne (SP)").to_string(),
-            "PV" => lang.tr("Mesure (PV)", "Mesure (PV)").to_string(),
+            "SP" => lang.tr("Setpoint (SP)", "Consigne (SP)").to_string(),
+            "PV" => lang.tr("Process Value (PV)", "Mesure (PV)").to_string(),
             "KP" => lang.tr("Gain (Kp)", "Gain (Kp)").to_string(),
             "TI" => "Ti (s)".to_string(),
             "TD" => "Td (s)".to_string(),
-            "OUT" => lang.tr("Commande (OUT)", "Commande (OUT)").to_string(),
+            "OUT" => lang.tr("Output (OUT)", "Commande (OUT)").to_string(),
             other => other.to_string(),
         }
     } else {

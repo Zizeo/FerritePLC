@@ -120,7 +120,10 @@ impl FbdProgram {
     /// `FbdInputSource::Link` references targeting `old_id` to `new_id`.
     pub fn rename_block(&mut self, old_id: &str, new_id: &str) -> Result<(), FbdError> {
         let trimmed_new = new_id.trim();
-        if trimmed_new.is_empty() {
+        if trimmed_new.is_empty()
+            || trimmed_new.contains('.')
+            || !trimmed_new.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
             return Err(FbdError::InvalidBlockId(new_id.to_string()));
         }
         if old_id == trimmed_new {
@@ -484,14 +487,14 @@ impl ExecutablePou for CompiledFbdPou {
                 FbdBlockKind::StandardFb { ref instance, .. } => {
                     let in_len = self.blocks[idx].inputs.len();
                     for inp_idx in 0..in_len {
-                        let pin_name = self.blocks[idx].inputs[inp_idx].0.clone();
                         let val = Self::read_input(
                             &self.blocks,
                             &self.blocks[idx].inputs[inp_idx].1,
                             ctx,
                         )?;
+                        let pin_name = &self.blocks[idx].inputs[inp_idx].0;
                         if let Some(fb) = ctx.tags.get_fb_mut(instance) {
-                            fb.write_pin(&pin_name, &val)?;
+                            fb.write_pin(pin_name, &val)?;
                         }
                     }
                     ctx.evaluate_fb(instance)?;
@@ -841,6 +844,16 @@ mod tests {
         // Error on empty/whitespace ID
         assert!(matches!(
             prog.rename_block("A", "   "),
+            Err(FbdError::InvalidBlockId(_))
+        ));
+
+        // Error on ID containing dot or invalid characters
+        assert!(matches!(
+            prog.rename_block("A", "Invalid.Dot"),
+            Err(FbdError::InvalidBlockId(_))
+        ));
+        assert!(matches!(
+            prog.rename_block("A", "Invalid/Slash"),
             Err(FbdError::InvalidBlockId(_))
         ));
 

@@ -3932,30 +3932,29 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::FbdInputSourceChanged(pou_name, b_idx, pin, val_str) => {
-                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
-                    && let Some(blk) = fbd.blocks.get_mut(b_idx)
-                {
-                    if val_str.contains('.') {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name) {
+                    let is_numeric = val_str.trim().parse::<f64>().is_ok();
+                    let is_direct_addr = val_str.trim().starts_with('%');
+                    let new_src = if !is_numeric && !is_direct_addr && val_str.contains('.') {
                         let parts: Vec<&str> = val_str.split('.').collect();
-                        if parts.len() == 2 {
-                            blk.inputs.insert(
-                                pin,
-                                FbdInputSource::Link {
-                                    from_block: parts[0].trim().to_string(),
-                                    from_pin: parts[1].trim().to_string(),
-                                },
-                            );
+                        if parts.len() == 2 && fbd.blocks.iter().any(|b| b.id == parts[0].trim()) {
+                            FbdInputSource::Link {
+                                from_block: parts[0].trim().to_string(),
+                                from_pin: parts[1].trim().to_string(),
+                            }
                         } else {
-                            blk.inputs
-                                .insert(pin, FbdInputSource::Value { expr: val_str });
+                            FbdInputSource::Value { expr: val_str }
                         }
                     } else {
-                        blk.inputs
-                            .insert(pin, FbdInputSource::Value { expr: val_str });
+                        FbdInputSource::Value { expr: val_str }
+                    };
+
+                    if let Some(blk) = fbd.blocks.get_mut(b_idx) {
+                        blk.inputs.insert(pin, new_src);
+                        self.track_history();
+                        self.modified = true;
+                        self.recompile_runtime();
                     }
-                    self.track_history();
-                    self.modified = true;
-                    self.recompile_runtime();
                 }
                 Task::none()
             }
@@ -4046,7 +4045,7 @@ impl FerriteStudioApp {
 
                         if fbd.rename_block(&old_id, trimmed).is_ok() {
                             if had_matching_instance {
-                                if let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == trimmed)
+                                if let Some(blk) = fbd.blocks.get_mut(b_idx)
                                     && let FbdBlockKind::StandardFb { instance, .. } = &mut blk.kind
                                 {
                                     *instance = trimmed.to_string();

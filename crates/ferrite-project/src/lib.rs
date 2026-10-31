@@ -1298,7 +1298,10 @@ END_PROGRAM
     /// Renames a POU across manifest, pous map, task execution orders, and on-disk files.
     pub fn rename_pou(&mut self, old_name: &str, new_name: &str) -> Result<(), ProjectError> {
         let clean_new = new_name.trim();
-        if clean_new.is_empty() {
+        if clean_new.is_empty()
+            || clean_new.contains(['/', '\\', ':', '.', '\0'])
+            || !clean_new.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
             return Err(ProjectError::ValidationFailed(1));
         }
         if old_name == clean_new {
@@ -1345,7 +1348,13 @@ END_PROGRAM
         if let (Some(old_path), Some(new_path)) = (old_file_path, new_file_path)
             && old_path.exists()
         {
-            let _ = std::fs::rename(&old_path, &new_path);
+            if new_path.exists() {
+                return Err(ProjectError::DuplicatePou(clean_new.to_string()));
+            }
+            std::fs::rename(&old_path, &new_path).map_err(|source| ProjectError::Io {
+                path: new_path,
+                source,
+            })?;
         }
 
         // Update tasks pou_order
@@ -1704,6 +1713,12 @@ mod tests {
         // Test error on empty name
         let err_empty = proj.rename_pou("boiler_fbd", "   ");
         assert!(err_empty.is_err());
+
+        // Test error on path traversal / invalid chars
+        assert!(proj.rename_pou("boiler_fbd", "../evil").is_err());
+        assert!(proj.rename_pou("boiler_fbd", "evil/nested").is_err());
+        assert!(proj.rename_pou("boiler_fbd", "evil\\nested").is_err());
+        assert!(proj.rename_pou("boiler_fbd", "name.with.dots").is_err());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())

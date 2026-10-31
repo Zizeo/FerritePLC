@@ -1197,4 +1197,65 @@ mod tests {
         assert!(app.project.pous.contains_key(&new_name));
         assert!(!app.project.pous.contains_key(&p0));
     }
+
+    #[test]
+    fn test_fbd_input_source_changed_float_vs_link() {
+        use ferrite_lang_fbd::FbdInputSource;
+
+        let mut app = StudioApp::new_test_app();
+        let pou_name = "pump_ctrl".to_string();
+
+        // 1. Typing a float like "5.0" should become a Value, NOT a Link
+        let _ = app.update(Message::FbdInputSourceChanged(
+            pou_name.clone(),
+            0,
+            "IN1".to_string(),
+            "5.0".to_string(),
+        ));
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
+            panic!("Expected FBD POU");
+        };
+        assert_eq!(
+            fbd.blocks[0].inputs["IN1"],
+            FbdInputSource::Value {
+                expr: "5.0".to_string()
+            }
+        );
+
+        // 2. Typing a direct address "%IX0.0" should become a Value
+        let _ = app.update(Message::FbdInputSourceChanged(
+            pou_name.clone(),
+            0,
+            "IN1".to_string(),
+            "%IX0.0".to_string(),
+        ));
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
+            panic!("Expected FBD POU");
+        };
+        assert_eq!(
+            fbd.blocks[0].inputs["IN1"],
+            FbdInputSource::Value {
+                expr: "%IX0.0".to_string()
+            }
+        );
+
+        // 3. Typing an existing block and pin "Block_1.OUT" should become a Link
+        let target_block_id = fbd.blocks[1].id.clone();
+        let _ = app.update(Message::FbdInputSourceChanged(
+            pou_name.clone(),
+            0,
+            "IN1".to_string(),
+            format!("{target_block_id}.OUT"),
+        ));
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
+            panic!("Expected FBD POU");
+        };
+        assert_eq!(
+            fbd.blocks[0].inputs["IN1"],
+            FbdInputSource::Link {
+                from_block: target_block_id,
+                from_pin: "OUT".to_string()
+            }
+        );
+    }
 }
