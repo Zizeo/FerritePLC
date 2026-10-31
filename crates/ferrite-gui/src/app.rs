@@ -456,6 +456,7 @@ impl FerriteStudioApp {
     }
 
     pub fn with_language(mut initial_project: Project, ui_lang: UiLanguage) -> Self {
+        crate::init_system_and_emoji_fonts();
         for pou_src in initial_project.pous.values_mut() {
             if let PouSource::Sfc(sfc) = pou_src
                 && (sfc.steps.iter().any(|s| s.grid_pos.is_none())

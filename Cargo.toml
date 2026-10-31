@@ -51,7 +51,7 @@ crossterm = "0.28"
 eframe = "0.31"
 egui = "0.31"
 egui_plot = "0.31"
-iced = { version = "0.13", features = ["canvas", "tokio", "multi-window"] }
+iced = { version = "0.13", features = ["canvas", "tokio", "multi-window", "advanced"] }
 rfd = "0.15"
 quick-xml = { version = "0.37", features = ["serialize"] }
 

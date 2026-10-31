@@ -12,6 +12,7 @@ pub mod theme;
 pub mod trend_plotter;
 
 use std::path::{Path, PathBuf};
+use std::sync::Once;
 
 pub use app::{FerriteStudioApp, Message, UiTheme, WorkspaceTab};
 pub type StudioApp = FerriteStudioApp;
@@ -19,6 +20,31 @@ use ferrite_project::{MANIFEST_FILE_NAME, Project, ProjectError};
 pub use i18n::UiLanguage;
 pub use theme::StudioTheme;
 use thiserror::Error;
+
+static INIT_FONTS: Once = Once::new();
+
+/// Initializes system fonts and emoji fallbacks into Iced's cosmic-text font system.
+pub fn init_system_and_emoji_fonts() {
+    INIT_FONTS.call_once(|| {
+        if let Ok(mut fs_lock) = iced::advanced::graphics::text::font_system().write() {
+            let db = fs_lock.raw().db_mut();
+            db.load_system_fonts();
+
+            #[cfg(target_os = "windows")]
+            {
+                let win_fonts = [
+                    r"C:\Windows\Fonts\seguiemj.ttf",
+                    r"C:\Windows\Fonts\seguisym.ttf",
+                ];
+                for path in win_fonts {
+                    if std::path::Path::new(path).exists() {
+                        let _ = db.load_font_file(path);
+                    }
+                }
+            }
+        }
+    });
+}
 
 #[derive(Debug, Error)]
 pub enum GuiError {
@@ -58,6 +84,7 @@ pub fn run_gui(initial_path: Option<PathBuf>) -> Result<(), GuiError> {
 
 /// Launches the native FerritePLC Studio desktop IDE & PLC Simulator window with a specific initial UI language (`En` or `Fr`).
 pub fn run_gui_with_lang(initial_path: Option<PathBuf>, lang: UiLanguage) -> Result<(), GuiError> {
+    init_system_and_emoji_fonts();
     let project = resolve_or_scaffold_project(initial_path.as_deref())?;
     let mut app = FerriteStudioApp::with_language(project, lang);
 
@@ -1257,5 +1284,50 @@ mod tests {
                 from_pin: "OUT".to_string()
             }
         );
+    }
+
+    #[test]
+    fn test_font_system_can_load_system_fonts() {
+        init_system_and_emoji_fonts();
+        if let Ok(mut fs_lock) = iced::advanced::graphics::text::font_system().write() {
+            let db = fs_lock.raw().db();
+            assert!(!db.is_empty(), "System fonts should be loaded into fontdb");
+        }
+    }
+
+    #[test]
+    fn test_emoji_glyph_resolution() {
+        use iced::advanced::graphics::text::cosmic_text;
+
+        init_system_and_emoji_fonts();
+
+        if let Ok(mut fs_lock) = iced::advanced::graphics::text::font_system().write() {
+            let font_system = fs_lock.raw();
+
+            let mut buffer = cosmic_text::Buffer::new(
+                font_system,
+                cosmic_text::Metrics::new(14.0, 18.0),
+            );
+            buffer.set_text(
+                font_system,
+                "📖 🔒 ⚠️ ✏️ ⚙️",
+                cosmic_text::Attrs::new(),
+                cosmic_text::Shaping::Advanced,
+            );
+            buffer.shape_until_scroll(font_system, false);
+
+            let mut glyph_count = 0;
+            for run in buffer.layout_runs() {
+                for glyph in run.glyphs {
+                    glyph_count += 1;
+                    // Ensure glyph is resolved to an actual font glyph, not missing (.notdef / 0)
+                    assert_ne!(
+                        glyph.glyph_id, 0,
+                        "Glyph should be resolved from fallback system fonts"
+                    );
+                }
+            }
+            assert!(glyph_count > 0, "Should have shaped glyphs");
+        }
     }
 }
