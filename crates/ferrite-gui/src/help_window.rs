@@ -280,11 +280,167 @@ pub fn filter_topics(query: &str) -> Vec<HelpTopic> {
 }
 
 use iced::border::Radius;
-use iced::widget::{column, container, row, text};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::{Alignment, Background, Border, Color, Element, Length};
 
 use crate::i18n::UiLanguage;
 use crate::theme::StudioTheme;
+
+pub fn view_help_window<'a>(
+    app: &'a crate::app::FerriteStudioApp,
+) -> Element<'a, crate::app::Message> {
+    let lang = app.ui_lang;
+    let selected = app.help_selected_topic;
+    let query = &app.help_search_query;
+    let matched_topics = filter_topics(query);
+
+    // Top Header Bar
+    let title_badge = row![
+        container(text("📖").size(16)).padding([2, 6]),
+        column![
+            text(lang.tr(
+                "FerritePLC — Help & Industrial Reference Manual",
+                "FerritePLC — Manuel d'Aide & Référence Industrielle"
+            ))
+            .size(14)
+            .color(StudioTheme::TEXT_PRIMARY),
+            text(lang.tr(
+                "IEC 61131-3 & IEC 60848 Comprehensive Documentation",
+                "Documentation Complète CEI 61131-3 & CEI 60848"
+            ))
+            .size(11)
+            .color(StudioTheme::TEXT_MUTED),
+        ]
+        .spacing(1),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let search_input = container(
+        text_input(
+            lang.tr(
+                "Search symbols, topics, rules (e.g. contact, ton, %mw)...",
+                "Rechercher symboles, règles, mots-clés...",
+            ),
+            query,
+        )
+        .on_input(crate::app::Message::HelpSearchChanged)
+        .size(12)
+        .padding([6, 10]),
+    )
+    .width(Length::Fixed(380.0));
+
+    let close_btn = button(
+        row![
+            text("✕").size(12),
+            text(lang.tr("Close", "Fermer")).size(12),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center),
+    )
+    .on_press(crate::app::Message::CloseHelpWindow)
+    .style(StudioTheme::ghost_button)
+    .padding([5, 12]);
+
+    let top_bar = container(
+        row![
+            title_badge,
+            Space::with_width(Length::Fill),
+            search_input,
+            Space::with_width(Length::Fixed(12.0)),
+            close_btn,
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .padding([8, 16])
+    .style(StudioTheme::header_container_style)
+    .width(Length::Fill);
+
+    // Left Topic Sidebar
+    let mut sidebar_col = column![].spacing(10);
+
+    for &category in HelpCategory::all() {
+        let category_topics: Vec<_> = TOPIC_CATALOG
+            .iter()
+            .filter(|t| t.category == category && matched_topics.contains(&t.id))
+            .collect();
+
+        if category_topics.is_empty() {
+            continue;
+        }
+
+        let cat_header = container(
+            text(category.title(lang))
+                .size(11)
+                .color(StudioTheme::ACCENT_CYAN),
+        )
+        .padding([4, 8]);
+
+        let mut topics_col = column![cat_header].spacing(2);
+
+        for topic_meta in category_topics {
+            let is_active = topic_meta.id == selected;
+            let topic_title = lang.tr(topic_meta.title_en, topic_meta.title_fr);
+
+            let btn_style = if is_active {
+                StudioTheme::primary_button
+            } else {
+                StudioTheme::ghost_button
+            };
+
+            let topic_btn = button(
+                text(topic_title).size(11.5).color(if is_active {
+                    StudioTheme::TEXT_PRIMARY
+                } else {
+                    StudioTheme::TEXT_SECONDARY
+                }),
+            )
+            .width(Length::Fill)
+            .on_press(crate::app::Message::SelectHelpTopic(topic_meta.id))
+            .style(btn_style)
+            .padding([5, 10]);
+
+            topics_col = topics_col.push(topic_btn);
+        }
+
+        sidebar_col = sidebar_col.push(topics_col);
+    }
+
+    let sidebar = container(
+        scrollable(sidebar_col)
+            .height(Length::Fill)
+            .width(Length::Fill),
+    )
+    .width(Length::Fixed(270.0))
+    .height(Length::Fill)
+    .padding([12, 8])
+    .style(StudioTheme::sidebar_container_style);
+
+    // Right Content Pane
+    let topic_content = render_topic_content(selected, lang);
+    let content_pane = container(
+        scrollable(topic_content)
+            .height(Length::Fill)
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(20)
+    .style(StudioTheme::canvas_container_style);
+
+    // Main 2-Pane View
+    let body = row![sidebar, content_pane]
+        .spacing(1)
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    column![top_bar, body]
+        .spacing(0)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
 
 pub fn render_topic_content<'a, Message: 'a>(
     topic: HelpTopic,

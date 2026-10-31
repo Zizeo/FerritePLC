@@ -154,6 +154,12 @@ pub enum Message {
     SetLanguage(UiLanguage),
     SetTheme(UiTheme),
 
+    // Help & Manual
+    OpenHelpWindow,
+    CloseHelpWindow,
+    SelectHelpTopic(crate::help_window::HelpTopic),
+    HelpSearchChanged(String),
+
     // Simulation controls
     ToggleRunSim,
     StepSimTick,
@@ -353,6 +359,9 @@ pub struct FerriteStudioApp {
     pub detached_left_id: Option<iced::window::Id>,
     pub detached_right_id: Option<iced::window::Id>,
     pub detached_bottom_id: Option<iced::window::Id>,
+    pub help_window_id: Option<iced::window::Id>,
+    pub help_selected_topic: crate::help_window::HelpTopic,
+    pub help_search_query: String,
     pub show_close_confirm_modal: bool,
     pub allowed_to_close: bool,
     pub undo_stack: Vec<Project>,
@@ -411,11 +420,22 @@ pub fn handle_keyboard_shortcut(
         }
     } else {
         match key {
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::F1) => {
+                Some(Message::OpenHelpWindow)
+            }
             iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
                 Some(Message::DeletePressed)
             }
             _ => None,
         }
+    }
+}
+
+pub fn handle_key_event(event: iced::keyboard::Event) -> Option<Message> {
+    if let iced::keyboard::Event::KeyPressed { key, modifiers, .. } = event {
+        handle_keyboard_shortcut(&key, modifiers)
+    } else {
+        None
     }
 }
 
@@ -524,6 +544,9 @@ impl FerriteStudioApp {
             detached_left_id: None,
             detached_right_id: None,
             detached_bottom_id: None,
+            help_window_id: None,
+            help_selected_topic: crate::help_window::HelpTopic::ArchScanLoop,
+            help_search_query: String::new(),
             show_close_confirm_modal: false,
             allowed_to_close: false,
             undo_stack: Vec::new(),
@@ -1424,6 +1447,35 @@ impl FerriteStudioApp {
                     Task::none()
                 }
             }
+            Message::OpenHelpWindow => {
+                if self.help_window_id.is_none() {
+                    let (id, open_task) = iced::window::open(iced::window::Settings {
+                        size: iced::Size::new(1040.0, 760.0),
+                        min_size: Some(iced::Size::new(720.0, 500.0)),
+                        exit_on_close_request: false,
+                        ..Default::default()
+                    });
+                    self.help_window_id = Some(id);
+                    open_task.map(|_| Message::None)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::CloseHelpWindow => {
+                if let Some(id) = self.help_window_id.take() {
+                    iced::window::close(id)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::SelectHelpTopic(topic) => {
+                self.help_selected_topic = topic;
+                Task::none()
+            }
+            Message::HelpSearchChanged(query) => {
+                self.help_search_query = query;
+                Task::none()
+            }
             Message::WindowCloseRequested(id) => {
                 if Some(id) == self.detached_left_id {
                     self.show_left_explorer = true;
@@ -1439,6 +1491,9 @@ impl FerriteStudioApp {
                     self.show_bottom_dock = true;
                     self.detach_bottom_dock = false;
                     self.detached_bottom_id = None;
+                    iced::window::close(id)
+                } else if Some(id) == self.help_window_id {
+                    self.help_window_id = None;
                     iced::window::close(id)
                 } else if Some(id) == self.main_window_id || self.main_window_id.is_none() {
                     if self.modified && !self.allowed_to_close {
@@ -3724,7 +3779,32 @@ impl FerriteStudioApp {
         if Some(window_id) == self.detached_bottom_id {
             return self.view_detached_bottom();
         }
+        if Some(window_id) == self.help_window_id {
+            return self.view_help_window();
+        }
         self.view_main()
+    }
+
+    pub fn view_help_window(&self) -> Element<'_, Message> {
+        crate::help_window::view_help_window(self)
+    }
+
+    pub fn handle_key_event(event: iced::keyboard::Event) -> Option<Message> {
+        handle_key_event(event)
+    }
+
+    #[cfg(test)]
+    pub fn new_test_app() -> Self {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_help_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let proj = crate::resolve_or_scaffold_project(Some(&temp_dir))
+            .unwrap_or_else(|_| panic!("Failed to scaffold test project"));
+        Self::new(proj)
     }
 
     fn view_active_menu(&self) -> Element<'_, Message> {
@@ -3798,6 +3878,17 @@ impl FerriteStudioApp {
                     .size(11)
                 )
                 .on_press(Message::SelectTab(WorkspaceTab::SymbolsAndConfig))
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
+                text("|").size(11).color(StudioTheme::BORDER_CARD),
+                button(
+                    text(
+                        self.ui_lang
+                            .tr("Help & Manual (F1)", "Aide & Manuel (F1)")
+                    )
+                    .size(11)
+                )
+                .on_press(Message::OpenHelpWindow)
                 .style(StudioTheme::ghost_button)
                 .padding([4, 8]),
                 iced::widget::Space::with_width(Length::Fill),

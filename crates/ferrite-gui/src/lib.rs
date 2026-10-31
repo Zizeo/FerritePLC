@@ -14,6 +14,7 @@ pub mod trend_plotter;
 use std::path::{Path, PathBuf};
 
 pub use app::{FerriteStudioApp, Message, UiTheme, WorkspaceTab};
+pub type StudioApp = FerriteStudioApp;
 use ferrite_project::{MANIFEST_FILE_NAME, Project, ProjectError};
 pub use i18n::UiLanguage;
 pub use theme::StudioTheme;
@@ -931,5 +932,39 @@ mod tests {
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
+    }
+
+    #[test]
+    fn test_help_window_messages_and_state() {
+        let mut app = StudioApp::new_test_app();
+        assert!(app.help_window_id.is_none());
+        assert_eq!(app.help_selected_topic, crate::help_window::HelpTopic::ArchScanLoop);
+        assert_eq!(app.help_search_query, "");
+
+        // Test Search input
+        let _ = app.update(Message::HelpSearchChanged("ladder".to_string()));
+        assert_eq!(app.help_search_query, "ladder");
+
+        // Test Select topic
+        let _ = app.update(Message::SelectHelpTopic(crate::help_window::HelpTopic::LdContacts));
+        assert_eq!(app.help_selected_topic, crate::help_window::HelpTopic::LdContacts);
+
+        // Test view rendering
+        let view_el = app.view_help_window();
+        let _ = view_el;
+    }
+
+    #[test]
+    fn test_f1_key_maps_to_open_help_window() {
+        let key_event = iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F1),
+            modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F1),
+            modifiers: iced::keyboard::Modifiers::default(),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::F1),
+            location: iced::keyboard::Location::Standard,
+            text: None,
+        };
+        let msg = StudioApp::handle_key_event(key_event);
+        assert!(matches!(msg, Some(Message::OpenHelpWindow)));
     }
 }
