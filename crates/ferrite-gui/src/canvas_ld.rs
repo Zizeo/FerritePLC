@@ -793,6 +793,32 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                 }
             }
 
+            // Draw parallel branch wires before contacts so contact cards sit cleanly on top of cables
+            for branch in &rung_layout.branches {
+                let branch_wire_color = if branch.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::BORDER_CARD };
+                let b_stroke = Stroke::default().with_color(branch_wire_color).with_width(2.0);
+
+                if let Some(&lowest_y) = branch.paths_y.last() {
+                    // Vertical drop wire at split_x
+                    frame.stroke(
+                        &Path::line(Point::new(branch.split_x, branch.start_y), Point::new(branch.split_x, lowest_y)),
+                        b_stroke,
+                    );
+                    // Vertical rise wire at merge_x
+                    frame.stroke(
+                        &Path::line(Point::new(branch.merge_x, branch.start_y), Point::new(branch.merge_x, lowest_y)),
+                        b_stroke,
+                    );
+                    // Horizontal feeder wires for each path
+                    for &py in &branch.paths_y {
+                        frame.stroke(
+                            &Path::line(Point::new(branch.split_x, py), Point::new(branch.merge_x, py)),
+                            b_stroke,
+                        );
+                    }
+                }
+            }
+
             // Draw contacts & inline FBs
             for elem in &rung_layout.elements {
                 let is_selected = self.selected == Some(&elem.key)
@@ -867,32 +893,9 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                 }
             }
 
-            // Draw parallel branches
+            // Draw parallel branch selection highlights (drawn over contacts)
             for branch in &rung_layout.branches {
                 let is_branch_selected = state.selected_elements.contains(&branch.key) || state.selected == Some(branch.key.clone());
-                let branch_wire_color = if branch.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::BORDER_CARD };
-                let b_stroke = Stroke::default().with_color(branch_wire_color).with_width(2.0);
-
-                if let Some(&lowest_y) = branch.paths_y.last() {
-                    // Vertical drop wire at split_x
-                    frame.stroke(
-                        &Path::line(Point::new(branch.split_x, branch.start_y), Point::new(branch.split_x, lowest_y)),
-                        b_stroke,
-                    );
-                    // Vertical rise wire at merge_x
-                    frame.stroke(
-                        &Path::line(Point::new(branch.merge_x, branch.start_y), Point::new(branch.merge_x, lowest_y)),
-                        b_stroke,
-                    );
-                    // Horizontal feeder wires for each path
-                    for &py in &branch.paths_y {
-                        frame.stroke(
-                            &Path::line(Point::new(branch.split_x, py), Point::new(branch.merge_x, py)),
-                            b_stroke,
-                        );
-                    }
-                }
-
                 if is_branch_selected {
                     let min_y = branch.start_y - 6.0;
                     let max_y = branch.paths_y.last().copied().unwrap_or(branch.start_y) + 6.0;
@@ -1961,6 +1964,8 @@ pub mod tests {
             initial_zoom: 1.0,
         };
         assert_eq!(canvas_prog.program.name, "test_draw");
+
+        let _elem = render_ld_editor(&program, None, None, &[], UiLanguage::En, Vector::default(), 1.0);
     }
 
     #[test]
