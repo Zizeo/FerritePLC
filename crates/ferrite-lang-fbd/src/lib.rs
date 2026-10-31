@@ -25,6 +25,12 @@ pub enum FbdError {
         #[source]
         source: IrError,
     },
+
+    #[error("Duplicate block ID '{0}'")]
+    DuplicateBlockId(String),
+
+    #[error("Invalid block ID '{0}'")]
+    InvalidBlockId(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,6 +114,72 @@ impl FbdProgram {
 
     pub fn to_json_pretty(&self) -> Result<String, FbdError> {
         serde_json::to_string_pretty(self).map_err(|e| FbdError::Json(e.to_string()))
+    }
+
+    /// Renames a block within the FBD POU and automatically rewires all downstream
+    /// `FbdInputSource::Link` references targeting `old_id` to `new_id`.
+    pub fn rename_block(&mut self, old_id: &str, new_id: &str) -> Result<(), FbdError> {
+        let trimmed_new = new_id.trim();
+        if trimmed_new.is_empty() {
+            return Err(FbdError::InvalidBlockId(new_id.to_string()));
+        }
+        if old_id == trimmed_new {
+            return Ok(());
+        }
+        if self.blocks.iter().any(|b| b.id == trimmed_new) {
+            return Err(FbdError::DuplicateBlockId(trimmed_new.to_string()));
+        }
+        let Some(block) = self.blocks.iter_mut().find(|b| b.id == old_id) else {
+            return Err(FbdError::UnknownBlock {
+                pou: self.name.clone(),
+                block: old_id.to_string(),
+            });
+        };
+        block.id = trimmed_new.to_string();
+
+        // Rewire all downstream links referencing old_id
+        for blk in &mut self.blocks {
+            for src in blk.inputs.values_mut() {
+                if let FbdInputSource::Link { from_block, .. } = src
+                    && from_block == old_id
+                {
+                    *from_block = trimmed_new.to_string();
+                }
+            }
+        }
+        for comp in &mut self.composites {
+            for blk in &mut comp.blocks {
+                for src in blk.inputs.values_mut() {
+                    if let FbdInputSource::Link { from_block, .. } = src
+                        && from_block == old_id
+                    {
+                        *from_block = trimmed_new.to_string();
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Moves a block up one position in the evaluation order. Returns true if swapped.
+    pub fn move_block_up(&mut self, index: usize) -> bool {
+        if index > 0 && index < self.blocks.len() {
+            self.blocks.swap(index, index - 1);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Moves a block down one position in the evaluation order. Returns true if swapped.
+    pub fn move_block_down(&mut self, index: usize) -> bool {
+        if index + 1 < self.blocks.len() {
+            self.blocks.swap(index, index + 1);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn validate(&self, tags: &TagTable) -> Result<Vec<String>, FbdError> {
@@ -733,5 +805,118 @@ mod tests {
         assert_eq!(ctx.read_symbol("Cmd_Out")?, IecValue::Real(50.0));
         assert!(ctx.read_bool("Heater_Active")?);
         Ok(())
+    }
+
+    #[test]
+    fn test_fbd_rename_block_rewires_links() {
+        let mut blk_b_inputs = HashMap::new();
+        blk_b_inputs.insert(
+            "IN1".to_string(),
+            FbdInputSource::Link {
+                from_block: "A".to_string(),
+                from_pin: "OUT".to_string(),
+            },
+        );
+
+        let mut prog = FbdProgram {
+            name: "test_pou".to_string(),
+            comment: "".to_string(),
+            composites: vec![],
+            blocks: vec![
+                FbdBlock {
+                    id: "A".to_string(),
+                    kind: FbdBlockKind::Not,
+                    inputs: HashMap::new(),
+                    outputs: HashMap::new(),
+                },
+                FbdBlock {
+                    id: "B".to_string(),
+                    kind: FbdBlockKind::And,
+                    inputs: blk_b_inputs,
+                    outputs: HashMap::new(),
+                },
+            ],
+        };
+
+        // Error on empty/whitespace ID
+        assert!(matches!(
+            prog.rename_block("A", "   "),
+            Err(FbdError::InvalidBlockId(_))
+        ));
+
+        // Error on duplicate ID
+        assert!(matches!(
+            prog.rename_block("A", "B"),
+            Err(FbdError::DuplicateBlockId(_))
+        ));
+
+        // Error on unknown block
+        assert!(matches!(
+            prog.rename_block("NonExistent", "NewName"),
+            Err(FbdError::UnknownBlock { .. })
+        ));
+
+        // Successful rename and link rewiring
+        assert!(prog.rename_block("A", "Sensor_Block").is_ok());
+        assert_eq!(prog.blocks[0].id, "Sensor_Block");
+
+        // Verify downstream link was rewired
+        match &prog.blocks[1].inputs["IN1"] {
+            FbdInputSource::Link { from_block, from_pin } => {
+                assert_eq!(from_block, "Sensor_Block");
+                assert_eq!(from_pin, "OUT");
+            }
+            _ => panic!("Expected FbdInputSource::Link"),
+        }
+
+        // Renaming to same name is a no-op Ok(())
+        assert!(prog.rename_block("Sensor_Block", "Sensor_Block").is_ok());
+    }
+
+    #[test]
+    fn test_fbd_reorder_blocks() {
+        let mut prog = FbdProgram {
+            name: "test_order".to_string(),
+            comment: "".to_string(),
+            composites: vec![],
+            blocks: vec![
+                FbdBlock {
+                    id: "A".to_string(),
+                    kind: FbdBlockKind::Not,
+                    inputs: HashMap::new(),
+                    outputs: HashMap::new(),
+                },
+                FbdBlock {
+                    id: "B".to_string(),
+                    kind: FbdBlockKind::And,
+                    inputs: HashMap::new(),
+                    outputs: HashMap::new(),
+                },
+                FbdBlock {
+                    id: "C".to_string(),
+                    kind: FbdBlockKind::Or,
+                    inputs: HashMap::new(),
+                    outputs: HashMap::new(),
+                },
+            ],
+        };
+
+        // Move A down: [A, B, C] -> [B, A, C]
+        assert!(prog.move_block_down(0));
+        assert_eq!(prog.blocks[0].id, "B");
+        assert_eq!(prog.blocks[1].id, "A");
+        assert_eq!(prog.blocks[2].id, "C");
+
+        // Move C up: [B, A, C] -> [B, C, A]
+        assert!(prog.move_block_up(2));
+        assert_eq!(prog.blocks[0].id, "B");
+        assert_eq!(prog.blocks[1].id, "C");
+        assert_eq!(prog.blocks[2].id, "A");
+
+        // Out of bound moves return false
+        assert!(!prog.move_block_up(0));
+        assert!(!prog.move_block_down(2));
+        assert!(!prog.move_block_up(99));
+        assert!(!prog.move_block_down(99));
     }
 }
