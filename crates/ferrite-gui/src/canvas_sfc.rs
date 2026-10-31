@@ -185,6 +185,7 @@ pub const ALL_ACTION_QUALIFIERS: [SfcActionQualifierWrapper; 8] = [
     SfcActionQualifierWrapper(ActionQualifier::FZ),
 ];
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SfcConvergenceWrapper(pub ConvergenceKind);
 
@@ -197,11 +198,13 @@ impl std::fmt::Display for SfcConvergenceWrapper {
     }
 }
 
+#[allow(dead_code)]
 pub const ALL_CONVERGENCE_KINDS: [SfcConvergenceWrapper; 2] = [
     SfcConvergenceWrapper(ConvergenceKind::And),
     SfcConvergenceWrapper(ConvergenceKind::Or),
 ];
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SfcDivergenceWrapper(pub DivergenceKind);
 
@@ -214,6 +217,7 @@ impl std::fmt::Display for SfcDivergenceWrapper {
     }
 }
 
+#[allow(dead_code)]
 pub const ALL_DIVERGENCE_KINDS: [SfcDivergenceWrapper; 2] = [
     SfcDivergenceWrapper(DivergenceKind::And),
     SfcDivergenceWrapper(DivergenceKind::Or),
@@ -2394,28 +2398,6 @@ fn render_transition_inspector<'a>(
         .style(sfc_input_style)
         .width(130);
 
-    let conv_picker = pick_list(
-        &ALL_CONVERGENCE_KINDS[..],
-        Some(SfcConvergenceWrapper(tr.convergence)),
-        {
-            let p = p_name.clone();
-            move |w| Message::SfcTransitionConvergenceChanged(p.clone(), t_idx, w.0)
-        },
-    )
-    .width(115)
-    .style(StudioTheme::styled_pick_list);
-
-    let div_picker = pick_list(
-        &ALL_DIVERGENCE_KINDS[..],
-        Some(SfcDivergenceWrapper(tr.divergence)),
-        {
-            let p = p_name.clone();
-            move |w| Message::SfcTransitionDivergenceChanged(p.clone(), t_idx, w.0)
-        },
-    )
-    .width(115)
-    .style(StudioTheme::styled_pick_list);
-
     let discon_btn = button(text("Disconnect").size(11))
         .on_press(Message::SfcDisconnectAll(
             p_name.clone(),
@@ -2434,10 +2416,8 @@ fn render_transition_inspector<'a>(
         rec_input,
         text("From:").size(11).color(StudioTheme::TEXT_MUTED),
         from_input,
-        conv_picker,
         text("To:").size(11).color(StudioTheme::TEXT_MUTED),
         to_input,
-        div_picker,
         discon_btn,
         del_btn
     ]
@@ -3318,53 +3298,10 @@ mod tests {
 
     #[test]
     fn test_sfc_or_convergence_single_bar_rendering() {
-        let program = SfcProgram {
-            name: "or_conv_test".to_string(),
-            comment: "Test single bar OR convergence".to_string(),
-            steps: vec![
-                SfcStep {
-                    id: "0".to_string(),
-                    name: "Step_0".to_string(),
-                    kind: StepKind::Normal,
-                    actions: vec![],
-                    grid_pos: Some((60, 40)),
-                },
-                SfcStep {
-                    id: "1".to_string(),
-                    name: "Step_1".to_string(),
-                    kind: StepKind::Normal,
-                    actions: vec![],
-                    grid_pos: Some((260, 40)),
-                },
-                SfcStep {
-                    id: "2".to_string(),
-                    name: "Step_2".to_string(),
-                    kind: StepKind::Normal,
-                    actions: vec![],
-                    grid_pos: Some((160, 240)),
-                },
-            ],
-            transitions: vec![SfcTransition {
-                id: "T_OrConv".to_string(),
-                from_steps: vec!["0".to_string(), "1".to_string()],
-                to_steps: vec!["2".to_string()],
-                receptivity: "TRUE".to_string(),
-                convergence: ConvergenceKind::Or,
-                divergence: DivergenceKind::And,
-                grid_pos: Some((210, 140)),
-            }],
-        };
-
-        // Render editor without panic or errors
-        let _elem = render_sfc_editor(&program, None, UiLanguage::En, None, &[]);
-        let report = validate_sfc_topology(&program);
-        assert!(!report.is_valid);
-        assert!(report.errors.iter().any(|e| matches!(e, SfcValidationError::InvalidOrConvergence { element_id, .. } if element_id == "T_OrConv")));
-
-        // Standard IEC 60848 OR Convergence: multiple transitions converging to one step
+        // Standard IEC 60848 OR Convergence: multiple branch transitions converging to one step
         let valid_or_conv = SfcProgram {
             name: "valid_or_conv".to_string(),
-            comment: "".to_string(),
+            comment: "Standard IEC 60848 OR convergence".to_string(),
             steps: vec![
                 SfcStep {
                     id: "0".to_string(),
@@ -3394,6 +3331,7 @@ mod tests {
                     from_steps: vec!["0".to_string()],
                     to_steps: vec!["2".to_string()],
                     receptivity: "TRUE".to_string(),
+                    grid_pos: Some((110, 140)),
                     ..Default::default()
                 },
                 SfcTransition {
@@ -3401,13 +3339,57 @@ mod tests {
                     from_steps: vec!["1".to_string()],
                     to_steps: vec!["2".to_string()],
                     receptivity: "TRUE".to_string(),
+                    grid_pos: Some((310, 140)),
                     ..Default::default()
                 },
             ],
         };
-        let valid_rep = validate_sfc_topology(&valid_or_conv);
-        assert!(valid_rep.is_valid);
-        let _valid_elem = render_sfc_editor(&valid_or_conv, None, UiLanguage::En, None, &[]);
+
+        // Render editor without panic or errors
+        let _elem = render_sfc_editor(&valid_or_conv, None, UiLanguage::En, None, &[]);
+        let report = validate_sfc_topology(&valid_or_conv);
+        assert!(report.is_valid, "Valid IEC 60848 OR convergence with multiple branch transitions is valid");
+
+        // Single transition attempting to merge multiple steps with ConvergenceKind::Or is rejected by IEC 60848 Rule 4
+        let invalid_program = SfcProgram {
+            name: "invalid_or_conv".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep {
+                    id: "0".to_string(),
+                    name: "Step_0".to_string(),
+                    kind: StepKind::Initial,
+                    actions: vec![],
+                    grid_pos: Some((60, 40)),
+                },
+                SfcStep {
+                    id: "1".to_string(),
+                    name: "Step_1".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![],
+                    grid_pos: Some((260, 40)),
+                },
+                SfcStep {
+                    id: "2".to_string(),
+                    name: "Step_2".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![],
+                    grid_pos: Some((160, 240)),
+                },
+            ],
+            transitions: vec![SfcTransition {
+                id: "T_OrConv".to_string(),
+                from_steps: vec!["0".to_string(), "1".to_string()],
+                to_steps: vec!["2".to_string()],
+                receptivity: "TRUE".to_string(),
+                convergence: ConvergenceKind::Or,
+                divergence: DivergenceKind::And,
+                grid_pos: Some((210, 140)),
+            }],
+        };
+        let invalid_rep = validate_sfc_topology(&invalid_program);
+        assert!(!invalid_rep.is_valid);
+        assert!(invalid_rep.errors.iter().any(|e| matches!(e, SfcValidationError::InvalidOrConvergence { element_id, .. } if element_id == "T_OrConv")));
     }
 
     #[test]
