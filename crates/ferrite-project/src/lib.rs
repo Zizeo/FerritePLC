@@ -1682,9 +1682,13 @@ mod tests {
         assert!(proj.pous.contains_key("boiler_fbd"));
 
         // Verify manifest updated
-        let manifest_entry = proj.manifest.pous.iter().find(|p| p.name == "boiler_fbd");
-        assert!(manifest_entry.is_some());
-        assert_eq!(manifest_entry.unwrap().path, "pous/boiler_fbd.fbd.json");
+        let manifest_entry = proj
+            .manifest
+            .pous
+            .iter()
+            .find(|p| p.name == "boiler_fbd")
+            .ok_or("Manifest entry boiler_fbd not found")?;
+        assert_eq!(manifest_entry.path, "pous/boiler_fbd.fbd.json");
         assert!(!proj.manifest.pous.iter().any(|p| p.name == "pump_ctrl"));
 
         // Verify tasks updated
@@ -1731,7 +1735,10 @@ mod tests {
         assert_eq!(proj.manifest.pous[1].name, second);
 
         // Move last item down should return false (boundary)
-        let last = orig_order.last().unwrap().clone();
+        let last = orig_order
+            .last()
+            .ok_or("orig_order should not be empty")?
+            .clone();
         assert!(!proj.move_pou_down(&last));
 
         let _ = std::fs::remove_dir_all(&temp_dir);

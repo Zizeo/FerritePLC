@@ -1005,11 +1005,13 @@ mod tests {
         let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
             panic!("Expected FBD POU pump_ctrl");
         };
-        let b_idx = fbd
+        let Some(b_idx) = fbd
             .blocks
             .iter()
             .position(|b| b.id == "PID_Test")
-            .expect("PID_Test block not found");
+        else {
+            panic!("PID_Test block not found");
+        };
         let blk = &fbd.blocks[b_idx];
 
         assert_eq!(
