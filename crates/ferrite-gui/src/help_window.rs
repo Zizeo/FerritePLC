@@ -407,6 +407,29 @@ pub fn view_help_window<'a>(
         sidebar_col = sidebar_col.push(topics_col);
     }
 
+    if matched_topics.is_empty() {
+        sidebar_col = sidebar_col.push(
+            container(
+                column![
+                    text(lang.tr(
+                        "No matching topics found.",
+                        "Aucun sujet correspondant trouvé.",
+                    ))
+                    .size(12)
+                    .color(StudioTheme::TEXT_MUTED),
+                    text(lang.tr(
+                        "Try keywords like 'contact', 'sfc', 'pid', '%mw'...",
+                        "Essayez des mots-clés comme 'contact', 'sfc', 'pid', '%mw'...",
+                    ))
+                    .size(11)
+                    .color(StudioTheme::TEXT_MUTED),
+                ]
+                .spacing(4),
+            )
+            .padding([16, 8]),
+        );
+    }
+
     let sidebar = container(
         scrollable(sidebar_col)
             .height(Length::Fill)

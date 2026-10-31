@@ -608,6 +608,15 @@ impl FerriteStudioApp {
                 )
                 .to_string();
         }
+        if Some(window_id) == self.help_window_id {
+            return self
+                .ui_lang
+                .tr(
+                    "FerritePLC — Help & Industrial Reference Manual",
+                    "FerritePLC — Manuel d'Aide & Référence Industrielle",
+                )
+                .to_string();
+        }
         format!("FerritePLC Studio — {}", self.project.manifest.name)
     }
 
@@ -1448,7 +1457,9 @@ impl FerriteStudioApp {
                 }
             }
             Message::OpenHelpWindow => {
-                if self.help_window_id.is_none() {
+                if let Some(id) = self.help_window_id.take() {
+                    iced::window::close(id)
+                } else {
                     let (id, open_task) = iced::window::open(iced::window::Settings {
                         size: iced::Size::new(1040.0, 760.0),
                         min_size: Some(iced::Size::new(720.0, 500.0)),
@@ -1457,8 +1468,6 @@ impl FerriteStudioApp {
                     });
                     self.help_window_id = Some(id);
                     open_task.map(|_| Message::None)
-                } else {
-                    Task::none()
                 }
             }
             Message::CloseHelpWindow => {

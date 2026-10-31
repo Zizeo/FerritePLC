@@ -951,7 +951,24 @@ mod tests {
 
         // Test view rendering
         let view_el = app.view_help_window();
-        let _ = view_el;
+        drop(view_el);
+
+        // Test Help window OS title
+        let fake_help_id = iced::window::Id::unique();
+        app.help_window_id = Some(fake_help_id);
+        assert_eq!(
+            app.title(fake_help_id),
+            "FerritePLC — Help & Industrial Reference Manual"
+        );
+
+        // Test Close message
+        let _ = app.update(Message::CloseHelpWindow);
+        assert!(app.help_window_id.is_none());
+
+        // Test Empty search rendering
+        let _ = app.update(Message::HelpSearchChanged("nonexistenttopic123".to_string()));
+        let empty_view = app.view_help_window();
+        let _ = empty_view;
     }
 
     #[test]
