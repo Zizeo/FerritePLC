@@ -192,6 +192,12 @@ pub enum Message {
     AddPouClicked,
     NewPouNameChanged(String),
     NewPouLangSelected(LanguageKind),
+    MovePouUp(String),
+    MovePouDown(String),
+    StartRenamePou(String),
+    PouRenameInputChanged(String),
+    ConfirmRenamePou,
+    CancelRenamePou,
     ConfirmClearPou(String),
     CancelClearPou,
     ExecuteClearPou(String),
@@ -388,6 +394,7 @@ pub struct FerriteStudioApp {
     pub io_filter_area: Option<MemoryArea>,
     pub io_filter_sfc: bool,
     pub pou_filter_text: String,
+    pub renaming_pou: Option<(String, String)>,
     pub st_contents: HashMap<String, text_editor::Content>,
     pub confirm_clear_modal: Option<String>,
     pub sfc_selected: Option<(String, crate::canvas_sfc::SfcElementKey)>,
@@ -572,6 +579,7 @@ impl FerriteStudioApp {
             io_filter_area: None,
             io_filter_sfc: false,
             pou_filter_text: String::new(),
+            renaming_pou: None,
             st_contents,
             confirm_clear_modal: None,
             sfc_selected: None,
@@ -1957,6 +1965,75 @@ impl FerriteStudioApp {
             }
             Message::NewPouLangSelected(kind) => {
                 self.new_pou_lang = kind;
+                Task::none()
+            }
+            Message::MovePouUp(pou_name) => {
+                if self.project.move_pou_up(&pou_name) {
+                    self.track_history();
+                    self.modified = true;
+                    self.recompile_runtime();
+                }
+                Task::none()
+            }
+            Message::MovePouDown(pou_name) => {
+                if self.project.move_pou_down(&pou_name) {
+                    self.track_history();
+                    self.modified = true;
+                    self.recompile_runtime();
+                }
+                Task::none()
+            }
+            Message::StartRenamePou(pou_name) => {
+                self.renaming_pou = Some((pou_name.clone(), pou_name));
+                Task::none()
+            }
+            Message::PouRenameInputChanged(val) => {
+                if let Some((ref orig, _)) = self.renaming_pou {
+                    self.renaming_pou = Some((orig.clone(), val));
+                }
+                Task::none()
+            }
+            Message::CancelRenamePou => {
+                self.renaming_pou = None;
+                Task::none()
+            }
+            Message::ConfirmRenamePou => {
+                if let Some((orig, new_name)) = self.renaming_pou.take() {
+                    let trimmed = new_name.trim();
+                    if trimmed.is_empty() || trimmed == orig {
+                        return Task::none();
+                    }
+                    match self.project.rename_pou(&orig, trimmed) {
+                        Ok(()) => {
+                            if self.active_tab == WorkspaceTab::Pou(orig.clone()) {
+                                self.active_tab = WorkspaceTab::Pou(trimmed.to_string());
+                            }
+                            if let Some(st_c) = self.st_contents.remove(&orig) {
+                                self.st_contents.insert(trimmed.to_string(), st_c);
+                            }
+                            if let Some(pan) = self.ld_canvas_pan.remove(&orig) {
+                                self.ld_canvas_pan.insert(trimmed.to_string(), pan);
+                            }
+                            if let Some(zoom) = self.ld_canvas_zoom.remove(&orig) {
+                                self.ld_canvas_zoom.insert(trimmed.to_string(), zoom);
+                            }
+                            if let Some((p, elem)) = self.sfc_selected.take() {
+                                let new_p = if p == orig { trimmed.to_string() } else { p };
+                                self.sfc_selected = Some((new_p, elem));
+                            }
+                            if let Some((p, elem)) = self.ld_selected.take() {
+                                let new_p = if p == orig { trimmed.to_string() } else { p };
+                                self.ld_selected = Some((new_p, elem));
+                            }
+                            self.track_history();
+                            self.modified = true;
+                            self.recompile_runtime();
+                        }
+                        Err(e) => {
+                            self.status_banner = format!("Rename failed: {e}");
+                        }
+                    }
+                }
                 Task::none()
             }
             Message::ConfirmClearPou(name) => {
@@ -4934,25 +5011,84 @@ impl FerriteStudioApp {
                 LanguageKind::Fbd => ("FBD", StudioTheme::ACCENT_EMERALD),
             };
 
-            let p_name = p.name.clone();
-            let btn = button(
-                row![
+            if self
+                .renaming_pou
+                .as_ref()
+                .map(|(orig, _)| orig == &p.name)
+                .unwrap_or(false)
+            {
+                let current_val = self
+                    .renaming_pou
+                    .as_ref()
+                    .map(|(_, val)| val.as_str())
+                    .unwrap_or("");
+                let rename_row = row![
                     container(text(badge_txt).size(10).color(badge_color))
-                        .padding([2, 6])
+                        .padding([2, 5])
                         .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
                             1.0, 1.0, 1.0, 0.05
                         ))),
-                    text(&p.name).size(12),
+                    text_input("POU Name", current_val)
+                        .on_input(Message::PouRenameInputChanged)
+                        .on_submit(Message::ConfirmRenamePou)
+                        .width(Length::Fill)
+                        .padding([2, 5])
+                        .style(StudioTheme::styled_input),
+                    button(text("\u{2713}").size(11))
+                        .on_press(Message::ConfirmRenamePou)
+                        .style(StudioTheme::primary_button)
+                        .padding([2, 5]),
+                    button(text("\u{2715}").size(11))
+                        .on_press(Message::CancelRenamePou)
+                        .style(StudioTheme::ghost_button)
+                        .padding([2, 5]),
                 ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            )
-            .on_press(Message::SelectTab(WorkspaceTab::Pou(p_name)))
-            .style(StudioTheme::tab_button(is_active))
-            .width(Length::Fill)
-            .padding([6, 10]);
+                .spacing(4)
+                .align_y(Alignment::Center);
+                pou_list = pou_list.push(rename_row);
+            } else {
+                let p_name = p.name.clone();
+                let btn = button(
+                    row![
+                        container(text(badge_txt).size(10).color(badge_color))
+                            .padding([2, 6])
+                            .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                                1.0, 1.0, 1.0, 0.05
+                            ))),
+                        text(&p.name).size(12),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::SelectTab(WorkspaceTab::Pou(p_name)))
+                .style(StudioTheme::tab_button(is_active))
+                .width(Length::Fill)
+                .padding([6, 8]);
 
-            pou_list = pou_list.push(btn);
+                let p_up = p.name.clone();
+                let p_down = p.name.clone();
+                let p_ren = p.name.clone();
+
+                let pou_row = row![
+                    btn,
+                    button(text("\u{25B2}").size(9.0))
+                        .on_press(Message::MovePouUp(p_up))
+                        .style(StudioTheme::ghost_button)
+                        .padding([2, 3]),
+                    button(text("\u{25BC}").size(9.0))
+                        .on_press(Message::MovePouDown(p_down))
+                        .style(StudioTheme::ghost_button)
+                        .padding([2, 3]),
+                    button(text("\u{270F}").size(9.5))
+                        .on_press(Message::StartRenamePou(p_ren))
+                        .style(StudioTheme::ghost_button)
+                        .padding([2, 3]),
+                ]
+                .spacing(2)
+                .align_y(Alignment::Center);
+
+                pou_list = pou_list.push(pou_row);
+            }
         }
 
         // Add POU Section

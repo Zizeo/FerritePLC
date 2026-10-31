@@ -1151,4 +1151,48 @@ mod tests {
         };
         assert_eq!(fbd.blocks[0].id, "Block_Renamed_Test");
     }
+
+    #[test]
+    fn test_pou_explorer_rename_and_reorder_messages() {
+        let mut app = StudioApp::new_test_app();
+        assert!(app.project.manifest.pous.len() >= 2);
+
+        let p0 = app.project.manifest.pous[0].name.clone();
+        let p1 = app.project.manifest.pous[1].name.clone();
+
+        // 1. Reordering
+        let _ = app.update(Message::MovePouDown(p0.clone()));
+        assert_eq!(app.project.manifest.pous[0].name, p1);
+        assert_eq!(app.project.manifest.pous[1].name, p0);
+
+        let _ = app.update(Message::MovePouUp(p0.clone()));
+        assert_eq!(app.project.manifest.pous[0].name, p0);
+        assert_eq!(app.project.manifest.pous[1].name, p1);
+
+        // 2. Renaming: start and cancel
+        let _ = app.update(Message::StartRenamePou(p0.clone()));
+        assert_eq!(app.renaming_pou, Some((p0.clone(), p0.clone())));
+
+        let _ = app.update(Message::PouRenameInputChanged("buffer_name".to_string()));
+        assert_eq!(
+            app.renaming_pou,
+            Some((p0.clone(), "buffer_name".to_string()))
+        );
+
+        let _ = app.update(Message::CancelRenamePou);
+        assert!(app.renaming_pou.is_none());
+
+        // 3. Renaming: confirm with active tab synchronization
+        app.active_tab = WorkspaceTab::Pou(p0.clone());
+        let _ = app.update(Message::StartRenamePou(p0.clone()));
+        let new_name = format!("{}_renamed", p0);
+        let _ = app.update(Message::PouRenameInputChanged(new_name.clone()));
+        let _ = app.update(Message::ConfirmRenamePou);
+
+        assert!(app.renaming_pou.is_none());
+        assert_eq!(app.active_tab, WorkspaceTab::Pou(new_name.clone()));
+        assert!(app.project.manifest.pous.iter().any(|p| p.name == new_name));
+        assert!(app.project.pous.contains_key(&new_name));
+        assert!(!app.project.pous.contains_key(&p0));
+    }
 }
