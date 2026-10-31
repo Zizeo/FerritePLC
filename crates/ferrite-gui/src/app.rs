@@ -322,6 +322,10 @@ pub enum Message {
     FbdRemoveBlock(String, usize),
     FbdInputSourceChanged(String, usize, String, String),
     FbdOutputTargetChanged(String, usize, String, String),
+    FbdChangeCorrectorKind(String, usize, StandardFbKind),
+    FbdBlockIdChanged(String, usize, String),
+    FbdMoveBlockUp(String, usize),
+    FbdMoveBlockDown(String, usize),
 
     // Digital Twin
     DigitalTwinToggleElement(u64),
@@ -3674,27 +3678,170 @@ impl FerriteStudioApp {
             Message::FbdAddBlock(pou_name, kind) => {
                 if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name) {
                     let next = fbd.blocks.len() + 1;
-                    let mut inputs = HashMap::new();
-                    inputs.insert(
-                        "IN1".to_string(),
-                        FbdInputSource::Value {
-                            expr: "TRUE".to_string(),
-                        },
-                    );
-                    inputs.insert(
-                        "IN2".to_string(),
-                        FbdInputSource::Value {
-                            expr: "TRUE".to_string(),
-                        },
-                    );
+                    let (block_id, inputs, fb_to_register) = match &kind {
+                        FbdBlockKind::StandardFb {
+                            instance,
+                            fb_type: Some(k),
+                        } if k.is_corrector() => {
+                            let mut ins = HashMap::new();
+                            ins.insert(
+                                "SP".to_string(),
+                                FbdInputSource::Value {
+                                    expr: "60.0".to_string(),
+                                },
+                            );
+                            ins.insert(
+                                "PV".to_string(),
+                                FbdInputSource::Value {
+                                    expr: "0.0".to_string(),
+                                },
+                            );
+                            ins.insert(
+                                "KP".to_string(),
+                                FbdInputSource::Value {
+                                    expr: "2.0".to_string(),
+                                },
+                            );
+                            if k.has_integral() {
+                                ins.insert(
+                                    "TI".to_string(),
+                                    FbdInputSource::Value {
+                                        expr: "5.0".to_string(),
+                                    },
+                                );
+                            }
+                            if k.has_derivative() {
+                                ins.insert(
+                                    "TD".to_string(),
+                                    FbdInputSource::Value {
+                                        expr: "0.5".to_string(),
+                                    },
+                                );
+                            }
+                            (instance.clone(), ins, Some((instance.clone(), *k)))
+                        }
+                        FbdBlockKind::StandardFb {
+                            instance,
+                            fb_type: Some(k),
+                        } => {
+                            let mut ins = HashMap::new();
+                            match k {
+                                StandardFbKind::Ton | StandardFbKind::Tof | StandardFbKind::Tp => {
+                                    ins.insert(
+                                        "IN".to_string(),
+                                        FbdInputSource::Value {
+                                            expr: "TRUE".to_string(),
+                                        },
+                                    );
+                                    ins.insert(
+                                        "PT".to_string(),
+                                        FbdInputSource::Value {
+                                            expr: "T#1s".to_string(),
+                                        },
+                                    );
+                                }
+                                StandardFbKind::Ctu => {
+                                    ins.insert(
+                                        "CU".to_string(),
+                                        FbdInputSource::Value {
+                                            expr: "FALSE".to_string(),
+                                        },
+                                    );
+                                    ins.insert(
+                                        "R".to_string(),
+                                        FbdInputSource::Value {
+                                            expr: "FALSE".to_string(),
+                                        },
+                                    );
+                                    ins.insert(
+                                        "PV".to_string(),
+                                        FbdInputSource::Value {
+                                            expr: "10".to_string(),
+                                        },
+                                    );
+                                }
+                                StandardFbKind::Ctd => {
+                                    ins.insert(
+                                        "CD".to_string(),
+                                        FbdInputSource::Value {
+                                            expr: "FALSE".to_string(),
+                                        },
+                                    );
+                                    ins.insert(
+                                        "LD".to_string(),
+                                        FbdInputSource::Value {
+                                            expr: "FALSE".to_string(),
+                                        },
+                                    );
+                                    ins.insert(
+                                        "PV".to_string(),
+                                        FbdInputSource::Value {
+                                            expr: "10".to_string(),
+                                        },
+                                    );
+                                }
+                                _ => {
+                                    ins.insert(
+                                        "IN1".to_string(),
+                                        FbdInputSource::Value {
+                                            expr: "TRUE".to_string(),
+                                        },
+                                    );
+                                }
+                            }
+                            (instance.clone(), ins, Some((instance.clone(), *k)))
+                        }
+                        FbdBlockKind::Not => {
+                            let mut ins = HashMap::new();
+                            ins.insert(
+                                "IN1".to_string(),
+                                FbdInputSource::Value {
+                                    expr: "TRUE".to_string(),
+                                },
+                            );
+                            (format!("Block_{next}"), ins, None)
+                        }
+                        _ => {
+                            let mut ins = HashMap::new();
+                            ins.insert(
+                                "IN1".to_string(),
+                                FbdInputSource::Value {
+                                    expr: "TRUE".to_string(),
+                                },
+                            );
+                            ins.insert(
+                                "IN2".to_string(),
+                                FbdInputSource::Value {
+                                    expr: "TRUE".to_string(),
+                                },
+                            );
+                            (format!("Block_{next}"), ins, None)
+                        }
+                    };
+
+                    if let Some((inst_name, fb_kind)) = fb_to_register
+                        && !self
+                            .project
+                            .fb_instances
+                            .instances
+                            .iter()
+                            .any(|fb| fb.name == inst_name)
+                    {
+                        self.project
+                            .fb_instances
+                            .instances
+                            .push(FbInstance::new(&inst_name, fb_kind));
+                    }
+
                     fbd.blocks.push(FbdBlock {
-                        id: format!("Block_{next}"),
+                        id: block_id,
                         kind,
                         inputs,
                         outputs: HashMap::new(),
                     });
                     self.track_history();
                     self.modified = true;
+                    self.recompile_runtime();
                 }
                 Task::none()
             }
@@ -3703,6 +3850,7 @@ impl FerriteStudioApp {
                     delete_fbd_block(fbd, b_idx);
                     self.track_history();
                     self.modified = true;
+                    self.recompile_runtime();
                 }
                 Task::none()
             }
@@ -3730,6 +3878,7 @@ impl FerriteStudioApp {
                     }
                     self.track_history();
                     self.modified = true;
+                    self.recompile_runtime();
                 }
                 Task::none()
             }
@@ -3744,6 +3893,122 @@ impl FerriteStudioApp {
                     }
                     self.track_history();
                     self.modified = true;
+                    self.recompile_runtime();
+                }
+                Task::none()
+            }
+            Message::FbdChangeCorrectorKind(pou_name, b_idx, new_kind) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(blk) = fbd.blocks.get_mut(b_idx)
+                {
+                    let instance_name = match &mut blk.kind {
+                        FbdBlockKind::StandardFb { instance, fb_type } => {
+                            *fb_type = Some(new_kind);
+                            Some(instance.clone())
+                        }
+                        _ => None,
+                    };
+
+                    // Reconcile integral TI and derivative TD pins
+                    if new_kind.has_integral() {
+                        blk.inputs.entry("TI".to_string()).or_insert_with(|| {
+                            FbdInputSource::Value {
+                                expr: "5.0".to_string(),
+                            }
+                        });
+                    } else {
+                        blk.inputs.remove("TI");
+                    }
+
+                    if new_kind.has_derivative() {
+                        blk.inputs.entry("TD".to_string()).or_insert_with(|| {
+                            FbdInputSource::Value {
+                                expr: "0.5".to_string(),
+                            }
+                        });
+                    } else {
+                        blk.inputs.remove("TD");
+                    }
+
+                    // Synchronize kind in fb_instances and runtime
+                    if let Some(inst) = instance_name {
+                        if let Some(fb) = self
+                            .project
+                            .fb_instances
+                            .instances
+                            .iter_mut()
+                            .find(|fb| fb.name == inst)
+                        {
+                            fb.kind = new_kind;
+                        }
+                        if let Some(rt) = &mut self.runtime
+                            && let Some(fb) = rt.tags.get_fb_mut(&inst)
+                        {
+                            fb.kind = new_kind;
+                            fb.reset();
+                        }
+                    }
+
+                    self.track_history();
+                    self.modified = true;
+                    self.recompile_runtime();
+                }
+                Task::none()
+            }
+            Message::FbdBlockIdChanged(pou_name, b_idx, new_id) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(blk) = fbd.blocks.get(b_idx)
+                {
+                    let old_id = blk.id.clone();
+                    let trimmed = new_id.trim();
+                    if !trimmed.is_empty() && trimmed != old_id {
+                        let had_matching_instance = match &blk.kind {
+                            FbdBlockKind::StandardFb { instance, .. } => instance == &old_id,
+                            _ => false,
+                        };
+
+                        if fbd.rename_block(&old_id, trimmed).is_ok() {
+                            if had_matching_instance {
+                                if let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == trimmed)
+                                    && let FbdBlockKind::StandardFb { instance, .. } = &mut blk.kind
+                                {
+                                    *instance = trimmed.to_string();
+                                }
+                                if let Some(fb) = self
+                                    .project
+                                    .fb_instances
+                                    .instances
+                                    .iter_mut()
+                                    .find(|fb| fb.name == old_id)
+                                {
+                                    fb.name = trimmed.to_string();
+                                }
+                            }
+                            self.track_history();
+                            self.modified = true;
+                            self.recompile_runtime();
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::FbdMoveBlockUp(pou_name, b_idx) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+                    && fbd.move_block_up(b_idx)
+                {
+                    self.track_history();
+                    self.modified = true;
+                    self.recompile_runtime();
+                }
+                Task::none()
+            }
+            Message::FbdMoveBlockDown(pou_name, b_idx) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+                    && fbd.move_block_down(b_idx)
+                {
+                    self.track_history();
+                    self.modified = true;
+                    self.recompile_runtime();
                 }
                 Task::none()
             }

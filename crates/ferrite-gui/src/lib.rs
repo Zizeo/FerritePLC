@@ -984,4 +984,171 @@ mod tests {
         let msg = StudioApp::handle_key_event(key_event);
         assert!(matches!(msg, Some(Message::OpenHelpWindow)));
     }
+
+    #[test]
+    fn test_fbd_corrector_architecture_switching() {
+        use ferrite_core::StandardFbKind;
+        use ferrite_lang_fbd::{FbdBlockKind, FbdInputSource};
+
+        let mut app = StudioApp::new_test_app();
+        let pou_name = "pump_ctrl".to_string();
+
+        // Add a PID Parallel block
+        let _ = app.update(Message::FbdAddBlock(
+            pou_name.clone(),
+            FbdBlockKind::StandardFb {
+                instance: "PID_Test".to_string(),
+                fb_type: Some(StandardFbKind::PidParallel),
+            },
+        ));
+
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
+            panic!("Expected FBD POU pump_ctrl");
+        };
+        let b_idx = fbd
+            .blocks
+            .iter()
+            .position(|b| b.id == "PID_Test")
+            .expect("PID_Test block not found");
+        let blk = &fbd.blocks[b_idx];
+
+        assert_eq!(
+            blk.kind,
+            FbdBlockKind::StandardFb {
+                instance: "PID_Test".to_string(),
+                fb_type: Some(StandardFbKind::PidParallel),
+            }
+        );
+        assert!(blk.inputs.contains_key("SP"));
+        assert!(blk.inputs.contains_key("PV"));
+        assert!(blk.inputs.contains_key("KP"));
+        assert!(blk.inputs.contains_key("TI"));
+        assert!(blk.inputs.contains_key("TD"));
+        assert!(blk.outputs.is_empty()); // Outputs start unbound
+
+        // Verify fb_instances registry
+        assert!(app
+            .project
+            .fb_instances
+            .instances
+            .iter()
+            .any(|fb| fb.name == "PID_Test" && fb.kind == StandardFbKind::PidParallel));
+
+        // Switch to PI: TI is retained, TD must be removed
+        let _ = app.update(Message::FbdChangeCorrectorKind(
+            pou_name.clone(),
+            b_idx,
+            StandardFbKind::Pi,
+        ));
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
+            panic!("Expected FBD POU");
+        };
+        let blk = &fbd.blocks[b_idx];
+        assert_eq!(
+            blk.kind,
+            FbdBlockKind::StandardFb {
+                instance: "PID_Test".to_string(),
+                fb_type: Some(StandardFbKind::Pi),
+            }
+        );
+        assert!(blk.inputs.contains_key("TI"));
+        assert!(!blk.inputs.contains_key("TD"));
+        assert!(app
+            .project
+            .fb_instances
+            .instances
+            .iter()
+            .any(|fb| fb.name == "PID_Test" && fb.kind == StandardFbKind::Pi));
+
+        // Switch to P: TI must be removed
+        let _ = app.update(Message::FbdChangeCorrectorKind(
+            pou_name.clone(),
+            b_idx,
+            StandardFbKind::P,
+        ));
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
+            panic!("Expected FBD POU");
+        };
+        let blk = &fbd.blocks[b_idx];
+        assert_eq!(
+            blk.kind,
+            FbdBlockKind::StandardFb {
+                instance: "PID_Test".to_string(),
+                fb_type: Some(StandardFbKind::P),
+            }
+        );
+        assert!(!blk.inputs.contains_key("TI"));
+        assert!(!blk.inputs.contains_key("TD"));
+
+        // Switch to PID Series: TI and TD are added back
+        let _ = app.update(Message::FbdChangeCorrectorKind(
+            pou_name.clone(),
+            b_idx,
+            StandardFbKind::PidSeries,
+        ));
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
+            panic!("Expected FBD POU");
+        };
+        let blk = &fbd.blocks[b_idx];
+        assert_eq!(
+            blk.kind,
+            FbdBlockKind::StandardFb {
+                instance: "PID_Test".to_string(),
+                fb_type: Some(StandardFbKind::PidSeries),
+            }
+        );
+        assert!(blk.inputs.contains_key("TI"));
+        assert!(blk.inputs.contains_key("TD"));
+        assert_eq!(
+            blk.inputs["TI"],
+            FbdInputSource::Value {
+                expr: "5.0".to_string()
+            }
+        );
+        assert_eq!(
+            blk.inputs["TD"],
+            FbdInputSource::Value {
+                expr: "0.5".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_fbd_block_header_actions() {
+        let mut app = StudioApp::new_test_app();
+        let pou_name = "pump_ctrl".to_string();
+
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
+            panic!("Expected FBD POU pump_ctrl");
+        };
+        let initial_b0 = fbd.blocks[0].id.clone();
+        let initial_b1 = fbd.blocks[1].id.clone();
+
+        // Test Reordering: Move block 0 down
+        let _ = app.update(Message::FbdMoveBlockDown(pou_name.clone(), 0));
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
+            panic!("Expected FBD POU");
+        };
+        assert_eq!(fbd.blocks[0].id, initial_b1);
+        assert_eq!(fbd.blocks[1].id, initial_b0);
+
+        // Move block 1 up -> restores order
+        let _ = app.update(Message::FbdMoveBlockUp(pou_name.clone(), 1));
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
+            panic!("Expected FBD POU");
+        };
+        assert_eq!(fbd.blocks[0].id, initial_b0);
+        assert_eq!(fbd.blocks[1].id, initial_b1);
+
+        // Test Renaming
+        let _ = app.update(Message::FbdBlockIdChanged(
+            pou_name.clone(),
+            0,
+            "Block_Renamed_Test".to_string(),
+        ));
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
+            panic!("Expected FBD POU");
+        };
+        assert_eq!(fbd.blocks[0].id, "Block_Renamed_Test");
+    }
 }

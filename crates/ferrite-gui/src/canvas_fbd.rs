@@ -1,5 +1,5 @@
 use iced::border::Radius;
-use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
 use iced::{Alignment, Background, Border, Element, Length, Theme};
 
 use ferrite_core::{IecValue, StandardFbKind};
@@ -90,15 +90,43 @@ fn operator_symbol(kind: &FbdBlockKind) -> (&str, &'static str) {
             ..
         } => ("CTD", "COUNT DOWN"),
         FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::PidParallel),
+            ..
+        } => ("PID_PAR", "PARALLEL"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::PidSeries),
+            ..
+        } => ("PID_SER", "SERIES"),
+        FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::PidMixed),
             ..
-        } => ("PID", "CORRECTOR"),
+        } => ("PID_MIX", "MIXED (ISA)"),
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Pi),
             ..
         } => ("PI", "CORRECTOR"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::P),
+            ..
+        } => ("P", "CORRECTOR"),
         FbdBlockKind::StandardFb { instance, .. } => (instance.as_str(), "FB"),
         FbdBlockKind::Composite { type_name } => (type_name.as_str(), "COMPOSITE"),
+    }
+}
+
+fn pin_display_label(pin: &str, is_corrector: bool, lang: UiLanguage) -> String {
+    if is_corrector {
+        match pin.to_ascii_uppercase().as_str() {
+            "SP" => lang.tr("Consigne (SP)", "Consigne (SP)").to_string(),
+            "PV" => lang.tr("Mesure (PV)", "Mesure (PV)").to_string(),
+            "KP" => lang.tr("Gain (Kp)", "Gain (Kp)").to_string(),
+            "TI" => "Ti (s)".to_string(),
+            "TD" => "Td (s)".to_string(),
+            "OUT" => lang.tr("Commande (OUT)", "Commande (OUT)").to_string(),
+            other => other.to_string(),
+        }
+    } else {
+        pin.to_string()
     }
 }
 
@@ -112,26 +140,83 @@ fn render_single_block_card<'a>(
     let p_blk = program_name.to_string();
     let (op_symbol, op_desc) = operator_symbol(&blk.kind);
 
-    // Block Header
+    let is_corrector = match &blk.kind {
+        FbdBlockKind::StandardFb {
+            fb_type: Some(k), ..
+        } => k.is_corrector(),
+        _ => false,
+    };
+    let current_corrector_kind = match &blk.kind {
+        FbdBlockKind::StandardFb {
+            fb_type: Some(k), ..
+        } if k.is_corrector() => Some(*k),
+        _ => None,
+    };
+
+    // Block Header with Editable ID, Reorder Arrows, and Remove Button
     let blk_header = row![
-        container(text(&blk.id).size(12).color(StudioTheme::ACCENT_CYAN))
-            .padding([3, 8])
-            .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-                0.220, 0.741, 0.973, 0.12
-            ))),
+        text_input("Block ID", &blk.id)
+            .on_input({
+                let p = p_blk.clone();
+                move |s| Message::FbdBlockIdChanged(p.clone(), b_idx, s)
+            })
+            .width(115)
+            .padding([2, 6])
+            .style(StudioTheme::styled_input),
         container(text(op_desc).size(11).color(StudioTheme::TEXT_MUTED))
             .padding([3, 7])
             .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
                 1.0, 1.0, 1.0, 0.05
             ))),
         iced::widget::Space::with_width(Length::Fill),
+        button(text("\u{25B2}").size(10.0))
+            .on_press(Message::FbdMoveBlockUp(p_blk.clone(), b_idx))
+            .style(StudioTheme::ghost_button)
+            .padding([1, 5]),
+        button(text("\u{25BC}").size(10.0))
+            .on_press(Message::FbdMoveBlockDown(p_blk.clone(), b_idx))
+            .style(StudioTheme::ghost_button)
+            .padding([1, 5]),
         button(text("x").size(10.5))
             .on_press(Message::FbdRemoveBlock(p_blk.clone(), b_idx))
             .style(StudioTheme::ghost_button)
             .padding([1, 5]),
     ]
-    .spacing(8)
+    .spacing(6)
     .align_y(Alignment::Center);
+
+    // Optional Corrector Architecture Switcher Row
+    let arch_row = current_corrector_kind.map(|cur_k| {
+        let corrector_kinds = vec![
+            StandardFbKind::PidParallel,
+            StandardFbKind::PidSeries,
+            StandardFbKind::PidMixed,
+            StandardFbKind::Pi,
+            StandardFbKind::P,
+        ];
+        row![
+            text(lang.tr("Architecture:", "Architecture :"))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED),
+            pick_list(corrector_kinds, Some(cur_k), {
+                let p = p_blk.clone();
+                move |k| Message::FbdChangeCorrectorKind(p.clone(), b_idx, k)
+            })
+            .text_size(11)
+            .padding([2, 6]),
+            container(
+                text(cur_k.formula_hint())
+                    .size(10.0)
+                    .color(StudioTheme::ACCENT_CYAN),
+            )
+            .padding([2, 6])
+            .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                0.220, 0.741, 0.973, 0.10
+            ))),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+    });
 
     // Inputs Column
     let mut sorted_inputs: Vec<_> = blk.inputs.iter().collect();
@@ -173,19 +258,20 @@ fn render_single_block_card<'a>(
                     ..Default::default()
                 });
 
+            let display_pin = pin_display_label(pin_name, is_corrector, lang);
             let in_row = row![
                 in_dot,
-                text(pin_name)
-                    .size(10.5)
+                text(display_pin)
+                    .size(10.0)
                     .color(StudioTheme::TEXT_SECONDARY)
-                    .width(36),
+                    .width(if is_corrector { 90 } else { 36 }),
                 text_input("Source", &expr_str)
                     .on_input({
                         let p = p_blk.clone();
                         let pn = pin_n.clone();
                         move |s| Message::FbdInputSourceChanged(p.clone(), b_idx, pn.clone(), s)
                     })
-                    .width(105)
+                    .width(if is_corrector { 85 } else { 105 })
                     .padding([2, 5])
                     .style(StudioTheme::styled_input),
                 container(iced::widget::Space::with_width(Length::Fixed(8.0)))
@@ -257,6 +343,7 @@ fn render_single_block_card<'a>(
                     ..Default::default()
                 });
 
+            let display_pin = pin_display_label(pin_name, is_corrector, lang);
             let out_row = row![
                 container(iced::widget::Space::with_width(Length::Fixed(8.0)))
                     .height(Length::Fixed(2.0))
@@ -264,17 +351,17 @@ fn render_single_block_card<'a>(
                         background: Some(Background::Color(dot_color)),
                         ..Default::default()
                     }),
-                text(pin_name)
-                    .size(10.5)
+                text(display_pin)
+                    .size(10.0)
                     .color(StudioTheme::TEXT_SECONDARY)
-                    .width(30),
+                    .width(if is_corrector { 95 } else { 30 }),
                 text_input("Target", target)
                     .on_input({
                         let p = p_blk.clone();
                         let pn = pin_n.clone();
                         move |s| Message::FbdOutputTargetChanged(p.clone(), b_idx, pn.clone(), s)
                     })
-                    .width(105)
+                    .width(if is_corrector { 85 } else { 105 })
                     .padding([2, 5])
                     .style(StudioTheme::styled_input),
                 out_dot,
@@ -294,20 +381,22 @@ fn render_single_block_card<'a>(
     .spacing(6)
     .align_y(Alignment::Center);
 
-    container(
-        column![
-            blk_header,
-            container(schematic_body)
-                .padding([8, 10])
-                .style(StudioTheme::canvas_container_style)
-                .width(Length::Fill),
-        ]
-        .spacing(8),
-    )
-    .padding(10)
-    .style(StudioTheme::card_style)
-    .width(Length::FillPortion(1))
-    .into()
+    let mut card_col = column![blk_header];
+    if let Some(arch) = arch_row {
+        card_col = card_col.push(arch);
+    }
+    card_col = card_col.push(
+        container(schematic_body)
+            .padding([8, 10])
+            .style(StudioTheme::canvas_container_style)
+            .width(Length::Fill),
+    );
+
+    container(card_col.spacing(8))
+        .padding(10)
+        .style(StudioTheme::card_style)
+        .width(Length::FillPortion(1))
+        .into()
 }
 
 pub fn render_fbd_editor<'a>(
@@ -317,7 +406,7 @@ pub fn render_fbd_editor<'a>(
 ) -> Element<'a, Message> {
     let pou_name = program.name.clone();
 
-    // 1. Header Toolbar with Quick Standard Blocks
+    // 1. Header Toolbar with Quick Standard Blocks & Corrector Suite
     let header = row![
         text(format!(
             "{} — {}",
@@ -345,10 +434,6 @@ pub fn render_fbd_editor<'a>(
             .on_press(Message::FbdAddBlock(pou_name.clone(), FbdBlockKind::Gt))
             .style(StudioTheme::secondary_button)
             .padding([4, 8]),
-        button(text(lang.tr("+ GE (>=)", "+ SUP_EG (>=)")).size(11))
-            .on_press(Message::FbdAddBlock(pou_name.clone(), FbdBlockKind::Ge))
-            .style(StudioTheme::secondary_button)
-            .padding([4, 8]),
         button(text(lang.tr("+ TON", "+ TON")).size(11))
             .on_press(Message::FbdAddBlock(
                 pou_name.clone(),
@@ -359,11 +444,31 @@ pub fn render_fbd_editor<'a>(
             ))
             .style(StudioTheme::secondary_button)
             .padding([4, 8]),
-        button(text(lang.tr("+ PID", "+ PID")).size(11))
+        button(text(lang.tr("+ PID (Par)", "+ PID (Par)")).size(11))
             .on_press(Message::FbdAddBlock(
                 pou_name.clone(),
                 FbdBlockKind::StandardFb {
-                    instance: format!("PID_{}", program.blocks.len() + 1),
+                    instance: format!("PID_Par_{}", program.blocks.len() + 1),
+                    fb_type: Some(StandardFbKind::PidParallel),
+                },
+            ))
+            .style(StudioTheme::secondary_button)
+            .padding([4, 8]),
+        button(text(lang.tr("+ PID (Ser)", "+ PID (Sér)")).size(11))
+            .on_press(Message::FbdAddBlock(
+                pou_name.clone(),
+                FbdBlockKind::StandardFb {
+                    instance: format!("PID_Ser_{}", program.blocks.len() + 1),
+                    fb_type: Some(StandardFbKind::PidSeries),
+                },
+            ))
+            .style(StudioTheme::secondary_button)
+            .padding([4, 8]),
+        button(text(lang.tr("+ PID (Mix)", "+ PID (Mix)")).size(11))
+            .on_press(Message::FbdAddBlock(
+                pou_name.clone(),
+                FbdBlockKind::StandardFb {
+                    instance: format!("PID_Mix_{}", program.blocks.len() + 1),
                     fb_type: Some(StandardFbKind::PidMixed),
                 },
             ))
@@ -379,12 +484,22 @@ pub fn render_fbd_editor<'a>(
             ))
             .style(StudioTheme::secondary_button)
             .padding([4, 8]),
+        button(text(lang.tr("+ P", "+ P")).size(11))
+            .on_press(Message::FbdAddBlock(
+                pou_name.clone(),
+                FbdBlockKind::StandardFb {
+                    instance: format!("P_{}", program.blocks.len() + 1),
+                    fb_type: Some(StandardFbKind::P),
+                },
+            ))
+            .style(StudioTheme::secondary_button)
+            .padding([4, 8]),
         button(text(lang.tr("Clear POU", "Vider")).size(11))
             .on_press(Message::ConfirmClearPou(pou_name.clone()))
             .style(StudioTheme::danger_button)
             .padding([4, 8]),
     ]
-    .spacing(8)
+    .spacing(6)
     .align_y(Alignment::Center);
 
     let tip = text(lang.tr(

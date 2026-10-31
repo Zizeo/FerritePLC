@@ -137,6 +137,19 @@ impl StandardFbKind {
     }
 }
 
+impl std::fmt::Display for StandardFbKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PidParallel => write!(f, "PID (Parallel)"),
+            Self::PidSeries => write!(f, "PID (Series)"),
+            Self::PidMixed => write!(f, "PID (Mixed / ISA)"),
+            Self::Pi => write!(f, "PI"),
+            Self::P => write!(f, "P"),
+            other => write!(f, "{}", other.label()),
+        }
+    }
+}
+
 fn default_kp() -> f32 {
     2.0
 }

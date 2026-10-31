@@ -1310,7 +1310,7 @@ END_PROGRAM
         let mut pou_src = self
             .pous
             .remove(old_name)
-            .ok_or_else(|| ProjectError::ValidationFailed(1))?;
+            .ok_or(ProjectError::ValidationFailed(1))?;
 
         // Update the internal name within the POU data structure
         match &mut pou_src {
@@ -1342,10 +1342,10 @@ END_PROGRAM
         }
 
         // Rename the on-disk file if it exists
-        if let (Some(old_path), Some(new_path)) = (old_file_path, new_file_path) {
-            if old_path.exists() {
-                let _ = std::fs::rename(&old_path, &new_path);
-            }
+        if let (Some(old_path), Some(new_path)) = (old_file_path, new_file_path)
+            && old_path.exists()
+        {
+            let _ = std::fs::rename(&old_path, &new_path);
         }
 
         // Update tasks pou_order
