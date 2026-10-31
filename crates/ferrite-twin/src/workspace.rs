@@ -1025,9 +1025,10 @@ impl DigitalTwinWorkspace {
         self.hex_input = rgb_to_hex(rgba);
     }
 
-    /// Applies an RGBA color to the currently selected element's active color target slot.
-    pub fn apply_color_to_selected(&mut self, rgba: [u8; 4]) {
-        let Some(sel_id) = self.inspector_open_for.or(self.selected_id) else {
+    /// Applies an RGBA color to the currently selected element's active color target slot
+    /// without recomputing `hsv_state` from RGB (preserves hue when S=0 or V=0).
+    pub fn apply_color_to_selected_keep_hsv(&mut self, rgba: [u8; 4]) {
+        let Some(sel_id) = self.selected_id.or(self.inspector_open_for) else {
             return;
         };
         if let Some(elem) = self.elements.iter_mut().find(|e| e.id == sel_id) {
@@ -1051,8 +1052,13 @@ impl DigitalTwinWorkspace {
                 }
             }
         }
-        self.hsv_state = rgb_to_hsv(rgba);
         self.hex_input = rgb_to_hex(rgba);
+    }
+
+    /// Applies an RGBA color to the currently selected element's active color target slot.
+    pub fn apply_color_to_selected(&mut self, rgba: [u8; 4]) {
+        self.apply_color_to_selected_keep_hsv(rgba);
+        self.hsv_state = rgb_to_hsv(rgba);
     }
 
     /// Loads `<project_root>/sim/digital_twin.json` if present and valid; otherwise returns starter plant.

@@ -1559,6 +1559,30 @@ mod tests {
         assert_eq!(c_bind.active_color, [0, 255, 0, 255]);
         assert_eq!(c_bind.blink.as_ref().map(|b| b.interval_ms), Some(250));
 
+        // Verify Hue is preserved when dragging SV to S=0, V=0
+        let _ = app.update(Message::TwinPickColorHue(210.0));
+        let _ = app.update(Message::TwinPickColorSv(0.0, 0.0));
+        assert!((app.digital_twin_workspace.hsv_state.0 - 210.0).abs() < 1e-3);
+        // Restore Green ON color
+        let _ = app.update(Message::TwinSetColorHex("#00FF00".to_string()));
+
+        // Verify duplicating after spawning assigns a strictly unique ID
+        let _ = app.update(Message::TwinContextAction {
+            action: "duplicate".to_string(),
+            id: circle_id,
+        });
+        let ids: std::collections::HashSet<u64> = app
+            .digital_twin_workspace
+            .elements
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(
+            ids.len(),
+            app.digital_twin_workspace.elements.len(),
+            "All element IDs must be strictly unique after duplicate"
+        );
+
         // Bind spawned PushButton to Start_Button in Momentary mode
         let _ = app.update(Message::TwinOpenInspector(pb_id));
         let _ = app.update(Message::TwinToggleBinding(pb_id, true));

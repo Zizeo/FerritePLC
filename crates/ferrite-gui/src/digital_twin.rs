@@ -468,6 +468,49 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
                         );
                     }
                 }
+
+                // Selection handles in Edit mode (drawn in rotated local coordinates so they match hit-testing)
+                if is_selected {
+                    let sel_stroke = Stroke::default()
+                        .with_color(StudioTheme::ACCENT_CYAN)
+                        .with_width(1.5);
+                    frame.stroke_rectangle(
+                        Point::new(-sw * 0.5 - 2.0, -sh * 0.5 - 2.0),
+                        Size::new(sw + 4.0, sh + 4.0),
+                        sel_stroke,
+                    );
+
+                    // 4 Corner resize handles in rotated local space
+                    let corners = [
+                        Point::new(-sw * 0.5, -sh * 0.5),
+                        Point::new(sw * 0.5, -sh * 0.5),
+                        Point::new(-sw * 0.5, sh * 0.5),
+                        Point::new(sw * 0.5, sh * 0.5),
+                    ];
+                    for pt in corners {
+                        let h_circle = Path::circle(pt, 5.0);
+                        frame.fill(&h_circle, StudioTheme::ACCENT_CYAN);
+                        frame.stroke(
+                            &h_circle,
+                            Stroke::default().with_color(Color::WHITE).with_width(1.2),
+                        );
+                    }
+
+                    // Top Rotation Handle stem & circle in rotated local space
+                    let stem_top = Point::new(0.0, -sh * 0.5 - 22.0);
+                    frame.stroke(
+                        &Path::line(Point::new(0.0, -sh * 0.5), stem_top),
+                        Stroke::default()
+                            .with_color(StudioTheme::ACCENT_AMBER)
+                            .with_width(1.5),
+                    );
+                    let rot_circle = Path::circle(stem_top, 6.0);
+                    frame.fill(&rot_circle, StudioTheme::ACCENT_AMBER);
+                    frame.stroke(
+                        &rot_circle,
+                        Stroke::default().with_color(Color::WHITE).with_width(1.2),
+                    );
+                }
             });
 
             // Draw label below non-button/non-tank elements
@@ -488,49 +531,6 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
                     size: iced::Pixels(10.5),
                     ..Default::default()
                 });
-            }
-
-            // Selection handles in Edit mode
-            if is_selected {
-                let sel_stroke = Stroke::default()
-                    .with_color(StudioTheme::ACCENT_CYAN)
-                    .with_width(1.5);
-                frame.stroke_rectangle(
-                    Point::new(px - 2.0, py - 2.0),
-                    Size::new(sw + 4.0, sh + 4.0),
-                    sel_stroke,
-                );
-
-                // 4 Corner resize handles
-                let corners = [
-                    Point::new(px, py),
-                    Point::new(px + sw, py),
-                    Point::new(px, py + sh),
-                    Point::new(px + sw, py + sh),
-                ];
-                for pt in corners {
-                    let h_circle = Path::circle(pt, 5.0);
-                    frame.fill(&h_circle, StudioTheme::ACCENT_CYAN);
-                    frame.stroke(
-                        &h_circle,
-                        Stroke::default().with_color(Color::WHITE).with_width(1.2),
-                    );
-                }
-
-                // Top Rotation Handle stem & circle
-                let (rx, ry) = elem.rotation_handle_pos();
-                frame.stroke(
-                    &Path::line(Point::new(cx, py), Point::new(rx, ry)),
-                    Stroke::default()
-                        .with_color(StudioTheme::ACCENT_AMBER)
-                        .with_width(1.5),
-                );
-                let rot_circle = Path::circle(Point::new(rx, ry), 6.0);
-                frame.fill(&rot_circle, StudioTheme::ACCENT_AMBER);
-                frame.stroke(
-                    &rot_circle,
-                    Stroke::default().with_color(Color::WHITE).with_width(1.2),
-                );
             }
         }
 

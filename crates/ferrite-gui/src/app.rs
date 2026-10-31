@@ -4270,7 +4270,10 @@ impl FerriteStudioApp {
                         self.digital_twin_workspace.active_rotate_id = None;
                         self.digital_twin_workspace.context_menu = None;
                         self.digital_twin_workspace.inspector_open_for = None;
-                        self.sim_running = true;
+                        if self.runtime.is_none() {
+                            self.recompile_runtime();
+                        }
+                        self.sim_running = self.runtime.is_some();
                     }
                     TwinMode::Edit => {
                         if let Some(held_id) =
@@ -4366,6 +4369,9 @@ impl FerriteStudioApp {
                         if self.digital_twin_workspace.elements[idx].contains_point(mx, my) {
                             let id = self.digital_twin_workspace.elements[idx].id;
                             self.digital_twin_workspace.selected_id = Some(id);
+                            if self.digital_twin_workspace.inspector_open_for.is_some() {
+                                self.digital_twin_workspace.inspector_open_for = Some(id);
+                            }
                             self.digital_twin_workspace.context_menu =
                                 Some(((mx, my).into(), id));
                             self.digital_twin_workspace.sync_color_picker_from_selected();
@@ -4428,6 +4434,9 @@ impl FerriteStudioApp {
                         let id = elem.id;
                         let pos = elem.position;
                         self.digital_twin_workspace.selected_id = Some(id);
+                        if self.digital_twin_workspace.inspector_open_for.is_some() {
+                            self.digital_twin_workspace.inspector_open_for = Some(id);
+                        }
                         self.digital_twin_workspace.drag_target_id = Some(id);
                         self.digital_twin_workspace.drag_start_mouse = Some((mx, my).into());
                         self.digital_twin_workspace.drag_start_elem_pos = pos;
@@ -4458,7 +4467,7 @@ impl FerriteStudioApp {
                         let angle_deg = (my - cy).atan2(mx - cx).to_degrees() + 90.0;
                         let normalized = angle_deg.rem_euclid(360.0);
                         elem.rotation = if snap {
-                            ((normalized / 5.0).round() * 5.0).rem_euclid(360.0)
+                            ((normalized / 15.0).round() * 15.0).rem_euclid(360.0)
                         } else {
                             normalized
                         };
@@ -4583,8 +4592,19 @@ impl FerriteStudioApp {
                             .find(|e| e.id == id)
                             .cloned()
                         {
+                            let max_existing = self
+                                .digital_twin_workspace
+                                .elements
+                                .iter()
+                                .map(|e| e.id)
+                                .max()
+                                .unwrap_or(0);
+                            if self.digital_twin_workspace.next_id <= max_existing {
+                                self.digital_twin_workspace.next_id = max_existing;
+                            }
+                            self.digital_twin_workspace.next_id =
+                                self.digital_twin_workspace.next_id.saturating_add(1);
                             let new_id = self.digital_twin_workspace.next_id;
-                            self.digital_twin_workspace.next_id += 1;
                             let mut dup = orig;
                             dup.id = new_id;
                             dup.label = format!("{} (Copy)", dup.label);
@@ -4592,6 +4612,9 @@ impl FerriteStudioApp {
                             dup.z_index = self.digital_twin_workspace.elements.len();
                             self.digital_twin_workspace.elements.push(dup);
                             self.digital_twin_workspace.selected_id = Some(new_id);
+                            if self.digital_twin_workspace.inspector_open_for.is_some() {
+                                self.digital_twin_workspace.inspector_open_for = Some(new_id);
+                            }
                             self.digital_twin_workspace.sync_color_picker_from_selected();
                             self.modified = true;
                         }
@@ -4863,7 +4886,8 @@ impl FerriteStudioApp {
                 self.digital_twin_workspace.hsv_state.2 = v.clamp(0.0, 1.0);
                 let (h, s, v) = self.digital_twin_workspace.hsv_state;
                 let rgba = hsv_to_rgb(h, s, v, 255);
-                self.digital_twin_workspace.apply_color_to_selected(rgba);
+                self.digital_twin_workspace
+                    .apply_color_to_selected_keep_hsv(rgba);
                 self.modified = true;
                 Task::none()
             }
@@ -4871,7 +4895,8 @@ impl FerriteStudioApp {
                 self.digital_twin_workspace.hsv_state.0 = h.clamp(0.0, 360.0);
                 let (h, s, v) = self.digital_twin_workspace.hsv_state;
                 let rgba = hsv_to_rgb(h, s, v, 255);
-                self.digital_twin_workspace.apply_color_to_selected(rgba);
+                self.digital_twin_workspace
+                    .apply_color_to_selected_keep_hsv(rgba);
                 self.modified = true;
                 Task::none()
             }
