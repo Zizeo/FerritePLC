@@ -68,6 +68,13 @@ This feature overhauls the FerritePLC Studio FBD and POU management subsystems i
 
 ## 4. Technical Architecture & Implementation
 
+### 4.0 Builder Resolutions & Explicit Decisions
+Following the builder assessment, the following decisions are explicitly locked:
+1. **POU Renaming Scope**: Local entity rename. `rename_pou` updates `manifest.pous`, `pous` in-memory map, task `pou_order`, active UI workspace tabs, and atomically renames the file on disk (`pous/<old>.<ext>` $\rightarrow$ `pous/<new>.<ext>`). It does not silently rewrite cross-POU expressions; any external references to old POU names are flagged by `ferrite check` as standard diagnostics.
+2. **Corrector Output Initialization**: Newly created PID/PI blocks initialize with an empty `outputs` map (`(Internal / Unbound)`). Control outputs are immediately usable for downstream FBD block `Link` wiring, or can be bound to any global writable tag via the card's Target input field. This prevents compilation errors (`UnknownWritableSymbol`) on newly added blocks.
+3. **Parameter Synchronization Policy**: Imperative synchronization. When the user edits a numeric parameter or switches corrector architecture, changes are synchronized from the FBD block to the `FbInstance` in `symbols/fb_instances.toml` and active `PlcRuntime`. During scan execution, the FBD AST remains the authoritative input source.
+4. **Task Reordering Semantics**: `move_pou_up` and `move_pou_down` swap the POU order in `manifest.pous`. For each configured task, if the swapped POUs both appear in `task.pou_order`, their relative order within that task is updated to match.
+
 ### 4.1 Part A: POU Renaming & Reordering in `ferrite-project` & `ferrite-gui`
 
 #### In `crates/ferrite-project/src/lib.rs`:
