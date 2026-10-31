@@ -1,6 +1,6 @@
 use iced::border::Radius;
 use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
-use iced::{Alignment, Background, Border, Element, Length, Theme};
+use iced::{Alignment, Background, Border, Element, Length, Padding, Theme};
 
 use ferrite_core::{IecValue, StandardFbKind};
 use ferrite_lang_fbd::{FbdBlock, FbdBlockKind, FbdInputSource, FbdProgram};
@@ -503,12 +503,21 @@ pub fn render_fbd_editor<'a>(
     .spacing(6)
     .align_y(Alignment::Center);
 
-    let scrollable_header = scrollable(header_row).direction(scrollable::Direction::Horizontal(
+    let scrollable_header = scrollable(
+        container(header_row).padding(Padding {
+            top: 2.0,
+            right: 4.0,
+            bottom: 8.0,
+            left: 2.0,
+        }),
+    )
+    .direction(scrollable::Direction::Horizontal(
         scrollable::Scrollbar::new()
             .width(4)
             .scroller_width(4)
             .margin(1),
-    ));
+    ))
+    .width(Length::Fill);
 
     let header_container = container(scrollable_header)
         .width(Length::Fill)
@@ -524,7 +533,9 @@ pub fn render_fbd_editor<'a>(
     .size(12)
     .color(StudioTheme::TEXT_MUTED);
 
-    let mut blocks_column = column![header_container, tip].spacing(14);
+    let top_bar = column![header_container, tip].spacing(4);
+
+    let mut blocks_column = column![].spacing(14);
 
     // Render blocks in 2-column grid layout
     let chunk_size = 2;
@@ -546,7 +557,18 @@ pub fn render_fbd_editor<'a>(
         blocks_column = blocks_column.push(grid_row);
     }
 
-    scrollable(blocks_column.padding(20))
+    let scrollable_blocks = scrollable(blocks_column.padding(Padding {
+        top: 8.0,
+        right: 12.0,
+        bottom: 20.0,
+        left: 12.0,
+    }))
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    column![top_bar, scrollable_blocks]
+        .spacing(8)
+        .padding(8)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

@@ -2552,12 +2552,21 @@ pub fn render_sfc_editor<'a>(
         toolbar_row = toolbar_row.push(sb);
     }
 
-    let scrollable_toolbar = scrollable(toolbar_row).direction(scrollable::Direction::Horizontal(
+    let scrollable_toolbar = scrollable(
+        container(toolbar_row).padding(Padding {
+            top: 2.0,
+            right: 4.0,
+            bottom: 8.0,
+            left: 2.0,
+        }),
+    )
+    .direction(scrollable::Direction::Horizontal(
         scrollable::Scrollbar::new()
             .width(4)
             .scroller_width(4)
             .margin(1),
-    ));
+    ))
+    .width(Length::Fill);
 
     let tip = text("Tip: Click 'Auto-Sort Layout' to auto-align all branches. Drag elements (snaps to 20px). Drag wires (● to ●). Right-click any port to disconnect. Box drag to multi-select.")
         .size(10.5)
@@ -2624,12 +2633,21 @@ pub fn render_sfc_editor<'a>(
         .spacing(10)
         .align_y(Alignment::Center);
 
-        let scrollable_multi = scrollable(multi_row).direction(scrollable::Direction::Horizontal(
+        let scrollable_multi = scrollable(
+            container(multi_row).padding(Padding {
+                top: 2.0,
+                right: 4.0,
+                bottom: 8.0,
+                left: 2.0,
+            }),
+        )
+        .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new()
                 .width(4)
                 .scroller_width(4)
                 .margin(1),
-        ));
+        ))
+        .width(Length::Fill);
 
         Some(
             container(scrollable_multi)
@@ -2732,10 +2750,13 @@ pub fn render_sfc_editor<'a>(
     .width(Length::Fixed(max_x))
     .height(Length::Fixed(max_y));
 
-    let scrollable_canvas = scrollable(canvas_widget).direction(scrollable::Direction::Both {
-        vertical: scrollable::Scrollbar::new(),
-        horizontal: scrollable::Scrollbar::new(),
-    });
+    let scrollable_canvas = scrollable(canvas_widget)
+        .direction(scrollable::Direction::Both {
+            vertical: scrollable::Scrollbar::new(),
+            horizontal: scrollable::Scrollbar::new(),
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
 
     let mut main_col = column![top_bar, scrollable_canvas]
         .spacing(8)

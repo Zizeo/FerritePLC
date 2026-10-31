@@ -1513,12 +1513,21 @@ pub fn render_ld_editor<'a>(
         .spacing(10)
         .align_y(Alignment::Center);
 
-        let scrollable_multi = scrollable(multi_row).direction(scrollable::Direction::Horizontal(
+        let scrollable_multi = scrollable(
+            container(multi_row).padding(iced::Padding {
+                top: 2.0,
+                right: 4.0,
+                bottom: 8.0,
+                left: 2.0,
+            }),
+        )
+        .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new()
                 .width(4)
                 .scroller_width(4)
                 .margin(1),
-        ));
+        ))
+        .width(Length::Fill);
 
         container(scrollable_multi)
             .width(Length::Fill)
@@ -1612,12 +1621,21 @@ pub fn render_ld_editor<'a>(
         .spacing(6)
         .align_y(Alignment::Center);
 
-        let scrollable_toolbar = scrollable(toolbar_row).direction(scrollable::Direction::Horizontal(
+        let scrollable_toolbar = scrollable(
+            container(toolbar_row).padding(iced::Padding {
+                top: 2.0,
+                right: 4.0,
+                bottom: 8.0,
+                left: 2.0,
+            }),
+        )
+        .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new()
                 .width(4)
                 .scroller_width(4)
                 .margin(1),
-        ));
+        ))
+        .width(Length::Fill);
 
         container(scrollable_toolbar)
             .width(Length::Fill)
