@@ -4243,10 +4243,14 @@ impl FerriteStudioApp {
                 .style(StudioTheme::ghost_button)
                 .padding([4, 8]),
                 iced::widget::Space::with_width(Length::Fill),
-                button(text("✕").size(11))
-                    .on_press(Message::ToggleActiveMenu(None))
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                button(
+                    text(crate::icons::icon_close())
+                        .size(11)
+                        .shaping(iced::widget::text::Shaping::Advanced),
+                )
+                .on_press(Message::ToggleActiveMenu(None))
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
@@ -4264,31 +4268,35 @@ impl FerriteStudioApp {
                 .style(StudioTheme::ghost_button)
                 .padding([4, 8]),
                 button(text(self.ui_lang.tr("Single Step", "Pas-à-Pas")).size(11))
-                    .on_press(Message::StepSimTick)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                .on_press(Message::StepSimTick)
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
                 button(text(self.ui_lang.tr("Reset (Warm)", "Réinit (Chaud)")).size(11))
-                    .on_press(Message::ResetSimWarm)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                .on_press(Message::ResetSimWarm)
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
                 button(text(self.ui_lang.tr("Reset (Cold)", "Réinit (Froid)")).size(11))
-                    .on_press(Message::ResetSimCold)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                .on_press(Message::ResetSimCold)
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
                 text("|").size(11).color(StudioTheme::BORDER_CARD),
                 button(text(self.ui_lang.tr("Check & Compile", "Vérifier & Compiler")).size(11))
-                    .on_press(Message::CheckProject)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                .on_press(Message::CheckProject)
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
                 button(text(self.ui_lang.tr("Run Scenarios", "Exécuter Scénarios")).size(11))
-                    .on_press(Message::RunScenarios)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                .on_press(Message::RunScenarios)
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
                 iced::widget::Space::with_width(Length::Fill),
-                button(text("✕").size(11))
-                    .on_press(Message::ToggleActiveMenu(None))
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                button(
+                    text(crate::icons::icon_close())
+                        .size(11)
+                        .shaping(iced::widget::text::Shaping::Advanced),
+                )
+                .on_press(Message::ToggleActiveMenu(None))
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
@@ -4361,10 +4369,14 @@ impl FerriteStudioApp {
                 .style(StudioTheme::ghost_button)
                 .padding([4, 8]),
                 iced::widget::Space::with_width(Length::Fill),
-                button(text("✕").size(11))
-                    .on_press(Message::ToggleActiveMenu(None))
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                button(
+                    text(crate::icons::icon_close())
+                        .size(11)
+                        .shaping(iced::widget::text::Shaping::Advanced),
+                )
+                .on_press(Message::ToggleActiveMenu(None))
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
@@ -4410,10 +4422,14 @@ impl FerriteStudioApp {
                     })
                     .padding([3, 8]),
                 iced::widget::Space::with_width(Length::Fill),
-                button(text("✕").size(11))
-                    .on_press(Message::ToggleActiveMenu(None))
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
+                button(
+                    text(crate::icons::icon_close())
+                        .size(11)
+                        .shaping(iced::widget::text::Shaping::Advanced),
+                )
+                .on_press(Message::ToggleActiveMenu(None))
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
@@ -5328,11 +5344,15 @@ impl FerriteStudioApp {
                         let is_forced = tag.forced.is_some();
                         let display_val = val.to_string();
                         let btn_text = if is_forced {
-                            format!("{display_val} 🔒")
+                            format!("{display_val} {}", crate::icons::icon_lock())
                         } else {
                             display_val
                         };
-                        button(text(btn_text).size(10.5))
+                        button(
+                            text(btn_text)
+                                .size(10.5)
+                                .shaping(iced::widget::text::Shaping::Advanced),
+                        )
                             .on_press(Message::ToggleForceTag(t_name))
                             .style(if is_forced {
                                 StudioTheme::danger_button

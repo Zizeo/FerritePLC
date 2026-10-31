@@ -1793,10 +1793,11 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             // Tree badge or error badge
             if has_error {
                 frame.fill_text(canvas::Text {
-                    content: "⚠".to_string(),
+                    content: crate::icons::icon_warning().to_string(),
                     position: Point::new(x + STEP_WIDTH - 24.0, y + 7.0),
                     color: Color::from_rgb(1.0, 0.35, 0.35),
                     size: iced::Pixels(12.0),
+                    shaping: iced::widget::text::Shaping::Advanced,
                     ..Default::default()
                 });
             } else if let Some(tid) = tree_id
@@ -2080,7 +2081,7 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
 
             // Transition ID and tree or error badge
             let tid_str = if has_error {
-                format!("{} ⚠", tr.id)
+                format!("{} {}", tr.id, crate::icons::icon_warning())
             } else if let Some(tid) = tree_id
                 && self
                     .validation_report
@@ -2105,6 +2106,7 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 size: iced::Pixels(10.5),
                 font: iced::Font::MONOSPACE,
                 horizontal_alignment: iced::alignment::Horizontal::Right,
+                shaping: iced::widget::text::Shaping::Advanced,
                 ..Default::default()
             });
 

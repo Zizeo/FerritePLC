@@ -8,6 +8,7 @@ pub mod editor_st;
 pub mod editor_symbols;
 pub mod help_window;
 pub mod i18n;
+pub mod icons;
 pub mod theme;
 pub mod trend_plotter;
 
@@ -41,9 +42,45 @@ pub fn init_system_and_emoji_fonts() {
                         let _ = db.load_font_file(path);
                     }
                 }
+
+                // Load user-installed fonts (%LOCALAPPDATA%\Microsoft\Windows\Fonts)
+                // Windows 10/11 installs per-user fonts (e.g. Nerd Fonts) here by default
+                if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+                    let user_fonts_dir = std::path::PathBuf::from(local_app_data)
+                        .join(r"Microsoft\Windows\Fonts");
+                    if user_fonts_dir.exists() {
+                        db.load_fonts_dir(&user_fonts_dir);
+                    }
+                }
             }
         }
     });
+}
+
+/// Returns true if a Nerd Font (such as FiraCode Nerd Font) is loaded in the font system.
+pub fn is_nerd_font_available() -> bool {
+    init_system_and_emoji_fonts();
+    if let Ok(mut fs_lock) = iced::advanced::graphics::text::font_system().write() {
+        let db = fs_lock.raw().db();
+        db.faces().any(|face| {
+            face.families.iter().any(|(name, _)| {
+                name.contains("Nerd Font")
+            })
+        })
+    } else {
+        false
+    }
+}
+
+/// Resolves the preferred default application font for FerritePLC Studio.
+/// If a Nerd Font (e.g. FiraCode Nerd Font) is installed, it is used for superior
+/// code typography and icon glyphs. Otherwise, falls back to the system default font.
+pub fn resolve_app_font() -> iced::Font {
+    if is_nerd_font_available() {
+        iced::Font::with_name("FiraCode Nerd Font")
+    } else {
+        iced::Font::DEFAULT
+    }
 }
 
 #[derive(Debug, Error)]
@@ -103,6 +140,7 @@ pub fn run_gui_with_lang(initial_path: Option<PathBuf>, lang: UiLanguage) -> Res
     )
     .subscription(FerriteStudioApp::subscription)
     .theme(FerriteStudioApp::theme)
+    .default_font(resolve_app_font())
     .run_with(move || (app, main_open_task.map(|_| Message::None)))
     .map_err(|e| GuiError::Iced(e.to_string()))
 }
@@ -1292,6 +1330,20 @@ mod tests {
         if let Ok(mut fs_lock) = iced::advanced::graphics::text::font_system().write() {
             let db = fs_lock.raw().db();
             assert!(!db.is_empty(), "System fonts should be loaded into fontdb");
+
+            let has_fira = db.faces().any(|face| {
+                face.families.iter().any(|(name, _)| name.contains("FiraCode"))
+            });
+            #[cfg(target_os = "windows")]
+            {
+                if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+                    let fira_path = std::path::PathBuf::from(local_app_data)
+                        .join(r"Microsoft\Windows\Fonts\FiraCodeNerdFont-Regular.ttf");
+                    if fira_path.exists() {
+                        assert!(has_fira, "FiraCode Nerd Font in user directory should be loaded into fontdb");
+                    }
+                }
+            }
         }
     }
 
@@ -1304,30 +1356,82 @@ mod tests {
         if let Ok(mut fs_lock) = iced::advanced::graphics::text::font_system().write() {
             let font_system = fs_lock.raw();
 
-            let mut buffer = cosmic_text::Buffer::new(
+            // Case 1: Primary font is Segoe UI Emoji with Basic shaping
+            let mut buf1 = cosmic_text::Buffer::new(
                 font_system,
                 cosmic_text::Metrics::new(14.0, 18.0),
             );
-            buffer.set_text(
+            buf1.set_text(
                 font_system,
                 "📖 🔒 ⚠️ ✏️ ⚙️",
-                cosmic_text::Attrs::new(),
-                cosmic_text::Shaping::Advanced,
+                cosmic_text::Attrs::new().family(cosmic_text::Family::Name("Segoe UI Emoji")),
+                cosmic_text::Shaping::Basic,
             );
-            buffer.shape_until_scroll(font_system, false);
-
-            let mut glyph_count = 0;
-            for run in buffer.layout_runs() {
+            buf1.shape_until_scroll(font_system, false);
+            // Test if SwashCache can rasterize Segoe UI Emoji
+            let mut swash_cache = cosmic_text::SwashCache::new();
+            for run in buf1.layout_runs() {
                 for glyph in run.glyphs {
-                    glyph_count += 1;
-                    // Ensure glyph is resolved to an actual font glyph, not missing (.notdef / 0)
-                    assert_ne!(
-                        glyph.glyph_id, 0,
-                        "Glyph should be resolved from fallback system fonts"
+                    let phys = glyph.physical((0.0, 0.0), 1.0);
+                    let image = swash_cache.get_image_uncached(font_system, phys.cache_key);
+                    assert!(
+                        image.is_some(),
+                        "SwashCache should rasterize Segoe UI Emoji glyph"
                     );
                 }
             }
-            assert!(glyph_count > 0, "Should have shaped glyphs");
+
+            // Case 2: SansSerif with Advanced shaping (fallback to Segoe UI Emoji)
+            let mut buf2 = cosmic_text::Buffer::new(
+                font_system,
+                cosmic_text::Metrics::new(14.0, 18.0),
+            );
+            buf2.set_text(
+                font_system,
+                "📖 🔒 ⚠️ ✏️ ⚙️",
+                cosmic_text::Attrs::new().family(cosmic_text::Family::SansSerif),
+                cosmic_text::Shaping::Advanced,
+            );
+            buf2.shape_until_scroll(font_system, false);
+            for run in buf2.layout_runs() {
+                for glyph in run.glyphs {
+                    assert_ne!(
+                        glyph.glyph_id, 0,
+                        "SansSerif with Advanced shaping should resolve emoji glyphs via fallback!"
+                    );
+                }
+            }
+
+            // Case 3: FiraCode Nerd Font with Nerd Font icon codepoints
+            let local_fonts = std::env::var("LOCALAPPDATA").map(|l| {
+                std::path::PathBuf::from(l).join(r"Microsoft\Windows\Fonts")
+            }).ok();
+            if let Some(dir) = local_fonts {
+                let fira_path = dir.join("FiraCodeNerdFont-Regular.ttf");
+                if fira_path.exists() {
+                    let _ = font_system.db_mut().load_font_file(&fira_path);
+                    let mut buf3 = cosmic_text::Buffer::new(
+                        font_system,
+                        cosmic_text::Metrics::new(14.0, 18.0),
+                    );
+                    // \u{f02d} = book, \u{f023} = lock, \u{f071} = warning, \u{f040} = pencil, \u{f013} = gear
+                    buf3.set_text(
+                        font_system,
+                        "\u{f02d} \u{f023} \u{f071} \u{f040} \u{f013}",
+                        cosmic_text::Attrs::new().family(cosmic_text::Family::Name("FiraCode Nerd Font")),
+                        cosmic_text::Shaping::Basic,
+                    );
+                    buf3.shape_until_scroll(font_system, false);
+                    for run in buf3.layout_runs() {
+                        for glyph in run.glyphs {
+                            assert_ne!(
+                                glyph.glyph_id, 0,
+                                "FiraCode Nerd Font should resolve Nerd Font codepoints!"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }

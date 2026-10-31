@@ -296,7 +296,12 @@ pub fn view_help_window<'a>(
 
     // Top Header Bar
     let title_badge = row![
-        container(text("📖").size(16)).padding([2, 6]),
+        container(
+            text(crate::icons::icon_book())
+                .size(16)
+                .shaping(iced::widget::text::Shaping::Advanced)
+        )
+        .padding([2, 6]),
         column![
             text(lang.tr(
                 "FerritePLC — Help & Industrial Reference Manual",
@@ -332,7 +337,9 @@ pub fn view_help_window<'a>(
 
     let close_btn = button(
         row![
-            text("✕").size(12),
+            text(crate::icons::icon_close())
+                .size(12)
+                .shaping(iced::widget::text::Shaping::Advanced),
             text(lang.tr("Close", "Fermer")).size(12),
         ]
         .spacing(4)
