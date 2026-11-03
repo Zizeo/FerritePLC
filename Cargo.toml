@@ -54,6 +54,7 @@ egui_plot = "0.31"
 iced = { version = "0.13", features = ["canvas", "tokio", "multi-window", "advanced"] }
 rfd = "0.15"
 quick-xml = { version = "0.37", features = ["serialize"] }
+winresource = "0.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -87,6 +87,12 @@ pub fn resolve_app_font() -> iced::Font {
     }
 }
 
+/// Returns the application window icon parsed from raw 64x64 RGBA image bytes.
+pub fn app_window_icon() -> Option<iced::window::Icon> {
+    const ICON_RGBA_BYTES: &[u8] = include_bytes!("../assets/icon_64.rgba");
+    iced::window::icon::from_rgba(ICON_RGBA_BYTES.to_vec(), 64, 64).ok()
+}
+
 #[derive(Debug, Error)]
 pub enum GuiError {
     #[error("Project error: {0}")]
@@ -133,6 +139,7 @@ pub fn run_gui_with_lang(initial_path: Option<PathBuf>, lang: UiLanguage) -> Res
         size: iced::Size::new(1440.0, 880.0),
         min_size: Some(iced::Size::new(1024.0, 680.0)),
         exit_on_close_request: false,
+        icon: app_window_icon(),
         ..Default::default()
     });
     app.main_window_id = Some(main_id);
@@ -156,6 +163,12 @@ mod tests {
     use ferrite_project::PouSource;
     use std::env;
     use std::fs;
+
+    #[test]
+    fn test_app_window_icon_loads_successfully() {
+        let icon = app_window_icon();
+        assert!(icon.is_some(), "app_window_icon should successfully decode 64x64 RGBA bytes");
+    }
 
     #[test]
     fn test_studio_app_initialization_scenarios_and_i18n() -> Result<(), Box<dyn std::error::Error>>

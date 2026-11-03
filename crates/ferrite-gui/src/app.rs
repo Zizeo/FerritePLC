@@ -1649,6 +1649,7 @@ impl FerriteStudioApp {
                     size: iced::Size::new(380.0, 800.0),
                     min_size: Some(iced::Size::new(260.0, 400.0)),
                     exit_on_close_request: false,
+                    icon: crate::app_window_icon(),
                     ..Default::default()
                 });
                 self.detached_left_id = Some(id);
@@ -1669,6 +1670,7 @@ impl FerriteStudioApp {
                     size: iced::Size::new(460.0, 800.0),
                     min_size: Some(iced::Size::new(320.0, 400.0)),
                     exit_on_close_request: false,
+                    icon: crate::app_window_icon(),
                     ..Default::default()
                 });
                 self.detached_right_id = Some(id);
@@ -1689,6 +1691,7 @@ impl FerriteStudioApp {
                     size: iced::Size::new(1100.0, 420.0),
                     min_size: Some(iced::Size::new(600.0, 250.0)),
                     exit_on_close_request: false,
+                    icon: crate::app_window_icon(),
                     ..Default::default()
                 });
                 self.detached_bottom_id = Some(id);
@@ -1711,7 +1714,8 @@ impl FerriteStudioApp {
                         size: iced::Size::new(780.0, 560.0),
                         min_size: Some(iced::Size::new(500.0, 380.0)),
                         exit_on_close_request: false,
-                            ..Default::default()
+                        icon: crate::app_window_icon(),
+                        ..Default::default()
                     });
                     self.fbd_library_window_id = Some(id);
                     open_task.map(|_| Message::None)
@@ -1951,7 +1955,8 @@ impl FerriteStudioApp {
                         size: iced::Size::new(1040.0, 760.0),
                         min_size: Some(iced::Size::new(720.0, 500.0)),
                         exit_on_close_request: false,
-                            ..Default::default()
+                        icon: crate::app_window_icon(),
+                        ..Default::default()
                     });
                     self.help_window_id = Some(id);
                     open_task.map(|_| Message::None)
@@ -5041,7 +5046,8 @@ impl FerriteStudioApp {
                         size: iced::Size::new(1240.0, 820.0),
                         min_size: Some(iced::Size::new(820.0, 560.0)),
                         exit_on_close_request: false,
-                            ..Default::default()
+                        icon: crate::app_window_icon(),
+                        ..Default::default()
                     });
                     self.digital_twin_window_id = Some(id);
                     self.show_digital_twin_window = true;

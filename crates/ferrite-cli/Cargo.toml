@@ -21,3 +21,6 @@ ferrite-ir.workspace = true
 ferrite-project.workspace = true
 ferrite-runtime.workspace = true
 ratatui.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+winresource.workspace = true
