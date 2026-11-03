@@ -31,6 +31,9 @@ pub enum FbdError {
 
     #[error("Invalid block ID '{0}'")]
     InvalidBlockId(String),
+
+    #[error("Validation error: {0}")]
+    Validation(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,8 +95,13 @@ pub struct FbdBlock {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompositeFbDef {
     pub name: String,
+    #[serde(default)]
+    pub description: String,
     pub input_pins: Vec<String>,
     pub output_pins: Vec<String>,
+    #[serde(default)]
+    pub st_code: Option<String>,
+    #[serde(default)]
     pub blocks: Vec<FbdBlock>,
 }
 
@@ -320,16 +328,30 @@ impl FbdProgram {
                 None
             };
 
+            let compiled_st_stmts = if let Some(ref def) = composite_local_fbs {
+                if let Some(ref code) = def.st_code {
+                    let st_stmts = ferrite_lang_st::parse_st_statements(code, &def.name)
+                        .map_err(|e| FbdError::Validation(format!("ST syntax error in composite block '{}': {e}", def.name)))?;
+                    Some(st_stmts)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             compiled_blocks.push(CompiledFbdBlock {
                 kind: blk.kind.clone(),
                 inputs: compiled_inputs,
                 outputs: compiled_outputs,
                 composite_def: composite_local_fbs,
+                compiled_st_stmts,
                 slot_out: IecValue::Bool(false),
                 slot_q: IecValue::Bool(false),
                 slot_et: IecValue::Time(0),
                 slot_cv: IecValue::Int(0),
                 slot_err: IecValue::Real(0.0),
+                custom_slots: HashMap::new(),
             });
         }
 
@@ -340,13 +362,14 @@ impl FbdProgram {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PinSlot {
     PrimaryOut,  // OUT (Real for Correctors, Bool for logic/timers)
     BoolOut,     // Q, Q1
     ElapsedTime, // ET
     CountValue,  // CV
     ErrorOut,    // ERR
+    Named(String),
 }
 
 impl PinSlot {
@@ -356,7 +379,8 @@ impl PinSlot {
             "CV" => Self::CountValue,
             "ERR" => Self::ErrorOut,
             "Q" | "Q1" => Self::BoolOut,
-            _ => Self::PrimaryOut,
+            "OUT" => Self::PrimaryOut,
+            _ => Self::Named(pin.to_string()),
         }
     }
 }
@@ -374,21 +398,32 @@ struct CompiledFbdBlock {
     inputs: Vec<(String, CompiledInputSource)>,
     outputs: Vec<(PinSlot, String)>,
     composite_def: Option<CompositeFbDef>,
+    compiled_st_stmts: Option<Vec<ferrite_ir::IrStmt>>,
     slot_out: IecValue,
     slot_q: IecValue,
     slot_et: IecValue,
     slot_cv: IecValue,
     slot_err: IecValue,
+    custom_slots: HashMap<String, IecValue>,
 }
 
 impl CompiledFbdBlock {
-    fn read_slot(&self, slot: PinSlot) -> IecValue {
+    fn read_slot(&self, slot: &PinSlot) -> IecValue {
         match slot {
             PinSlot::PrimaryOut => self.slot_out.clone(),
             PinSlot::BoolOut => self.slot_q.clone(),
             PinSlot::ElapsedTime => self.slot_et.clone(),
             PinSlot::CountValue => self.slot_cv.clone(),
             PinSlot::ErrorOut => self.slot_err.clone(),
+            PinSlot::Named(name) => {
+                let upper = name.to_ascii_uppercase();
+                for (k, v) in &self.custom_slots {
+                    if k.to_ascii_uppercase() == upper {
+                        return v.clone();
+                    }
+                }
+                self.slot_out.clone()
+            }
         }
     }
 }
@@ -409,7 +444,7 @@ impl CompiledFbdPou {
         match src {
             CompiledInputSource::Literal(v) => Ok(v.clone()),
             CompiledInputSource::Symbol(sym) => ctx.read_symbol(sym),
-            CompiledInputSource::Wire { block_idx, pin } => Ok(blocks[*block_idx].read_slot(*pin)),
+            CompiledInputSource::Wire { block_idx, pin } => Ok(blocks[*block_idx].read_slot(pin)),
         }
     }
 }
@@ -511,29 +546,80 @@ impl ExecutablePou for CompiledFbdPou {
                     }
                 }
                 FbdBlockKind::Composite { .. } => {
-                    // Evaluate composite FB as boolean AND/OR reducer or custom sub-network
-                    if let Some(ref def) = self.blocks[idx].composite_def {
-                        let _ = FbInstance::new(&def.name, StandardFbKind::Sr);
+                    if let Some(ref st_stmts) = self.blocks[idx].compiled_st_stmts {
+                        let mut env = HashMap::new();
+                        let in_len = self.blocks[idx].inputs.len();
+                        for inp_idx in 0..in_len {
+                            let (ref pin_name, ref src) = self.blocks[idx].inputs[inp_idx];
+                            let val = Self::read_input(&self.blocks, src, ctx)?;
+                            env.insert(pin_name.clone(), val);
+                        }
+                        let output_pins = self.blocks[idx]
+                            .composite_def
+                            .as_ref()
+                            .map(|d| d.output_pins.clone())
+                            .unwrap_or_default();
+                        for out_pin in &output_pins {
+                            env.entry(out_pin.clone()).or_insert(IecValue::Bool(false));
+                        }
+                        for stmt in st_stmts {
+                            stmt.execute_with_env(ctx, &mut env, pou_name)?;
+                        }
+                        let mut primary_set = false;
+                        let out_count = output_pins.len();
+                        for out_pin in &output_pins {
+                            let upper = out_pin.to_ascii_uppercase();
+                            let mut out_val = None;
+                            for (k, v) in &env {
+                                if k.to_ascii_uppercase() == upper {
+                                    out_val = Some(v.clone());
+                                    break;
+                                }
+                            }
+                            if let Some(v) = out_val {
+                                self.blocks[idx].custom_slots.insert(out_pin.clone(), v.clone());
+                                if upper == "OUT" || (!primary_set && out_count == 1) {
+                                    self.blocks[idx].slot_out = v.clone();
+                                    primary_set = true;
+                                }
+                                if upper == "Q" {
+                                    self.blocks[idx].slot_q = v.clone();
+                                }
+                            }
+                        }
+                        if !primary_set {
+                            if let Some(v) = env.get("OUT") {
+                                self.blocks[idx].slot_out = v.clone();
+                            } else if let Some(v) = env.get("Q") {
+                                self.blocks[idx].slot_out = v.clone();
+                                self.blocks[idx].slot_q = v.clone();
+                            }
+                        }
+                    } else {
+                        // Evaluate composite FB as boolean AND/OR reducer or custom sub-network
+                        if let Some(ref def) = self.blocks[idx].composite_def {
+                            let _ = FbInstance::new(&def.name, StandardFbKind::Sr);
+                        }
+                        let mut result = true;
+                        let in_len = self.blocks[idx].inputs.len();
+                        for inp_idx in 0..in_len {
+                            let v = Self::read_input(
+                                &self.blocks,
+                                &self.blocks[idx].inputs[inp_idx].1,
+                                ctx,
+                            )?
+                            .as_bool()?;
+                            result = result && v;
+                        }
+                        self.blocks[idx].slot_out = IecValue::Bool(result);
+                        self.blocks[idx].slot_q = IecValue::Bool(result);
                     }
-                    let mut result = true;
-                    let in_len = self.blocks[idx].inputs.len();
-                    for inp_idx in 0..in_len {
-                        let v = Self::read_input(
-                            &self.blocks,
-                            &self.blocks[idx].inputs[inp_idx].1,
-                            ctx,
-                        )?
-                        .as_bool()?;
-                        result = result && v;
-                    }
-                    self.blocks[idx].slot_out = IecValue::Bool(result);
-                    self.blocks[idx].slot_q = IecValue::Bool(result);
                 }
             }
 
             let out_len = self.blocks[idx].outputs.len();
             for out_idx in 0..out_len {
-                let (slot, ref target_sym) = self.blocks[idx].outputs[out_idx];
+                let (ref slot, ref target_sym) = self.blocks[idx].outputs[out_idx];
                 let val = self.blocks[idx].read_slot(slot);
                 let sym = target_sym.clone();
                 ctx.write_symbol(&sym, val)?;
@@ -931,5 +1017,74 @@ mod tests {
         assert!(!prog.move_block_down(2));
         assert!(!prog.move_block_up(99));
         assert!(!prog.move_block_down(99));
+    }
+
+    #[test]
+    fn test_composite_st_block_compilation_and_execution() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+
+        tags.register_tag(TagEntry::new(
+            "Permissive_A",
+            IecType::Bool,
+            None,
+            IecValue::Bool(true),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Permissive_B",
+            IecType::Bool,
+            None,
+            IecValue::Bool(true),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Safety_Status",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+
+        let custom_def = CompositeFbDef {
+            name: "SafetyGate".to_string(),
+            description: "2-channel safety validator".to_string(),
+            input_pins: vec!["CH1".to_string(), "CH2".to_string()],
+            output_pins: vec!["OK".to_string()],
+            st_code: Some("IF CH1 AND CH2 THEN\n    OK := TRUE;\nELSE\n    OK := FALSE;\nEND_IF;".to_string()),
+            blocks: vec![],
+        };
+
+        let mut block = FbdBlock {
+            id: "GATE1".to_string(),
+            kind: FbdBlockKind::Composite {
+                type_name: "SafetyGate".to_string(),
+            },
+            inputs: HashMap::new(),
+            outputs: HashMap::new(),
+        };
+        block.inputs.insert("CH1".to_string(), FbdInputSource::Value { expr: "Permissive_A".to_string() });
+        block.inputs.insert("CH2".to_string(), FbdInputSource::Value { expr: "Permissive_B".to_string() });
+        block.outputs.insert("OK".to_string(), "Safety_Status".to_string());
+
+        let prog = FbdProgram {
+            name: "SafetyCheck".to_string(),
+            comment: "".to_string(),
+            composites: vec![custom_def],
+            blocks: vec![block],
+        };
+
+        let mut compiled = prog.compile(&tags)?;
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+
+        compiled.execute(&mut ctx)?;
+        assert_eq!(ctx.read_symbol("Safety_Status")?, IecValue::Bool(true));
+
+        // Now change Permissive_B to FALSE and re-execute
+        ctx.write_symbol("Permissive_B", IecValue::Bool(false))?;
+        compiled.execute(&mut ctx)?;
+        assert_eq!(ctx.read_symbol("Safety_Status")?, IecValue::Bool(false));
+
+        Ok(())
     }
 }

@@ -783,7 +783,7 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
             };
             let wire_stroke = Stroke::default().with_color(wire_color).with_width(2.5);
 
-            // Wire segments between rail, elements, and coils
+            // Wire segments between rail, elements, and coils (drawn in background outside contact bounds)
             let first_coil_x = rung_layout.coils.first().map(|c| c.bounds.x).unwrap_or(layout.rail_right_x);
             if rung_layout.elements.is_empty() {
                 // Straight through wire from left rail to coils
@@ -792,33 +792,70 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                     Stroke::default().with_color(StudioTheme::ACCENT_EMERALD).with_width(2.5),
                 );
             } else {
+                let first_elem_x = rung_layout
+                    .elements
+                    .iter()
+                    .map(|e| e.bounds.x)
+                    .chain(rung_layout.branches.iter().map(|b| b.split_x))
+                    .fold(layout.rail_right_x - 120.0, f32::min);
+                let last_contact_x = rung_layout
+                    .elements
+                    .iter()
+                    .map(|e| e.bounds.x + e.bounds.width)
+                    .chain(rung_layout.branches.iter().map(|b| b.merge_x))
+                    .fold(layout.rail_left_x + WIRE_PAD, f32::max);
+
                 // Left rail to first contact / branch
-                let first_elem_x = rung_layout.elements.first().map(|e| e.bounds.x).unwrap_or(layout.rail_right_x - 120.0);
-                frame.stroke(
-                    &Path::line(Point::new(layout.rail_left_x, rung_layout.wire_y), Point::new(first_elem_x, rung_layout.wire_y)),
+                draw_horizontal_wire_outside_elements(
+                    &mut frame,
+                    layout.rail_left_x,
+                    first_elem_x,
+                    rung_layout.wire_y,
                     Stroke::default().with_color(StudioTheme::ACCENT_EMERALD).with_width(2.5),
+                    &rung_layout.elements,
                 );
 
                 // Last contact / branch to coils
-                let last_contact_x = rung_layout.elements.last().map(|e| e.bounds.x + e.bounds.width).unwrap_or(layout.rail_left_x + WIRE_PAD);
-                frame.stroke(
-                    &Path::line(Point::new(last_contact_x, rung_layout.wire_y), Point::new(first_coil_x, rung_layout.wire_y)),
+                draw_horizontal_wire_outside_elements(
+                    &mut frame,
+                    last_contact_x,
+                    first_coil_x,
+                    rung_layout.wire_y,
                     wire_stroke,
+                    &rung_layout.elements,
                 );
 
-                // Inter-contact wire segments
+                // Main rung baseline between first and last element/branch (clipped around contacts)
+                draw_horizontal_wire_outside_elements(
+                    &mut frame,
+                    first_elem_x,
+                    last_contact_x,
+                    rung_layout.wire_y,
+                    wire_stroke,
+                    &rung_layout.elements,
+                );
+
+                // Inter-contact wire segments on identical Y rows
                 for i in 0..rung_layout.elements.len().saturating_sub(1) {
                     let e1 = &rung_layout.elements[i];
                     let e2 = &rung_layout.elements[i + 1];
-                    let inter_wire_color = if e1.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::BORDER_CARD };
-                    frame.stroke(
-                        &Path::line(Point::new(e1.bounds.x + e1.bounds.width, rung_layout.wire_y), Point::new(e2.bounds.x, rung_layout.wire_y)),
-                        Stroke::default().with_color(inter_wire_color).with_width(2.5),
-                    );
+                    let e1_right = e1.bounds.x + e1.bounds.width;
+                    if (e1.bounds.y - e2.bounds.y).abs() < 1.0 && e2.bounds.x >= e1_right {
+                        let row_y = e1.bounds.y + e1.bounds.height / 2.0;
+                        let inter_wire_color = if e1.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::BORDER_CARD };
+                        draw_horizontal_wire_outside_elements(
+                            &mut frame,
+                            e1_right,
+                            e2.bounds.x,
+                            row_y,
+                            Stroke::default().with_color(inter_wire_color).with_width(2.5),
+                            &rung_layout.elements,
+                        );
+                    }
                 }
             }
 
-            // Draw parallel branch wires before contacts so contact cards sit cleanly on top of cables
+            // Draw parallel branch wires in the background clipped around contact cards
             for branch in &rung_layout.branches {
                 let branch_wire_color = if branch.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::BORDER_CARD };
                 let b_stroke = Stroke::default().with_color(branch_wire_color).with_width(2.0);
@@ -834,22 +871,27 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                         &Path::line(Point::new(branch.merge_x, branch.start_y), Point::new(branch.merge_x, lowest_y)),
                         b_stroke,
                     );
-                    // Horizontal feeder wires for each path
+                    // Horizontal feeder wires for each path (stopped at contact edges so cables never cross through contacts)
                     for &py in &branch.paths_y {
-                        frame.stroke(
-                            &Path::line(Point::new(branch.split_x, py), Point::new(branch.merge_x, py)),
+                        draw_horizontal_wire_outside_elements(
+                            &mut frame,
+                            branch.split_x,
+                            branch.merge_x,
+                            py,
                             b_stroke,
+                            &rung_layout.elements,
                         );
                     }
                 }
             }
 
-            // Draw contacts & inline FBs
+            // Draw contacts & inline FBs in the foreground with an opaque base fill
             for elem in &rung_layout.elements {
                 let is_selected = self.selected == Some(&elem.key)
                     || self.selected_elements.contains(&elem.key)
-                    || state.selected_elements.contains(&elem.key)
-                    || state.selected == Some(elem.key.clone());
+                    || (state.drag_marquee.is_some()
+                        && (state.selected_elements.contains(&elem.key)
+                            || state.selected.as_ref() == Some(&elem.key)));
                 let border_color = if is_selected {
                     StudioTheme::ACCENT_CYAN
                 } else if elem.energized {
@@ -857,18 +899,20 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                 } else {
                     StudioTheme::BORDER_CARD
                 };
-                let bg_color = if elem.energized {
-                    Color::from_rgba(0.063, 0.725, 0.506, 0.15)
-                } else {
-                    StudioTheme::BG_BASE
-                };
 
-                // Card background & border
+                // Opaque base background so background cables/grid never bleed through
                 frame.fill_rectangle(
                     Point::new(elem.bounds.x, elem.bounds.y),
                     elem.bounds.size(),
-                    bg_color,
+                    StudioTheme::BG_BASE,
                 );
+                if elem.energized {
+                    frame.fill_rectangle(
+                        Point::new(elem.bounds.x, elem.bounds.y),
+                        elem.bounds.size(),
+                        Color::from_rgba(0.063, 0.725, 0.506, 0.15),
+                    );
+                }
                 frame.stroke(
                     &Path::rectangle(Point::new(elem.bounds.x, elem.bounds.y), elem.bounds.size()),
                     Stroke::default().with_color(border_color).with_width(if is_selected { 2.0 } else { 1.0 }),
@@ -989,12 +1033,19 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                     Stroke::default().with_color(StudioTheme::BORDER_CARD).with_width(2.0),
                 );
 
-                // Coil card box
+                // Coil card box (opaque base + optional energized tint)
                 frame.fill_rectangle(
                     Point::new(coil_placed.bounds.x, coil_placed.bounds.y),
                     coil_placed.bounds.size(),
-                    bg_color,
+                    StudioTheme::BG_BASE,
                 );
+                if coil_placed.energized {
+                    frame.fill_rectangle(
+                        Point::new(coil_placed.bounds.x, coil_placed.bounds.y),
+                        coil_placed.bounds.size(),
+                         bg_color,
+                    );
+                }
                 frame.stroke(
                     &Path::rectangle(Point::new(coil_placed.bounds.x, coil_placed.bounds.y), coil_placed.bounds.size()),
                     Stroke::default().with_color(border_color).with_width(if is_coil_selected { 2.0 } else { 1.0 }),
@@ -1172,10 +1223,12 @@ impl LdLayoutEngine {
             .max(2);
 
         let rail_left_x = RAIL_LEFT_X;
-        let rail_right_x = (rail_left_x + WIRE_PAD + max_slots as f32 * SLOT_WIDTH + WIRE_PAD + COIL_CARD_WIDTH + WIRE_PAD).max(680.0);
+        let start_x = rail_left_x + WIRE_PAD;
 
         let mut rungs = Vec::new();
         let mut curr_y = 40.0_f32;
+        let mut max_extra_branch_x = 0.0_f32;
+        let mut max_elements_end_x = start_x + max_slots as f32 * SLOT_WIDTH;
 
         for (r_idx, rung) in program.rungs.iter().enumerate() {
             let branch_depth = Self::calculate_branch_depth(&rung.elements);
@@ -1195,9 +1248,8 @@ impl LdLayoutEngine {
 
             // Place contacts recursively
             let mut power_flowing = true;
-            let start_x = rail_left_x + WIRE_PAD;
 
-            Self::layout_elements_recursive(
+            let end_x = Self::layout_elements_recursive(
                 &rung.elements,
                 r_idx,
                 &[],
@@ -1209,9 +1261,41 @@ impl LdLayoutEngine {
                 &mut placed_branches,
             );
 
-            // Place coils stacked before right rail
-            let coil_x = rail_right_x - WIRE_PAD - COIL_CARD_WIDTH;
-            let mut placed_coils = Vec::new();
+            let rung_slots = Self::calculate_horizontal_slots(&rung.elements);
+            let unbranched_end_x = start_x + rung_slots as f32 * SLOT_WIDTH;
+            let extra_branch_x = (end_x - unbranched_end_x).max(0.0);
+            max_extra_branch_x = max_extra_branch_x.max(extra_branch_x);
+            max_elements_end_x = max_elements_end_x.max(end_x);
+
+            rungs.push(LdPlacedRung {
+                rung_idx: r_idx,
+                bounds: Rectangle {
+                    x: rail_left_x - 20.0,
+                    y: rung_top_y,
+                    width: 0.0,
+                    height: rung_height,
+                },
+                wire_y,
+                elements: placed_elements,
+                branches: placed_branches,
+                coils: Vec::new(),
+                power_flowing,
+            });
+
+            curr_y += rung_height;
+        }
+
+        let base_right_x = (start_x + max_slots as f32 * SLOT_WIDTH + WIRE_PAD + COIL_CARD_WIDTH + WIRE_PAD).max(680.0);
+        let rail_right_x = (base_right_x + max_extra_branch_x)
+            .max(max_elements_end_x + WIRE_PAD + COIL_CARD_WIDTH + WIRE_PAD);
+
+        // Pass 2: place coils before expanded right rail and finalize rung bounds
+        let coil_x = rail_right_x - WIRE_PAD - COIL_CARD_WIDTH;
+        for (r_idx, rung_layout) in rungs.iter_mut().enumerate() {
+            let rung = &program.rungs[r_idx];
+            let wire_y = rung_layout.wire_y;
+            let power_flowing = rung_layout.power_flowing;
+
             for (c_idx, coil) in rung.coils.iter().enumerate() {
                 let coil_y = if rung.coils.len() == 1 {
                     wire_y - SLOT_HEIGHT / 2.0
@@ -1219,7 +1303,7 @@ impl LdLayoutEngine {
                     wire_y + c_idx as f32 * BRANCH_VERTICAL_STEP - SLOT_HEIGHT / 2.0
                 };
                 let is_coil_on = power_flowing || runtime.is_some_and(|rt| is_symbol_energized(rt, &coil.symbol));
-                placed_coils.push(LdPlacedElement {
+                rung_layout.coils.push(LdPlacedElement {
                     key: LdElementKey::Coil { rung: r_idx, index: c_idx },
                     bounds: Rectangle {
                         x: coil_x,
@@ -1231,24 +1315,7 @@ impl LdLayoutEngine {
                 });
             }
 
-            let rung_bounds = Rectangle {
-                x: rail_left_x - 20.0,
-                y: rung_top_y,
-                width: (rail_right_x - rail_left_x) + 40.0,
-                height: rung_height,
-            };
-
-            rungs.push(LdPlacedRung {
-                rung_idx: r_idx,
-                bounds: rung_bounds,
-                wire_y,
-                elements: placed_elements,
-                branches: placed_branches,
-                coils: placed_coils,
-                power_flowing,
-            });
-
-            curr_y += rung_height;
+            rung_layout.bounds.width = (rail_right_x - rail_left_x) + 40.0;
         }
 
         let total_bounds = Rectangle {
@@ -1340,9 +1407,11 @@ impl LdLayoutEngine {
                     let initial_power = *power_flowing;
                     let mut any_path_energized = false;
 
+                    let mut path_row_offset = 0usize;
                     for (p_idx, path) in paths.iter().enumerate() {
-                        let path_y = base_y + p_idx as f32 * BRANCH_VERTICAL_STEP;
+                        let path_y = base_y + path_row_offset as f32 * BRANCH_VERTICAL_STEP;
                         paths_y.push(path_y);
+                        path_row_offset += Self::calculate_branch_depth(path).max(1);
 
                         let mut next_path = current_path.to_vec();
                         next_path.push(LdBranchPathSegment {
@@ -1384,12 +1453,67 @@ impl LdLayoutEngine {
                         energized: *power_flowing,
                     });
 
-                    curr_x = merge_x;
+                    curr_x = merge_x + WIRE_PAD;
                 }
             }
         }
 
         curr_x
+    }
+}
+
+/// Computes horizontal wire segments (x1, x2) along y from x_start to x_end,
+/// splitting around any placed element bounding boxes so cables never pass through contacts.
+pub fn compute_wire_segments_outside_elements(
+    x_start: f32,
+    x_end: f32,
+    y: f32,
+    elements: &[LdPlacedElement],
+) -> Vec<(f32, f32)> {
+    let x1 = x_start.min(x_end);
+    let x2 = x_start.max(x_end);
+    if x2 - x1 <= 0.5 {
+        return Vec::new();
+    }
+
+    let mut blockers: Vec<(f32, f32)> = elements
+        .iter()
+        .filter(|e| y >= e.bounds.y && y <= e.bounds.y + e.bounds.height)
+        .map(|e| (e.bounds.x, e.bounds.x + e.bounds.width))
+        .filter(|&(bx1, bx2)| bx2 > x1 && bx1 < x2)
+        .collect();
+    blockers.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut segments = Vec::new();
+    let mut curr_x = x1;
+    for (bx1, bx2) in blockers {
+        if bx1 > curr_x + 0.5 {
+            segments.push((curr_x, bx1.min(x2)));
+        }
+        curr_x = curr_x.max(bx2);
+        if curr_x >= x2 {
+            break;
+        }
+    }
+    if curr_x + 0.5 < x2 {
+        segments.push((curr_x, x2));
+    }
+    segments
+}
+
+fn draw_horizontal_wire_outside_elements(
+    frame: &mut Frame,
+    x_start: f32,
+    x_end: f32,
+    y: f32,
+    stroke: Stroke,
+    elements: &[LdPlacedElement],
+) {
+    for (seg_x1, seg_x2) in compute_wire_segments_outside_elements(x_start, x_end, y, elements) {
+        frame.stroke(
+            &Path::line(Point::new(seg_x1, y), Point::new(seg_x2, y)),
+            stroke,
+        );
     }
 }
 
@@ -1507,7 +1631,7 @@ pub fn render_ld_editor<'a>(
         let multi_row = row![
             count_label,
             delete_btn,
-            iced::widget::Space::with_width(Length::Fill),
+            iced::widget::Space::with_width(Length::Fixed(12.0)),
             deselect_btn,
         ]
         .spacing(10)
@@ -1939,6 +2063,10 @@ pub mod tests {
         assert_eq!(b0.paths_y.len(), 2);
         assert!(b0.paths_y[0] < b0.paths_y[1]); // Step down for second leg
         assert!(b0.split_x < b0.merge_x);
+        let c0 = &r0.elements[0];
+        let segs = compute_wire_segments_outside_elements(b0.split_x, b0.merge_x, b0.paths_y[0], &r0.elements);
+        assert_eq!(segs.len(), 2, "Branch wire on top path must split before and after top contact");
+        assert!(segs[0].1 <= c0.bounds.x + 0.01 && segs[1].0 >= c0.bounds.x + c0.bounds.width - 0.01);
     }
 
     #[test]
@@ -2321,7 +2449,18 @@ pub mod tests {
             ferrite_project::PouSource::Ld(ld_prog),
         );
 
+        let Some(ferrite_project::PouSource::Ld(ld_before)) = app.project.pous.get("test_branch_wrap") else { panic!("POU not found"); };
+        let width_before = LdLayoutEngine::compute_layout(ld_before, None).rungs[0].bounds.width;
         app.perform_ld_add_parallel_branch("test_branch_wrap", 0, &[], None);
+        let Some(ferrite_project::PouSource::Ld(ld_after_1)) = app.project.pous.get("test_branch_wrap") else { panic!("POU not found"); };
+        let layout_after_1 = LdLayoutEngine::compute_layout(ld_after_1, None);
+        assert!(layout_after_1.rungs[0].bounds.width > width_before, "Rung width must increase by the branch horizontal offset");
+        app.perform_ld_add_parallel_branch("test_branch_wrap", 0, &[LdBranchPathSegment { branch_idx: 0, path_idx: 1 }], Some(0));
+        let Some(ferrite_project::PouSource::Ld(ld_after_2)) = app.project.pous.get("test_branch_wrap") else { panic!("POU not found"); };
+        let layout_after_2 = LdLayoutEngine::compute_layout(ld_after_2, None);
+        assert_eq!(layout_after_2.rungs[0].branches.len(), 1, "Second branch on 1-contact leg must connect to the same branch level");
+        assert_eq!(layout_after_2.rungs[0].branches[0].paths_y.len(), 3);
+        if let Some(ferrite_project::PouSource::Ld(ld_mut)) = app.project.pous.get_mut("test_branch_wrap") && let LdElement::Branch { paths } = &mut ld_mut.rungs[0].elements[0] { paths.pop(); }
 
         let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_branch_wrap") else {
             panic!("POU not found");
@@ -2893,6 +3032,8 @@ pub mod tests {
             1.0,
         );
 
+        let multi_sel = [LdElementKey::Contact { rung: 0, branch_path: vec![], index: 0 }, LdElementKey::Coil { rung: 0, index: 0 }];
+        let _multi_elem = render_ld_editor(&ld_prog, None, None, &multi_sel, UiLanguage::En, Vector::default(), 1.0);
         // 3. Test LdRungNameChanged mutates rung.id cleanly
         let _ = app.update(Message::LdRungNameChanged(
             "safety_ld".to_string(),
@@ -2906,6 +3047,50 @@ pub mod tests {
         assert_eq!(updated_ld.rungs[0].id, "Rung_EStop_Active");
         assert_eq!(updated_ld.rungs[0].comment, "Master EStop & Guard Door permissive");
         assert!(app.modified, "App should be marked modified after rung rename");
+
+        // 4. Verify spawning a new contact inserts it right after the currently selected contact
+        let _ = app.update(Message::LdSelectElement(
+            "safety_ld".to_string(),
+            Some(LdElementKey::Contact {
+                rung: 0,
+                branch_path: vec![],
+                index: 0,
+            }),
+        ));
+        let _ = app.update(Message::LdAddContactWithKind(
+            "safety_ld".to_string(),
+            0,
+            ContactKind::NormallyClosed,
+        ));
+        let _ = app.update(Message::LdSelectElement(
+            "safety_ld".to_string(),
+            Some(LdElementKey::Contact {
+                rung: 0,
+                branch_path: vec![],
+                index: 0,
+            }),
+        ));
+        let _ = app.update(Message::LdAddContactWithKind(
+            "safety_ld".to_string(),
+            0,
+            ContactKind::RisingEdge,
+        ));
+        let Some(ferrite_project::PouSource::Ld(after_insert_ld)) = app.project.pous.get("safety_ld") else {
+            panic!("POU not found");
+        };
+        assert_eq!(after_insert_ld.rungs[0].elements.len(), 3);
+        assert!(matches!(
+            &after_insert_ld.rungs[0].elements[0],
+            LdElement::Contact { kind: ContactKind::NormallyOpen, .. }
+        ));
+        assert!(matches!(
+            &after_insert_ld.rungs[0].elements[1],
+            LdElement::Contact { kind: ContactKind::RisingEdge, .. }
+        ));
+        assert!(matches!(
+            &after_insert_ld.rungs[0].elements[2],
+            LdElement::Contact { kind: ContactKind::NormallyClosed, .. }
+        ));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())

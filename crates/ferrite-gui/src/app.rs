@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use iced::border::Radius;
 use iced::widget::{
-    button, column, container, pick_list, row, scrollable, text, text_editor, text_input,
+    button, column, container, mouse_area, pick_list, row, scrollable, text, text_editor, text_input,
 };
 use iced::{Alignment, Background, Border, Color, Element, Length, Task, Theme, Vector};
 
@@ -156,6 +156,31 @@ pub enum Message {
     SetLanguage(UiLanguage),
     SetTheme(UiTheme),
 
+    // FBD Library
+    OpenFbdLibraryWindow,
+    CloseFbdLibraryWindow,
+    FbdLibrarySearchChanged(String),
+    ToggleCustomFbdBuilder,
+    CustomFbdNameChanged(String),
+    CustomFbdDescChanged(String),
+    CustomFbdInputsChanged(String),
+    CustomFbdOutputsChanged(String),
+    CustomFbdStCodeChanged(String),
+    CustomFbdStAction(iced::widget::text_editor::Action),
+    SaveCustomFbdBlock,
+    EditCustomFbdBlock(String),
+    DeleteCustomFbdBlock(String),
+    AddCustomFbdToCanvas(ferrite_lang_fbd::CompositeFbDef),
+
+    // Clipboard
+    CopySelection,
+    PasteClipboard,
+    ClipboardPasted(Option<String>),
+    FbdBlockSelected(usize),
+    FbdBlockDragStarted(String, usize),
+    FbdBlockDragHovered(String, usize),
+    FbdBlockDragDropped,
+
     // Help & Manual
     OpenHelpWindow,
     CloseHelpWindow,
@@ -181,6 +206,8 @@ pub enum Message {
 
     // Project & Files
     SaveProject,
+    SavePou(String),
+    SaveActivePouOrProject,
     SaveProjectAsDialog,
     OpenProjectFolderDialog,
     OpenProjectManifestDialog,
@@ -201,6 +228,12 @@ pub enum Message {
     PouRenameInputChanged(String),
     ConfirmRenamePou,
     CancelRenamePou,
+    OpenPouContextMenu(String),
+    ClosePouContextMenu,
+    PouDragStarted(String),
+    PouDragHovered(String),
+    PouDragDropped,
+    PouDragCancelled,
     ConfirmClearPou(String),
     CancelClearPou,
     ExecuteClearPou(String),
@@ -386,6 +419,7 @@ const HISTORY_COALESCE: Duration = Duration::from_millis(800);
 
 pub struct FerriteStudioApp {
     pub project: Project,
+    pub saved_pous: HashMap<String, PouSource>,
     pub runtime: Option<PlcRuntime>,
     pub diagnostics: Vec<ValidationDiagnostic>,
     pub active_tab: WorkspaceTab,
@@ -413,6 +447,21 @@ pub struct FerriteStudioApp {
     pub detached_left_id: Option<iced::window::Id>,
     pub detached_right_id: Option<iced::window::Id>,
     pub detached_bottom_id: Option<iced::window::Id>,
+    pub fbd_library_window_id: Option<iced::window::Id>,
+    pub fbd_library_search_query: String,
+    pub custom_fbd_builder_open: bool,
+    pub custom_fbd_name_input: String,
+    pub custom_fbd_desc_input: String,
+    pub custom_fbd_inputs_input: String,
+    pub custom_fbd_outputs_input: String,
+    pub custom_fbd_st_code_input: String,
+    pub custom_fbd_st_content: iced::widget::text_editor::Content,
+    pub custom_fbd_validation_error: Option<String>,
+    pub custom_fbd_editing_name: Option<String>,
+    pub global_custom_fbs: Vec<ferrite_lang_fbd::CompositeFbDef>,
+    pub fbd_selected_block: Option<usize>,
+    pub fbd_dragging_block: Option<usize>,
+    pub fbd_drag_hover_block: Option<usize>,
     pub help_window_id: Option<iced::window::Id>,
     pub digital_twin_window_id: Option<iced::window::Id>,
     pub twin_elapsed_ms: u64,
@@ -441,6 +490,9 @@ pub struct FerriteStudioApp {
     pub io_filter_sfc: bool,
     pub pou_filter_text: String,
     pub renaming_pou: Option<(String, String)>,
+    pub pou_context_menu: Option<String>,
+    pub dragging_pou: Option<String>,
+    pub drag_hover_pou: Option<String>,
     pub st_contents: HashMap<String, text_editor::Content>,
     pub confirm_clear_modal: Option<String>,
     pub sfc_selected: Option<(String, crate::canvas_sfc::SfcElementKey)>,
@@ -460,7 +512,11 @@ pub fn handle_keyboard_shortcut(
     if modifiers.command() {
         match key {
             iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s") => {
-                Some(Message::SaveProject)
+                if modifiers.shift() {
+                    Some(Message::SaveProject)
+                } else {
+                    Some(Message::SaveActivePouOrProject)
+                }
             }
             iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("o") => {
                 Some(Message::OpenProjectFolderDialog)
@@ -473,6 +529,8 @@ pub fn handle_keyboard_shortcut(
                 }
             }
             iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("y") => Some(Message::Redo),
+            iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("c") => Some(Message::CopySelection),
+            iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("v") => Some(Message::PasteClipboard),
             _ => None,
         }
     } else {
@@ -572,9 +630,11 @@ impl FerriteStudioApp {
             )
             .to_string();
 
+        let saved_pous = initial_project.pous.clone();
         Self {
             last_committed_project: initial_project.clone(),
             project: initial_project,
+            saved_pous,
             runtime,
             diagnostics,
             active_tab: first_pou,
@@ -603,6 +663,21 @@ impl FerriteStudioApp {
             detached_left_id: None,
             detached_right_id: None,
             detached_bottom_id: None,
+            fbd_library_window_id: None,
+            fbd_library_search_query: String::new(),
+            custom_fbd_builder_open: false,
+            custom_fbd_name_input: String::new(),
+            custom_fbd_desc_input: String::new(),
+            custom_fbd_inputs_input: "IN1, IN2".to_string(),
+            custom_fbd_outputs_input: "OUT".to_string(),
+            custom_fbd_st_code_input: "// Structured Text Logic\nOUT := IN1 AND IN2;".to_string(),
+            custom_fbd_st_content: iced::widget::text_editor::Content::with_text("// Structured Text Logic\nOUT := IN1 AND IN2;"),
+            custom_fbd_validation_error: None,
+            custom_fbd_editing_name: None,
+            global_custom_fbs: crate::custom_fbd_library::load_global_library().blocks,
+            fbd_selected_block: None,
+            fbd_dragging_block: None,
+            fbd_drag_hover_block: None,
             help_window_id: None,
             digital_twin_window_id: None,
             twin_elapsed_ms: 0,
@@ -630,6 +705,9 @@ impl FerriteStudioApp {
             io_filter_sfc: false,
             pou_filter_text: String::new(),
             renaming_pou: None,
+            pou_context_menu: None,
+            dragging_pou: None,
+            drag_hover_pou: None,
             st_contents,
             confirm_clear_modal: None,
             sfc_selected: None,
@@ -667,6 +745,15 @@ impl FerriteStudioApp {
                 .tr(
                     "FerritePLC — Diagnostics & Telemetry Dock",
                     "FerritePLC — Panneau Diagnostics & Télémétrie",
+                )
+                .to_string();
+        }
+        if Some(window_id) == self.fbd_library_window_id {
+            return self
+                .ui_lang
+                .tr(
+                    "FerritePLC — Function Block Library",
+                    "FerritePLC — Bibliothèque de Blocs Fonctionnels",
                 )
                 .to_string();
         }
@@ -750,6 +837,10 @@ impl FerriteStudioApp {
         !self.redo_stack.is_empty()
     }
 
+    pub fn is_pou_modified(&self, pou_name: &str) -> bool {
+        self.project.pous.get(pou_name) != self.saved_pous.get(pou_name)
+    }
+
     pub fn undo(&mut self) {
         if let Some(prev) = self.undo_stack.pop() {
             let curr = std::mem::replace(&mut self.project, prev);
@@ -758,7 +849,7 @@ impl FerriteStudioApp {
             self.last_edit_time = None;
             self.recompile_runtime();
             self.sync_st_contents();
-            self.modified = true;
+            self.modified = self.project.pous != self.saved_pous;
         }
     }
 
@@ -770,7 +861,7 @@ impl FerriteStudioApp {
             self.last_edit_time = None;
             self.recompile_runtime();
             self.sync_st_contents();
-            self.modified = true;
+            self.modified = self.project.pous != self.saved_pous;
         }
     }
 
@@ -835,16 +926,19 @@ fn insert_into_elements(
     branch_path: &[LdBranchPathSegment],
     index: usize,
     new_elem: LdElement,
-) {
+) -> Option<usize> {
     if branch_path.is_empty() {
         let idx = index.min(elements.len());
         elements.insert(idx, new_elem);
+        Some(idx)
     } else {
         let seg = branch_path[0];
         if let Some(LdElement::Branch { paths }) = elements.get_mut(seg.branch_idx)
             && let Some(sub_path) = paths.get_mut(seg.path_idx)
         {
-            insert_into_elements(sub_path, &branch_path[1..], index, new_elem);
+            insert_into_elements(sub_path, &branch_path[1..], index, new_elem)
+        } else {
+            None
         }
     }
 }
@@ -857,15 +951,32 @@ fn wrap_in_new_branch(
 ) {
     if branch_path.is_empty() {
         if index < elements.len() {
-            let existing = elements.remove(index);
-            elements.insert(
-                index,
-                LdElement::Branch {
-                    paths: vec![vec![existing], vec![added_elem]],
-                },
-            );
+            if let LdElement::Branch { paths } = &mut elements[index] {
+                paths.push(vec![added_elem]);
+            } else {
+                let existing = elements.remove(index);
+                elements.insert(
+                    index,
+                    LdElement::Branch {
+                        paths: vec![vec![existing], vec![added_elem]],
+                    },
+                );
+            }
         } else {
             elements.push(added_elem);
+        }
+    } else if branch_path.len() == 1 {
+        let seg = branch_path[0];
+        if let Some(LdElement::Branch { paths }) = elements.get_mut(seg.branch_idx)
+            && let Some(sub_path) = paths.get_mut(seg.path_idx)
+        {
+            // When the targeted branch leg has a single non-branch element, connect the new
+            // branch leg directly to the existing branch on the same level rather than nesting.
+            if sub_path.len() == 1 && !matches!(sub_path.first(), Some(LdElement::Branch { .. })) {
+                paths.insert(seg.path_idx + 1, vec![added_elem]);
+            } else {
+                wrap_in_new_branch(sub_path, &[], index, added_elem);
+            }
         }
     } else {
         let seg = branch_path[0];
@@ -1181,6 +1292,72 @@ impl FerriteStudioApp {
         self.modified = true;
     }
 
+    pub fn perform_ld_add_contact(
+        &mut self,
+        pou_name: &str,
+        r_idx: usize,
+        symbol: String,
+        kind: ContactKind,
+    ) {
+        let selected_target = self
+            .ld_selected
+            .as_ref()
+            .filter(|(p, _)| p == pou_name)
+            .map(|(_, k)| k)
+            .or_else(|| self.ld_selected_elements.last())
+            .and_then(|k| match k {
+                LdElementKey::Contact {
+                    rung,
+                    branch_path,
+                    index,
+                }
+                | LdElementKey::InlineFb {
+                    rung,
+                    branch_path,
+                    index,
+                }
+                | LdElementKey::Branch {
+                    rung,
+                    branch_path,
+                    index,
+                } if *rung == r_idx => Some((branch_path.clone(), *index + 1)),
+                _ => None,
+            });
+
+        let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(pou_name) else {
+            return;
+        };
+        let Some(rung) = ld.rungs.get_mut(r_idx) else {
+            return;
+        };
+
+        let new_elem = LdElement::Contact { symbol, kind };
+        let new_key = if let Some((bp, insert_idx)) = selected_target
+            && let Some(actual_idx) =
+                insert_into_elements(&mut rung.elements, &bp, insert_idx, new_elem.clone())
+        {
+            LdElementKey::Contact {
+                rung: r_idx,
+                branch_path: bp,
+                index: actual_idx,
+            }
+        } else {
+            let actual_idx = rung.elements.len();
+            rung.elements.push(new_elem);
+            LdElementKey::Contact {
+                rung: r_idx,
+                branch_path: Vec::new(),
+                index: actual_idx,
+            }
+        };
+
+        self.ld_selected = Some((pou_name.to_string(), new_key.clone()));
+        self.ld_selected_elements = vec![new_key];
+        self.track_history();
+        self.recompile_runtime();
+        self.modified = true;
+    }
+
     pub fn perform_ld_add_parallel_branch(
         &mut self,
         pou_name: &str,
@@ -1206,13 +1383,7 @@ impl FerriteStudioApp {
             if rung.elements.is_empty() {
                 rung.elements.push(new_contact);
             } else {
-                let first = rung.elements.remove(0);
-                rung.elements.insert(
-                    0,
-                    LdElement::Branch {
-                        paths: vec![vec![first], vec![new_contact]],
-                    },
-                );
+                wrap_in_new_branch(&mut rung.elements, &[], 0, new_contact);
             }
         } else {
             // Add a new branch path to the targeted branch
@@ -1409,6 +1580,8 @@ impl FerriteStudioApp {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match &message {
             Message::SaveProject
+            | Message::SavePou(_)
+            | Message::SaveActivePouOrProject
             | Message::SaveProjectAsDialog
             | Message::OpenProjectFolderDialog
             | Message::OpenProjectManifestDialog
@@ -1434,6 +1607,7 @@ impl FerriteStudioApp {
             | Message::SetTheme(_)
             | Message::SelectTab(_) => {
                 self.active_menu = None;
+                self.pou_context_menu = None;
             }
             _ => {}
         }
@@ -1529,6 +1703,246 @@ impl FerriteStudioApp {
                     Task::none()
                 }
             }
+            Message::OpenFbdLibraryWindow => {
+                if let Some(id) = self.fbd_library_window_id.take() {
+                    iced::window::close(id)
+                } else {
+                    let (id, open_task) = iced::window::open(iced::window::Settings {
+                        size: iced::Size::new(780.0, 560.0),
+                        min_size: Some(iced::Size::new(500.0, 380.0)),
+                        exit_on_close_request: false,
+                            ..Default::default()
+                    });
+                    self.fbd_library_window_id = Some(id);
+                    open_task.map(|_| Message::None)
+                }
+            }
+            Message::CloseFbdLibraryWindow => {
+                if let Some(id) = self.fbd_library_window_id.take() {
+                    iced::window::close(id)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::FbdLibrarySearchChanged(query) => {
+                self.fbd_library_search_query = query;
+                Task::none()
+            }
+            Message::ToggleCustomFbdBuilder => {
+                self.custom_fbd_builder_open = !self.custom_fbd_builder_open;
+                if !self.custom_fbd_builder_open {
+                    self.custom_fbd_editing_name = None;
+                    self.custom_fbd_validation_error = None;
+                } else if self.custom_fbd_editing_name.is_none() {
+                    self.custom_fbd_name_input = String::new();
+                    self.custom_fbd_desc_input = String::new();
+                    self.custom_fbd_inputs_input = "IN1, IN2".to_string();
+                    self.custom_fbd_outputs_input = "OUT".to_string();
+                    self.custom_fbd_st_code_input = "// Structured Text Logic\nOUT := IN1 AND IN2;".to_string();
+                    self.custom_fbd_st_content = iced::widget::text_editor::Content::with_text(&self.custom_fbd_st_code_input);
+                    self.custom_fbd_validation_error = None;
+                }
+                Task::none()
+            }
+            Message::CustomFbdNameChanged(name) => {
+                self.custom_fbd_name_input = name;
+                Task::none()
+            }
+            Message::CustomFbdDescChanged(desc) => {
+                self.custom_fbd_desc_input = desc;
+                Task::none()
+            }
+            Message::CustomFbdInputsChanged(inputs) => {
+                self.custom_fbd_inputs_input = inputs;
+                Task::none()
+            }
+            Message::CustomFbdOutputsChanged(outputs) => {
+                self.custom_fbd_outputs_input = outputs;
+                Task::none()
+            }
+            Message::CustomFbdStCodeChanged(code) => {
+                self.custom_fbd_st_code_input = code;
+                self.custom_fbd_st_content = iced::widget::text_editor::Content::with_text(&self.custom_fbd_st_code_input);
+                let trimmed = self.custom_fbd_st_code_input.trim();
+                if trimmed.is_empty() {
+                    self.custom_fbd_validation_error = Some("ST logic cannot be empty".to_string());
+                } else {
+                    let pou_name = if self.custom_fbd_name_input.trim().is_empty() {
+                        "CustomBlock"
+                    } else {
+                        self.custom_fbd_name_input.trim()
+                    };
+                    match ferrite_lang_st::parse_st_statements(&self.custom_fbd_st_code_input, pou_name) {
+                        Ok(_) => self.custom_fbd_validation_error = None,
+                        Err(e) => self.custom_fbd_validation_error = Some(e.to_string()),
+                    }
+                }
+                Task::none()
+            }
+            Message::CustomFbdStAction(action) => {
+                self.custom_fbd_st_content.perform(action);
+                self.custom_fbd_st_code_input = self.custom_fbd_st_content.text();
+                let trimmed = self.custom_fbd_st_code_input.trim();
+                if trimmed.is_empty() {
+                    self.custom_fbd_validation_error = Some("ST logic cannot be empty".to_string());
+                } else {
+                    let pou_name = if self.custom_fbd_name_input.trim().is_empty() {
+                        "CustomBlock"
+                    } else {
+                        self.custom_fbd_name_input.trim()
+                    };
+                    match ferrite_lang_st::parse_st_statements(&self.custom_fbd_st_code_input, pou_name) {
+                        Ok(_) => self.custom_fbd_validation_error = None,
+                        Err(e) => self.custom_fbd_validation_error = Some(e.to_string()),
+                    }
+                }
+                Task::none()
+            }
+            Message::SaveCustomFbdBlock => {
+                let name = self.custom_fbd_name_input.trim().to_string();
+                if name.is_empty()
+                    || name.contains('.')
+                    || !name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                {
+                    self.custom_fbd_validation_error = Some("Block name must be a valid identifier (alphanumeric/underscore)".to_string());
+                    return Task::none();
+                }
+
+                let trimmed_st = self.custom_fbd_st_code_input.trim();
+                if trimmed_st.is_empty() {
+                    self.custom_fbd_validation_error = Some("ST logic cannot be empty".to_string());
+                    return Task::none();
+                }
+
+                if let Err(e) = ferrite_lang_st::parse_st_statements(&self.custom_fbd_st_code_input, &name) {
+                    self.custom_fbd_validation_error = Some(format!("Syntax error: {e}"));
+                    return Task::none();
+                }
+
+                let input_pins: Vec<String> = self.custom_fbd_inputs_input
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if input_pins.is_empty() {
+                    self.custom_fbd_validation_error = Some("At least one input pin is required".to_string());
+                    return Task::none();
+                }
+
+                let output_pins: Vec<String> = self.custom_fbd_outputs_input
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if output_pins.is_empty() {
+                    self.custom_fbd_validation_error = Some("At least one output pin is required".to_string());
+                    return Task::none();
+                }
+
+                let def = ferrite_lang_fbd::CompositeFbDef {
+                    name: name.clone(),
+                    description: self.custom_fbd_desc_input.trim().to_string(),
+                    input_pins,
+                    output_pins,
+                    st_code: Some(self.custom_fbd_st_code_input.clone()),
+                    blocks: Vec::new(),
+                };
+
+                let target_name = self.custom_fbd_editing_name.as_deref().unwrap_or(&name);
+                if let Some(pos) = self.global_custom_fbs.iter().position(|b| b.name == target_name || b.name == name) {
+                    self.global_custom_fbs[pos] = def;
+                } else {
+                    self.global_custom_fbs.push(def);
+                }
+
+                let lib = crate::custom_fbd_library::GlobalCustomFbdLibrary {
+                    version: crate::custom_fbd_library::GLOBAL_CUSTOM_FBD_VERSION,
+                    blocks: self.global_custom_fbs.clone(),
+                };
+                let _ = crate::custom_fbd_library::save_global_library(&lib);
+
+                self.custom_fbd_builder_open = false;
+                self.custom_fbd_editing_name = None;
+                self.custom_fbd_validation_error = None;
+                Task::none()
+            }
+            Message::EditCustomFbdBlock(name) => {
+                if let Some(block) = self.global_custom_fbs.iter().find(|b| b.name == name) {
+                    self.custom_fbd_builder_open = true;
+                    self.custom_fbd_editing_name = Some(block.name.clone());
+                    self.custom_fbd_name_input = block.name.clone();
+                    self.custom_fbd_desc_input = block.description.clone();
+                    self.custom_fbd_inputs_input = block.input_pins.join(", ");
+                    self.custom_fbd_outputs_input = block.output_pins.join(", ");
+                    self.custom_fbd_st_code_input = block.st_code.clone().unwrap_or_default();
+                    self.custom_fbd_st_content = iced::widget::text_editor::Content::with_text(&self.custom_fbd_st_code_input);
+                    self.custom_fbd_validation_error = None;
+                }
+                Task::none()
+            }
+            Message::DeleteCustomFbdBlock(name) => {
+                self.global_custom_fbs.retain(|b| b.name != name);
+                let lib = crate::custom_fbd_library::GlobalCustomFbdLibrary {
+                    version: crate::custom_fbd_library::GLOBAL_CUSTOM_FBD_VERSION,
+                    blocks: self.global_custom_fbs.clone(),
+                };
+                let _ = crate::custom_fbd_library::save_global_library(&lib);
+                if self.custom_fbd_editing_name.as_deref() == Some(&name) {
+                    self.custom_fbd_builder_open = false;
+                    self.custom_fbd_editing_name = None;
+                    self.custom_fbd_validation_error = None;
+                }
+                Task::none()
+            }
+            Message::AddCustomFbdToCanvas(def) => {
+                let target_pou = match &self.active_tab {
+                    WorkspaceTab::Pou(name) => {
+                        if matches!(self.project.pous.get(name), Some(PouSource::Fbd(_))) {
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }.or_else(|| {
+                    self.project.pous.iter().find_map(|(name, src)| {
+                        if matches!(src, PouSource::Fbd(_)) {
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                });
+
+                if let Some(pou_name) = target_pou
+                    && let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+                {
+                    if let Some(pos) = fbd.composites.iter().position(|c| c.name == def.name) {
+                        fbd.composites[pos] = def.clone();
+                    } else {
+                        fbd.composites.push(def.clone());
+                    }
+
+                    let mut inputs = HashMap::new();
+                    for pin in &def.input_pins {
+                        inputs.insert(pin.clone(), ferrite_lang_fbd::FbdInputSource::Value { expr: "FALSE".to_string() });
+                    }
+
+                    let next = fbd.blocks.len() + 1;
+                    let block_id = format!("{}_{next}", def.name);
+                    fbd.blocks.push(ferrite_lang_fbd::FbdBlock {
+                        id: block_id,
+                        kind: ferrite_lang_fbd::FbdBlockKind::Composite { type_name: def.name },
+                        inputs,
+                        outputs: HashMap::new(),
+                    });
+
+                    self.track_history();
+                    self.modified = true;
+                    self.recompile_runtime();
+                }
+                Task::none()
+            }
             Message::OpenHelpWindow => {
                 if let Some(id) = self.help_window_id.take() {
                     iced::window::close(id)
@@ -1537,7 +1951,7 @@ impl FerriteStudioApp {
                         size: iced::Size::new(1040.0, 760.0),
                         min_size: Some(iced::Size::new(720.0, 500.0)),
                         exit_on_close_request: false,
-                        ..Default::default()
+                            ..Default::default()
                     });
                     self.help_window_id = Some(id);
                     open_task.map(|_| Message::None)
@@ -1573,6 +1987,9 @@ impl FerriteStudioApp {
                     self.show_bottom_dock = true;
                     self.detach_bottom_dock = false;
                     self.detached_bottom_id = None;
+                    iced::window::close(id)
+                } else if Some(id) == self.fbd_library_window_id {
+                    self.fbd_library_window_id = None;
                     iced::window::close(id)
                 } else if Some(id) == self.help_window_id {
                     self.help_window_id = None;
@@ -1824,12 +2241,21 @@ impl FerriteStudioApp {
                 self.bottom_dock_tab = BottomDockTab::Diagnostics;
                 Task::none()
             }
+            Message::SaveActivePouOrProject => {
+                if let WorkspaceTab::Pou(ref pou_name) = self.active_tab {
+                    let p = pou_name.clone();
+                    self.update(Message::SavePou(p))
+                } else {
+                    self.update(Message::SaveProject)
+                }
+            }
             Message::SaveProject => {
                 let root = self.project.root_dir.clone();
                 let _ = self.digital_twin_workspace.save_to_project(&root);
                 if let Err(e) = self.project.save(&root) {
                     self.status_banner = format!("Save failed: {e}");
                 } else {
+                    self.saved_pous = self.project.pous.clone();
                     self.modified = false;
                     self.status_banner = self
                         .ui_lang
@@ -1838,6 +2264,26 @@ impl FerriteStudioApp {
                             "Projet enregistré avec succès.",
                         )
                         .to_string();
+                }
+                Task::none()
+            }
+            Message::SavePou(pou_name) => {
+                let root = self.project.root_dir.clone();
+                match self.project.save_pou(&root, &pou_name) {
+                    Ok(_) => {
+                        if let Some(pou_src) = self.project.pous.get(&pou_name).cloned() {
+                            self.saved_pous.insert(pou_name.clone(), pou_src);
+                        }
+                        self.modified = self.project.pous != self.saved_pous;
+                        self.status_banner = format!(
+                            "{} '{}'",
+                            self.ui_lang.tr("POU saved:", "POU enregistre :"),
+                            pou_name
+                        );
+                    }
+                    Err(e) => {
+                        self.status_banner = format!("Save POU '{pou_name}' failed: {e}");
+                    }
                 }
                 Task::none()
             }
@@ -1850,7 +2296,9 @@ impl FerriteStudioApp {
                 match Project::load(&path) {
                     Ok(loaded) => {
                         let p_name = loaded.manifest.name.clone();
+                        self.saved_pous = loaded.pous.clone();
                         self.project = loaded;
+                        self.modified = false;
                         self.digital_twin_workspace =
                             DigitalTwinWorkspace::load_or_default(&self.project.root_dir);
                         self.undo_stack.clear();
@@ -1920,6 +2368,7 @@ impl FerriteStudioApp {
                         Ok(()) => {
                             let _ = self.digital_twin_workspace.save_to_project(&folder);
                             self.project.root_dir = folder.clone();
+                            self.saved_pous = self.project.pous.clone();
                             self.modified = false;
                             self.status_banner = format!("Project saved to {}", folder.display());
                         }
@@ -1978,7 +2427,9 @@ impl FerriteStudioApp {
                                 match Project::import_plcopen_xml(&xml_content, &target_dir) {
                                     Ok(imported_project) => {
                                         let p_name = imported_project.manifest.name.clone();
+                                        self.saved_pous = imported_project.pous.clone();
                                         self.project = imported_project;
+                                        self.modified = false;
                                         self.digital_twin_workspace =
                                             DigitalTwinWorkspace::load_or_default(
                                                 &self.project.root_dir,
@@ -2018,6 +2469,316 @@ impl FerriteStudioApp {
                 self.redo();
                 Task::none()
             }
+            Message::CopySelection => {
+                let WorkspaceTab::Pou(pou_name) = self.active_tab.clone() else {
+                    return Task::none();
+                };
+                let Some(pou_src) = self.project.pous.get(&pou_name) else {
+                    return Task::none();
+                };
+                let clipboard_data = match pou_src {
+                    PouSource::Ld(ld) => {
+                        let selected_rung_idx = self.ld_selected_elements.iter().map(|k| match k {
+                            crate::canvas_ld::LdElementKey::Rung(r) => *r,
+                            crate::canvas_ld::LdElementKey::Contact { rung, .. } => *rung,
+                            crate::canvas_ld::LdElementKey::Coil { rung, .. } => *rung,
+                            crate::canvas_ld::LdElementKey::Branch { rung, .. } => *rung,
+                            crate::canvas_ld::LdElementKey::InlineFb { rung, .. } => *rung,
+                        }).next().or_else(|| self.ld_selected.as_ref().and_then(|(p, k)| {
+                            if p == &pou_name {
+                                match k {
+                                    crate::canvas_ld::LdElementKey::Rung(r) => Some(*r),
+                                    crate::canvas_ld::LdElementKey::Contact { rung, .. } => Some(*rung),
+                                    crate::canvas_ld::LdElementKey::Coil { rung, .. } => Some(*rung),
+                                    crate::canvas_ld::LdElementKey::Branch { rung, .. } => Some(*rung),
+                            crate::canvas_ld::LdElementKey::InlineFb { rung, .. } => Some(*rung),
+                                }
+                            } else {
+                                None
+                            }
+                        }));
+
+                        let rungs_to_copy = if let Some(r_idx) = selected_rung_idx {
+                            if r_idx < ld.rungs.len() {
+                                vec![ld.rungs[r_idx].clone()]
+                            } else {
+                                Vec::new()
+                            }
+                        } else if !ld.rungs.is_empty() {
+                            vec![ld.rungs.last().cloned().unwrap_or_else(|| ld.rungs[0].clone())]
+                        } else {
+                            Vec::new()
+                        };
+
+                        if rungs_to_copy.is_empty() {
+                            None
+                        } else {
+                            Some(crate::clipboard::FerriteClipboardData::Ladder { rungs: rungs_to_copy })
+                        }
+                    }
+                    PouSource::Sfc(sfc) => {
+                        let mut selected_step_ids = std::collections::HashSet::new();
+                        let mut selected_trans_ids = std::collections::HashSet::new();
+
+                        for elem in &self.sfc_selected_elements {
+                            match elem {
+                                crate::canvas_sfc::SfcElementKey::Step(id) => { selected_step_ids.insert(id.clone()); }
+                                crate::canvas_sfc::SfcElementKey::Transition(id) => { selected_trans_ids.insert(id.clone()); }
+                            }
+                        }
+                        if let Some((ref p, ref elem)) = self.sfc_selected
+                            && p == &pou_name
+                        {
+                            match elem {
+                                crate::canvas_sfc::SfcElementKey::Step(id) => { selected_step_ids.insert(id.clone()); }
+                                crate::canvas_sfc::SfcElementKey::Transition(id) => { selected_trans_ids.insert(id.clone()); }
+                            }
+                        }
+
+                        let steps: Vec<_> = sfc.steps.iter().filter(|s| selected_step_ids.contains(&s.id)).cloned().collect();
+                        let transitions: Vec<_> = sfc.transitions.iter().filter(|t| selected_trans_ids.contains(&t.id)).cloned().collect();
+
+                        if steps.is_empty() && transitions.is_empty() {
+                            None
+                        } else {
+                            Some(crate::clipboard::FerriteClipboardData::Sfc { steps, transitions })
+                        }
+                    }
+                    PouSource::Fbd(fbd) => {
+                        let block_idx = self.fbd_selected_block.or(
+                            if !fbd.blocks.is_empty() { Some(0) } else { None }
+                        );
+                        if let Some(idx) = block_idx {
+                            if idx < fbd.blocks.len() {
+                                Some(crate::clipboard::FerriteClipboardData::Fbd {
+                                    blocks: vec![fbd.blocks[idx].clone()],
+                                })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+
+                if let Some(data) = clipboard_data
+                    && let Ok(json) = crate::clipboard::serialize_clipboard(data)
+                {
+                    return iced::clipboard::write(json);
+                }
+                Task::none()
+            }
+            Message::PasteClipboard => {
+                iced::clipboard::read().map(Message::ClipboardPasted)
+            }
+            Message::ClipboardPasted(content) => {
+                let Some(content) = content else {
+                    return Task::none();
+                };
+                let Some(data) = crate::clipboard::deserialize_clipboard(&content) else {
+                    return Task::none();
+                };
+                let WorkspaceTab::Pou(pou_name) = self.active_tab.clone() else {
+                    return Task::none();
+                };
+                let Some(pou_src) = self.project.pous.get_mut(&pou_name) else {
+                    return Task::none();
+                };
+
+                match (pou_src, data) {
+                    (PouSource::Ld(ld), crate::clipboard::FerriteClipboardData::Ladder { rungs }) => {
+                        if rungs.is_empty() {
+                            return Task::none();
+                        }
+                        let selected_rung_idx = self.ld_selected_elements.iter().map(|k| match k {
+                            crate::canvas_ld::LdElementKey::Rung(r) => *r,
+                            crate::canvas_ld::LdElementKey::Contact { rung, .. } => *rung,
+                            crate::canvas_ld::LdElementKey::Coil { rung, .. } => *rung,
+                            crate::canvas_ld::LdElementKey::Branch { rung, .. } => *rung,
+                            crate::canvas_ld::LdElementKey::InlineFb { rung, .. } => *rung,
+                        }).next().or_else(|| self.ld_selected.as_ref().and_then(|(p, k)| {
+                            if p == &pou_name {
+                                match k {
+                                    crate::canvas_ld::LdElementKey::Rung(r) => Some(*r),
+                                    crate::canvas_ld::LdElementKey::Contact { rung, .. } => Some(*rung),
+                                    crate::canvas_ld::LdElementKey::Coil { rung, .. } => Some(*rung),
+                                    crate::canvas_ld::LdElementKey::Branch { rung, .. } => Some(*rung),
+                            crate::canvas_ld::LdElementKey::InlineFb { rung, .. } => Some(*rung),
+                                }
+                            } else {
+                                None
+                            }
+                        }));
+
+                        let insert_pos = if let Some(r_idx) = selected_rung_idx {
+                            (r_idx + 1).min(ld.rungs.len())
+                        } else {
+                            ld.rungs.len()
+                        };
+
+                        let first_inserted = insert_pos;
+                        for (offset, mut rung) in rungs.into_iter().enumerate() {
+                            rung.id = format!("Rung_{}", ld.rungs.len() + 1);
+                            ld.rungs.insert(insert_pos + offset, rung);
+                        }
+
+                        self.ld_selected = Some((pou_name.clone(), crate::canvas_ld::LdElementKey::Rung(first_inserted)));
+                        self.ld_selected_elements = vec![crate::canvas_ld::LdElementKey::Rung(first_inserted)];
+                        self.track_history();
+                        self.modified = self.project.pous != self.saved_pous;
+                    }
+                    (PouSource::Sfc(sfc), crate::clipboard::FerriteClipboardData::Sfc { steps, transitions }) => {
+                        if steps.is_empty() && transitions.is_empty() {
+                            return Task::none();
+                        }
+
+                        let mut next_step_idx = sfc.steps.iter().filter_map(|s| {
+                            s.id.strip_prefix("Step_").or_else(|| s.id.strip_prefix("X"))
+                                .and_then(|digits| digits.parse::<u32>().ok())
+                        }).max().unwrap_or(0) + 1;
+
+                        let mut next_trans_idx = sfc.transitions.iter().filter_map(|t| {
+                            t.id.strip_prefix("Trans_").or_else(|| t.id.strip_prefix("T"))
+                                .and_then(|digits| digits.parse::<u32>().ok())
+                        }).max().unwrap_or(0) + 1;
+
+                        let mut existing_step_ids: std::collections::HashSet<String> = sfc.steps.iter().map(|s| s.id.clone()).collect();
+                        let mut existing_trans_ids: std::collections::HashSet<String> = sfc.transitions.iter().map(|t| t.id.clone()).collect();
+
+                        let mut id_map = std::collections::HashMap::new();
+                        for s in &steps {
+                            let mut new_id = format!("Step_{}", next_step_idx);
+                            while existing_step_ids.contains(&new_id) || new_id == s.id {
+                                next_step_idx += 1;
+                                new_id = format!("Step_{}", next_step_idx);
+                            }
+                            existing_step_ids.insert(new_id.clone());
+                            id_map.insert(s.id.clone(), new_id);
+                            next_step_idx += 1;
+                        }
+                        for t in &transitions {
+                            let mut new_id = format!("Trans_{}", next_trans_idx);
+                            while existing_trans_ids.contains(&new_id) || new_id == t.id {
+                                next_trans_idx += 1;
+                                new_id = format!("Trans_{}", next_trans_idx);
+                            }
+                            existing_trans_ids.insert(new_id.clone());
+                            id_map.insert(t.id.clone(), new_id);
+                            next_trans_idx += 1;
+                        }
+
+                        let mut new_selection = Vec::new();
+
+                        for mut step in steps {
+                            let old_id = step.id.clone();
+                            if let Some(new_id) = id_map.get(&old_id) {
+                                step.id = new_id.clone();
+                                step.name = new_id.clone();
+                            }
+                            step.kind = ferrite_lang_sfc::StepKind::Normal;
+                            if let Some((x, y)) = step.grid_pos {
+                                step.grid_pos = Some((x + 2, y + 2));
+                            }
+                            new_selection.push(crate::canvas_sfc::SfcElementKey::Step(step.id.clone()));
+                            sfc.steps.push(step);
+                        }
+
+                        for mut trans in transitions {
+                            let old_id = trans.id.clone();
+                            if let Some(new_id) = id_map.get(&old_id) {
+                                trans.id = new_id.clone();
+                            }
+                            trans.from_steps = trans.from_steps.into_iter().map(|s| {
+                                id_map.get(&s).cloned().unwrap_or(s)
+                            }).collect();
+                            trans.to_steps = trans.to_steps.into_iter().map(|s| {
+                                id_map.get(&s).cloned().unwrap_or(s)
+                            }).collect();
+                            if let Some((x, y)) = trans.grid_pos {
+                                trans.grid_pos = Some((x + 2, y + 2));
+                            }
+                            new_selection.push(crate::canvas_sfc::SfcElementKey::Transition(trans.id.clone()));
+                            sfc.transitions.push(trans);
+                        }
+
+                        if let Some(first_sel) = new_selection.first() {
+                            self.sfc_selected = Some((pou_name.clone(), first_sel.clone()));
+                        }
+                        self.sfc_selected_elements = new_selection;
+                        self.track_history();
+                        self.modified = self.project.pous != self.saved_pous;
+                    }
+                    (PouSource::Fbd(fbd), crate::clipboard::FerriteClipboardData::Fbd { blocks }) => {
+                        if blocks.is_empty() {
+                            return Task::none();
+                        }
+
+                        let insert_pos = if let Some(sel_idx) = self.fbd_selected_block {
+                            (sel_idx + 1).min(fbd.blocks.len())
+                        } else {
+                            fbd.blocks.len()
+                        };
+
+                        let first_inserted = insert_pos;
+
+                        for (offset, mut block) in blocks.into_iter().enumerate() {
+                            let existing_ids: std::collections::HashSet<_> = fbd.blocks.iter().map(|b| b.id.as_str()).collect();
+                            let base_name = block.id.clone();
+                            let mut suffix = 2;
+                            let mut new_id = format!("{}_{}", base_name, suffix);
+                            while existing_ids.contains(new_id.as_str()) {
+                                suffix += 1;
+                                new_id = format!("{}_{}", base_name, suffix);
+                            }
+                            block.id = new_id;
+                            fbd.blocks.insert(insert_pos + offset, block);
+                        }
+
+                        self.fbd_selected_block = Some(first_inserted);
+                        self.track_history();
+                        self.modified = self.project.pous != self.saved_pous;
+                    }
+                    _ => {}
+                }
+                Task::none()
+            }
+            Message::FbdBlockSelected(idx) => {
+                self.fbd_selected_block = Some(idx);
+                Task::none()
+            }
+            Message::FbdBlockDragStarted(pou_name, idx) => {
+                self.active_tab = WorkspaceTab::Pou(pou_name);
+                self.fbd_selected_block = Some(idx);
+                self.fbd_dragging_block = Some(idx);
+                self.fbd_drag_hover_block = None;
+                Task::none()
+            }
+            Message::FbdBlockDragHovered(_pou_name, idx) => {
+                if self.fbd_dragging_block.is_some() {
+                    self.fbd_drag_hover_block = Some(idx);
+                }
+                Task::none()
+            }
+            Message::FbdBlockDragDropped => {
+                if let (Some(from), Some(to)) = (self.fbd_dragging_block.take(), self.fbd_drag_hover_block.take())
+                    && from != to
+                    && let WorkspaceTab::Pou(ref pou_name) = self.active_tab.clone()
+                    && let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(pou_name)
+                    && from < fbd.blocks.len()
+                    && to < fbd.blocks.len()
+                {
+                    let blk = fbd.blocks.remove(from);
+                    fbd.blocks.insert(to, blk);
+                    self.fbd_selected_block = Some(to);
+                    self.track_history();
+                    self.modified = self.project.pous != self.saved_pous;
+                }
+                self.fbd_dragging_block = None;
+                self.fbd_drag_hover_block = None;
+                Task::none()
+            }
             Message::DeletePressed => {
                 if self.digital_twin_workspace.mode == TwinMode::Edit
                     && let Some(sel_id) = self.digital_twin_workspace.selected_id
@@ -2043,6 +2804,12 @@ impl FerriteStudioApp {
                             let p = pou_name.clone();
                             return self.update(Message::SfcRequestDeleteSelected(p));
                         }
+                        PouSource::Fbd(_) => {
+                            if let Some(b_idx) = self.fbd_selected_block.take() {
+                                let p = pou_name.clone();
+                                return self.update(Message::FbdRemoveBlock(p, b_idx));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -2053,6 +2820,9 @@ impl FerriteStudioApp {
                     let name = self.new_pou_name.trim().to_string();
                     let kind = self.new_pou_lang;
                     if self.project.add_pou(&name, kind).is_ok() {
+                        if let Some(pou_src) = self.project.pous.get(&name).cloned() {
+                            self.saved_pous.insert(name.clone(), pou_src);
+                        }
                         self.track_history();
                         self.active_tab = WorkspaceTab::Pou(name.clone());
                         if kind == LanguageKind::St {
@@ -2063,7 +2833,7 @@ impl FerriteStudioApp {
                         }
                         self.new_pou_name.clear();
                         self.recompile_runtime();
-                        self.modified = true;
+                        self.modified = self.project.pous != self.saved_pous;
                     }
                 }
                 Task::none()
@@ -2106,6 +2876,50 @@ impl FerriteStudioApp {
                 self.renaming_pou = None;
                 Task::none()
             }
+            Message::OpenPouContextMenu(pou_name) => {
+                self.pou_context_menu = Some(pou_name);
+                Task::none()
+            }
+            Message::ClosePouContextMenu => {
+                self.pou_context_menu = None;
+                Task::none()
+            }
+            Message::PouDragStarted(pou_name) => {
+                self.active_tab = WorkspaceTab::Pou(pou_name.clone());
+                self.dragging_pou = Some(pou_name);
+                self.drag_hover_pou = None;
+                self.pou_context_menu = None;
+                Task::none()
+            }
+            Message::PouDragHovered(pou_name) => {
+                if self.dragging_pou.is_some() {
+                    self.drag_hover_pou = Some(pou_name);
+                }
+                Task::none()
+            }
+            Message::PouDragDropped => {
+                if let (Some(from), Some(to)) = (self.dragging_pou.take(), self.drag_hover_pou.take()) {
+                    if from != to {
+                        if self.project.reorder_pou(&from, &to) {
+                            self.track_history();
+                            self.modified = self.project.pous != self.saved_pous;
+                            self.recompile_runtime();
+                        }
+                    } else {
+                        self.active_tab = WorkspaceTab::Pou(from);
+                    }
+                } else if let Some(from) = self.dragging_pou.take() {
+                    self.active_tab = WorkspaceTab::Pou(from);
+                }
+                self.dragging_pou = None;
+                self.drag_hover_pou = None;
+                Task::none()
+            }
+            Message::PouDragCancelled => {
+                self.dragging_pou = None;
+                self.drag_hover_pou = None;
+                Task::none()
+            }
             Message::ConfirmRenamePou => {
                 if let Some((orig, new_name)) = self.renaming_pou.take() {
                     let trimmed = new_name.trim();
@@ -2134,8 +2948,12 @@ impl FerriteStudioApp {
                                 let new_p = if p == orig { trimmed.to_string() } else { p };
                                 self.ld_selected = Some((new_p, elem));
                             }
+                            self.saved_pous.remove(&orig);
+                            if let Some(pou_src) = self.project.pous.get(trimmed).cloned() {
+                                self.saved_pous.insert(trimmed.to_string(), pou_src);
+                            }
                             self.track_history();
-                            self.modified = true;
+                            self.modified = self.project.pous != self.saved_pous;
                             self.recompile_runtime();
                         }
                         Err(e) => {
@@ -2168,8 +2986,9 @@ impl FerriteStudioApp {
                         {
                             self.ld_selected = None;
                         }
+                        self.saved_pous.remove(&pou_name);
                         self.track_history();
-                        self.modified = true;
+                        self.modified = self.project.pous != self.saved_pous;
                         self.recompile_runtime();
                     }
                     Err(e) => {
@@ -2532,34 +3351,17 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::LdAddContact(pou_name, r_idx) => {
-                if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
-                    && let Some(rung) = ld.rungs.get_mut(r_idx)
-                {
-                    rung.elements.push(LdElement::Contact {
-                        symbol: "Sensor_1".to_string(),
-                        kind: ContactKind::NormallyOpen,
-                    });
-                    self.track_history();
-                    self.recompile_runtime();
-                    self.modified = true;
-                }
+                self.perform_ld_add_contact(&pou_name, r_idx, "Sensor_1".to_string(), ContactKind::NormallyOpen);
                 Task::none()
             }
             Message::LdAddContactWithKind(pou_name, r_idx, kind) => {
-                if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
-                    && let Some(rung) = ld.rungs.get_mut(r_idx)
-                {
-                    let sym = match kind {
-                        ContactKind::NormallyOpen => "Sensor_1".to_string(),
-                        ContactKind::NormallyClosed => "High_Temp_Alarm".to_string(),
-                        ContactKind::RisingEdge => "Start_Button".to_string(),
-                        ContactKind::FallingEdge => "Stop_Button".to_string(),
-                    };
-                    rung.elements.push(LdElement::Contact { symbol: sym, kind });
-                    self.track_history();
-                    self.recompile_runtime();
-                    self.modified = true;
-                }
+                let sym = match kind {
+                    ContactKind::NormallyOpen => "Sensor_1".to_string(),
+                    ContactKind::NormallyClosed => "High_Temp_Alarm".to_string(),
+                    ContactKind::RisingEdge => "Start_Button".to_string(),
+                    ContactKind::FallingEdge => "Stop_Button".to_string(),
+                };
+                self.perform_ld_add_contact(&pou_name, r_idx, sym, kind);
                 Task::none()
             }
             Message::LdRemoveContact(pou_name, r_idx, e_idx) => {
@@ -4239,7 +5041,7 @@ impl FerriteStudioApp {
                         size: iced::Size::new(1240.0, 820.0),
                         min_size: Some(iced::Size::new(820.0, 560.0)),
                         exit_on_close_request: false,
-                        ..Default::default()
+                            ..Default::default()
                     });
                     self.digital_twin_window_id = Some(id);
                     self.show_digital_twin_window = true;
@@ -5046,6 +5848,9 @@ impl FerriteStudioApp {
         if Some(window_id) == self.detached_bottom_id {
             return self.view_detached_bottom();
         }
+        if Some(window_id) == self.fbd_library_window_id {
+            return crate::fbd_library_window::render_fbd_library_window(self);
+        }
         if Some(window_id) == self.help_window_id {
             return self.view_help_window();
         }
@@ -5083,11 +5888,27 @@ impl FerriteStudioApp {
         };
 
         let items: Element<'_, Message> = match active {
-            ActiveMenu::File => row![
+            ActiveMenu::File => {
+                let save_pou_msg = if let WorkspaceTab::Pou(ref p_name) = self.active_tab {
+                    Some(Message::SavePou(p_name.clone()))
+                } else {
+                    None
+                };
+                row![
                 button(
                     text(
                         self.ui_lang
-                            .tr("Save Project (Ctrl+S)", "Enregistrer Projet (Ctrl+S)")
+                            .tr("Save Active POU (Ctrl+S)", "Enregistrer POU Actif (Ctrl+S)")
+                    )
+                    .size(11)
+                )
+                .on_press_maybe(save_pou_msg)
+                .style(StudioTheme::ghost_button)
+                .padding([4, 8]),
+                button(
+                    text(
+                        self.ui_lang
+                            .tr("Save Project (Ctrl+Shift+S)", "Enregistrer Projet (Ctrl+Shift+S)")
                     )
                     .size(11)
                 )
@@ -5173,7 +5994,8 @@ impl FerriteStudioApp {
             ]
             .spacing(6)
             .align_y(Alignment::Center)
-            .into(),
+            .into()
+            }
             ActiveMenu::Plc => row![
                 button(
                     text(if self.sim_running {
@@ -5720,11 +6542,6 @@ impl FerriteStudioApp {
         .spacing(4)
         .align_y(Alignment::Center);
 
-        let save_btn = button(text(self.ui_lang.tr("Save", "Enregistrer")).size(12))
-            .on_press(Message::SaveProject)
-            .style(StudioTheme::secondary_button)
-            .padding([6, 12]);
-
         let check_btn = button(text(self.ui_lang.tr("Check", "Vérifier")).size(12))
             .on_press(Message::CheckProject)
             .style(StudioTheme::secondary_button)
@@ -5760,22 +6577,6 @@ impl FerriteStudioApp {
             }))
             .style(StudioTheme::ghost_button)
             .padding([6, 10]);
-
-        let explorer_toggle =
-            button(text(if self.show_left_explorer { "<<" } else { ">>" }).size(11))
-                .on_press(Message::ToggleLeftExplorer)
-                .style(StudioTheme::ghost_button)
-                .padding([6, 8]);
-
-        let io_toggle = button(text(if self.show_right_io { ">>" } else { "<<" }).size(11))
-            .on_press(Message::ToggleRightIo)
-            .style(StudioTheme::ghost_button)
-            .padding([6, 8]);
-
-        let dock_toggle = button(text(if self.show_bottom_dock { "v" } else { "^" }).size(11))
-            .on_press(Message::ToggleBottomDock)
-            .style(StudioTheme::ghost_button)
-            .padding([6, 8]);
 
         let menu_bar = row![
             button(text(self.ui_lang.tr("File", "Fichier")).size(11))
@@ -5829,7 +6630,6 @@ impl FerriteStudioApp {
                     iced::widget::Space::with_width(6),
                     speed_group,
                     iced::widget::Space::with_width(8),
-                    save_btn,
                     check_btn,
                     undo_btn,
                     redo_btn,
@@ -5855,9 +6655,6 @@ impl FerriteStudioApp {
 
         let trailing_controls = row![
             lang_btn,
-            explorer_toggle,
-            dock_toggle,
-            io_toggle,
         ]
         .spacing(6)
         .align_y(Alignment::Center);
@@ -6001,62 +6798,131 @@ impl FerriteStudioApp {
                 .align_y(Alignment::Center);
                 pou_list = pou_list.push(rename_row);
             } else {
-                let p_name = p.name.clone();
-                let btn = button(
+                let is_dirty = self.is_pou_modified(&p.name);
+                let display_name = if is_dirty {
+                    format!("*{}", p.name)
+                } else {
+                    p.name.clone()
+                };
+                let name_font = if is_dirty {
+                    iced::Font {
+                        style: iced::font::Style::Italic,
+                        ..iced::Font::DEFAULT
+                    }
+                } else {
+                    iced::Font::DEFAULT
+                };
+
+                let is_dragging = self.dragging_pou.as_ref() == Some(&p.name) && self.drag_hover_pou.is_some();
+                let is_hovered = self.drag_hover_pou.as_ref() == Some(&p.name);
+
+                let (bg, border_col, border_w) = if is_hovered {
+                    (StudioTheme::BG_HOVER, StudioTheme::ACCENT_CYAN, 1.5)
+                } else if is_dragging {
+                    (StudioTheme::BG_HOVER, StudioTheme::ACCENT_AMBER, 1.0)
+                } else if is_active {
+                    (StudioTheme::BG_SURFACE, StudioTheme::ACCENT_CYAN, 1.5)
+                } else {
+                    (Color::TRANSPARENT, Color::TRANSPARENT, 0.0)
+                };
+
+                let pou_card = container(
                     row![
                         container(text(badge_txt).size(10).color(badge_color))
                             .padding([2, 6])
                             .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
                                 1.0, 1.0, 1.0, 0.05
                             ))),
-                        text(&p.name)
+                        text(display_name)
                             .size(12)
+                            .font(name_font)
                             .shaping(iced::widget::text::Shaping::Advanced),
+                        iced::widget::Space::with_width(Length::Fill),
                     ]
                     .spacing(8)
                     .align_y(Alignment::Center),
                 )
-                .on_press(Message::SelectTab(WorkspaceTab::Pou(p_name)))
-                .style(StudioTheme::tab_button(is_active))
                 .width(Length::Fill)
-                .padding([6, 8]);
+                .padding([6, 8])
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(bg)),
+                    border: Border {
+                        color: border_col,
+                        width: border_w,
+                        radius: Radius::from(6.0),
+                    },
+                    ..Default::default()
+                });
 
-                let p_up = p.name.clone();
-                let p_down = p.name.clone();
-                let p_ren = p.name.clone();
-                let p_del = p.name.clone();
+                let p_drag_start = p.name.clone();
+                let p_drag_hover = p.name.clone();
+                let p_ctx = p.name.clone();
 
-                let pou_row = row![
-                    btn,
-                    button(text("▲").size(9.0))
-                        .on_press(Message::MovePouUp(p_up))
-                        .style(StudioTheme::ghost_button)
-                        .padding([2, 3]),
-                    button(text("▼").size(9.0))
-                        .on_press(Message::MovePouDown(p_down))
-                        .style(StudioTheme::ghost_button)
-                        .padding([2, 3]),
-                    button(
-                        text(crate::icons::icon_pencil())
-                            .size(9.5)
-                            .shaping(iced::widget::text::Shaping::Advanced),
+                let pou_item = mouse_area(pou_card)
+                    .on_press(Message::PouDragStarted(p_drag_start))
+                    .on_enter(Message::PouDragHovered(p_drag_hover))
+                    .on_release(Message::PouDragDropped)
+                    .on_right_press(Message::OpenPouContextMenu(p_ctx));
+
+                if self.pou_context_menu.as_deref() == Some(&p.name) {
+                    let p_save = p.name.clone();
+                    let p_ren = p.name.clone();
+                    let p_del = p.name.clone();
+                    let ctx_card = container(
+                        column![
+                            button(
+                                row![
+                                    text(self.ui_lang.tr("Save", "Enregistrer")).size(11),
+                                    iced::widget::Space::with_width(Length::Fill),
+                                    text("Ctrl+S").size(10).color(StudioTheme::TEXT_MUTED),
+                                ]
+                                .align_y(Alignment::Center),
+                            )
+                            .on_press(Message::SavePou(p_save))
+                            .style(StudioTheme::ghost_button)
+                            .width(Length::Fill)
+                            .padding([3, 6]),
+                            button(
+                                row![
+                                    text(self.ui_lang.tr("Rename", "Renommer")).size(11),
+                                    iced::widget::Space::with_width(Length::Fill),
+                                ]
+                                .align_y(Alignment::Center),
+                            )
+                            .on_press(Message::StartRenamePou(p_ren))
+                            .style(StudioTheme::ghost_button)
+                            .width(Length::Fill)
+                            .padding([3, 6]),
+                            button(
+                                row![
+                                    text(self.ui_lang.tr("Delete", "Supprimer")).size(11),
+                                    iced::widget::Space::with_width(Length::Fill),
+                                ]
+                                .align_y(Alignment::Center),
+                            )
+                            .on_press(Message::DeletePou(p_del))
+                            .style(StudioTheme::danger_button)
+                            .width(Length::Fill)
+                            .padding([3, 6]),
+                        ]
+                        .spacing(2),
                     )
-                    .on_press(Message::StartRenamePou(p_ren))
-                    .style(StudioTheme::ghost_button)
-                    .padding([2, 3]),
-                    button(
-                        text(crate::icons::icon_close())
-                            .size(9.5)
-                            .shaping(iced::widget::text::Shaping::Advanced),
-                    )
-                    .on_press(Message::DeletePou(p_del))
-                    .style(StudioTheme::danger_button)
-                    .padding([2, 3]),
-                ]
-                .spacing(2)
-                .align_y(Alignment::Center);
+                    .padding(4)
+                    .width(Length::Fill)
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(StudioTheme::BG_SURFACE)),
+                        border: Border {
+                            color: StudioTheme::BORDER_CARD,
+                            width: 1.0,
+                            radius: Radius::from(6.0),
+                        },
+                        ..Default::default()
+                    });
 
-                pou_list = pou_list.push(pou_row);
+                    pou_list = pou_list.push(column![pou_item, ctx_card].spacing(2));
+                } else {
+                    pou_list = pou_list.push(pou_item);
+                }
             }
         }
 
@@ -6409,7 +7275,7 @@ impl FerriteStudioApp {
                             }
                         }
                         PouSource::Fbd(fbd) => {
-                            render_fbd_editor(fbd, self.runtime.as_ref(), self.ui_lang)
+                            render_fbd_editor(fbd, self.runtime.as_ref(), self.ui_lang, self.fbd_selected_block, self.fbd_drag_hover_block)
                         }
                     }
                 } else {

@@ -150,6 +150,29 @@ impl IrExpr {
         self.evaluate_with_resolver(&|sym| ctx.read_symbol(sym), pou_name)
     }
 
+    pub fn evaluate_with_env(
+        &self,
+        ctx: &ScanContext<'_>,
+        env: &HashMap<String, IecValue>,
+        pou_name: &str,
+    ) -> Result<IecValue, RuntimeError> {
+        self.evaluate_with_resolver(
+            &|sym| {
+                if let Some(val) = env.get(sym) {
+                    return Ok(val.clone());
+                }
+                let upper = sym.to_ascii_uppercase();
+                for (k, v) in env.iter() {
+                    if k.to_ascii_uppercase() == upper {
+                        return Ok(v.clone());
+                    }
+                }
+                ctx.read_symbol(sym)
+            },
+            pou_name,
+        )
+    }
+
     pub fn infer_type(&self, tags: &TagTable, pou_name: &str) -> Result<IecType, IrError> {
         match self {
             Self::Literal(v) => Ok(v.iec_type()),
@@ -636,25 +659,52 @@ pub enum IrStmt {
 
 impl IrStmt {
     pub fn execute(&self, ctx: &mut ScanContext<'_>, pou_name: &str) -> Result<(), RuntimeError> {
+        let mut empty_env = HashMap::new();
+        self.execute_with_env(ctx, &mut empty_env, pou_name)
+    }
+
+    pub fn execute_with_env(
+        &self,
+        ctx: &mut ScanContext<'_>,
+        env: &mut HashMap<String, IecValue>,
+        pou_name: &str,
+    ) -> Result<(), RuntimeError> {
         match self {
             Self::Assign { target, expr } => {
-                let val = expr.evaluate(ctx, pou_name)?;
-                ctx.write_symbol(target, val)
+                let val = expr.evaluate_with_env(ctx, env, pou_name)?;
+                let upper = target.to_ascii_uppercase();
+                let mut matched_key = None;
+                for k in env.keys() {
+                    if k.to_ascii_uppercase() == upper {
+                        matched_key = Some(k.clone());
+                        break;
+                    }
+                }
+                if let Some(k) = matched_key {
+                    env.insert(k, val);
+                    return Ok(());
+                }
+                if ctx.tags.tag_id(target).is_some() || target.starts_with('%') || target.contains('.') {
+                    ctx.write_symbol(target, val)?;
+                } else {
+                    env.insert(target.clone(), val);
+                }
+                Ok(())
             }
             Self::If {
                 branches,
                 else_body,
             } => {
                 for (cond, body) in branches {
-                    if cond.evaluate(ctx, pou_name)?.as_bool()? {
+                    if cond.evaluate_with_env(ctx, env, pou_name)?.as_bool()? {
                         for stmt in body {
-                            stmt.execute(ctx, pou_name)?;
+                            stmt.execute_with_env(ctx, env, pou_name)?;
                         }
                         return Ok(());
                     }
                 }
                 for stmt in else_body {
-                    stmt.execute(ctx, pou_name)?;
+                    stmt.execute_with_env(ctx, env, pou_name)?;
                 }
                 Ok(())
             }
@@ -663,17 +713,17 @@ impl IrStmt {
                 arms,
                 else_body,
             } => {
-                let sel_val = selector.evaluate(ctx, pou_name)?.as_dint()?;
+                let sel_val = selector.evaluate_with_env(ctx, env, pou_name)?.as_dint()?;
                 for (labels, body) in arms {
                     if labels.contains(&sel_val) {
                         for stmt in body {
-                            stmt.execute(ctx, pou_name)?;
+                            stmt.execute_with_env(ctx, env, pou_name)?;
                         }
                         return Ok(());
                     }
                 }
                 for stmt in else_body {
-                    stmt.execute(ctx, pou_name)?;
+                    stmt.execute_with_env(ctx, env, pou_name)?;
                 }
                 Ok(())
             }
@@ -684,10 +734,10 @@ impl IrStmt {
                 step,
                 body,
             } => {
-                let start_val = start.evaluate(ctx, pou_name)?.as_dint()?;
-                let end_val = end.evaluate(ctx, pou_name)?.as_dint()?;
+                let start_val = start.evaluate_with_env(ctx, env, pou_name)?.as_dint()?;
+                let end_val = end.evaluate_with_env(ctx, env, pou_name)?.as_dint()?;
                 let step_val = match step {
-                    Some(s) => s.evaluate(ctx, pou_name)?.as_dint()?,
+                    Some(s) => s.evaluate_with_env(ctx, env, pou_name)?.as_dint()?,
                     None => 1,
                 };
                 if step_val == 0 {
@@ -705,9 +755,9 @@ impl IrStmt {
                             max_iterations: MAX_LOOP_ITERATIONS,
                         });
                     }
-                    ctx.write_symbol(var, IecValue::Dint(cur))?;
+                    env.insert(var.clone(), IecValue::Dint(cur));
                     for stmt in body {
-                        stmt.execute(ctx, pou_name)?;
+                        stmt.execute_with_env(ctx, env, pou_name)?;
                     }
                     cur = cur.wrapping_add(step_val);
                     iters += 1;
@@ -716,7 +766,7 @@ impl IrStmt {
             }
             Self::While { cond, body } => {
                 let mut iters = 0usize;
-                while cond.evaluate(ctx, pou_name)?.as_bool()? {
+                while cond.evaluate_with_env(ctx, env, pou_name)?.as_bool()? {
                     if iters >= MAX_LOOP_ITERATIONS {
                         return Err(RuntimeError::IterationLimitExceeded {
                             pou: pou_name.to_string(),
@@ -724,7 +774,7 @@ impl IrStmt {
                         });
                     }
                     for stmt in body {
-                        stmt.execute(ctx, pou_name)?;
+                        stmt.execute_with_env(ctx, env, pou_name)?;
                     }
                     iters += 1;
                 }
@@ -736,7 +786,7 @@ impl IrStmt {
                 outputs,
             } => {
                 for (pin, expr) in inputs {
-                    let val = expr.evaluate(ctx, pou_name)?;
+                    let val = expr.evaluate_with_env(ctx, env, pou_name)?;
                     let sym = format!("{instance}.{pin}");
                     ctx.write_symbol(&sym, val)?;
                 }
@@ -744,7 +794,19 @@ impl IrStmt {
                 for (pin, target_sym) in outputs {
                     let sym = format!("{instance}.{pin}");
                     let out_val = ctx.read_symbol(&sym)?;
-                    ctx.write_symbol(target_sym, out_val)?;
+                    let upper = target_sym.to_ascii_uppercase();
+                    let mut matched_key = None;
+                    for k in env.keys() {
+                        if k.to_ascii_uppercase() == upper {
+                            matched_key = Some(k.clone());
+                            break;
+                        }
+                    }
+                    if let Some(k) = matched_key {
+                        env.insert(k, out_val);
+                    } else {
+                        ctx.write_symbol(target_sym, out_val)?;
+                    }
                 }
                 Ok(())
             }

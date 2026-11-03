@@ -1,11 +1,14 @@
 pub mod alarms_panel;
 pub mod app;
+pub mod clipboard;
+pub mod custom_fbd_library;
 pub mod canvas_fbd;
 pub mod canvas_ld;
 pub mod canvas_sfc;
 pub mod digital_twin;
 pub mod editor_st;
 pub mod editor_symbols;
+pub mod fbd_library_window;
 pub mod help_window;
 pub mod i18n;
 pub mod icons;
@@ -17,6 +20,7 @@ use std::sync::Once;
 
 pub use app::{FerriteStudioApp, Message, UiTheme, WorkspaceTab};
 pub type StudioApp = FerriteStudioApp;
+
 use ferrite_project::{MANIFEST_FILE_NAME, Project, ProjectError};
 pub use i18n::UiLanguage;
 pub use theme::StudioTheme;
@@ -784,7 +788,13 @@ mod tests {
             &iced::keyboard::Key::Character("s".into()),
             iced::keyboard::Modifiers::COMMAND,
         );
-        assert!(matches!(cmd_s, Some(Message::SaveProject)));
+        assert!(matches!(cmd_s, Some(Message::SaveActivePouOrProject)));
+
+        let cmd_shift_s = handle_keyboard_shortcut(
+            &iced::keyboard::Key::Character("s".into()),
+            iced::keyboard::Modifiers::COMMAND | iced::keyboard::Modifiers::SHIFT,
+        );
+        assert!(matches!(cmd_shift_s, Some(Message::SaveProject)));
 
         let cmd_o = handle_keyboard_shortcut(
             &iced::keyboard::Key::Character("o".into()),
@@ -809,6 +819,18 @@ mod tests {
             iced::keyboard::Modifiers::COMMAND,
         );
         assert!(matches!(cmd_y, Some(Message::Redo)));
+
+        let cmd_c = handle_keyboard_shortcut(
+            &iced::keyboard::Key::Character("c".into()),
+            iced::keyboard::Modifiers::COMMAND,
+        );
+        assert!(matches!(cmd_c, Some(Message::CopySelection)));
+
+        let cmd_v = handle_keyboard_shortcut(
+            &iced::keyboard::Key::Character("v".into()),
+            iced::keyboard::Modifiers::COMMAND,
+        );
+        assert!(matches!(cmd_v, Some(Message::PasteClipboard)));
 
         let del = handle_keyboard_shortcut(
             &iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete),
@@ -1656,4 +1678,465 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
+
+    #[test]
+    fn test_per_pou_dirty_tracking_and_individual_pou_save() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_per_pou_save_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_per_pou")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        assert!(!app.is_pou_modified("main_safety"));
+        assert!(!app.is_pou_modified("batch_seq"));
+        assert!(!app.modified);
+
+        // Modify both `main_safety` (LD) and `batch_seq` (SFC)
+        let _ = app.update(Message::LdAddContact("main_safety".to_string(), 0));
+        let _ = app.update(Message::SfcAddStep("batch_seq".to_string()));
+
+        assert!(app.is_pou_modified("main_safety"));
+        assert!(app.is_pou_modified("batch_seq"));
+        assert!(app.modified);
+
+        // Render main window to verify explorer with dirty (* / italic) POUs renders without panic
+        let win_id = app.main_window_id.unwrap_or_else(iced::window::Id::unique);
+        let _ = app.view(win_id);
+
+        // Save only `main_safety`
+        let _ = app.update(Message::SavePou("main_safety".to_string()));
+        assert!(
+            !app.is_pou_modified("main_safety"),
+            "Saved POU must no longer be marked modified"
+        );
+        assert!(
+            app.is_pou_modified("batch_seq"),
+            "Other modified POU must remain marked modified"
+        );
+        assert!(
+            app.modified,
+            "Project modified flag must remain true while another POU is still unsaved"
+        );
+
+        // Save `batch_seq` individually as well
+        let _ = app.update(Message::SavePou("batch_seq".to_string()));
+        assert!(!app.is_pou_modified("batch_seq"));
+        assert!(
+            !app.modified,
+            "Project modified flag must clear once all modified POUs are saved"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_keyboard_shortcut_pou_and_project_saving() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::app::handle_keyboard_shortcut;
+
+        // Ctrl+S maps to SaveActivePouOrProject
+        let ctrl_s = handle_keyboard_shortcut(
+            &iced::keyboard::Key::Character("s".into()),
+            iced::keyboard::Modifiers::COMMAND,
+        );
+        assert!(matches!(ctrl_s, Some(Message::SaveActivePouOrProject)));
+
+        // Ctrl+Shift+S maps to SaveProject
+        let ctrl_shift_s = handle_keyboard_shortcut(
+            &iced::keyboard::Key::Character("s".into()),
+            iced::keyboard::Modifiers::COMMAND | iced::keyboard::Modifiers::SHIFT,
+        );
+        assert!(matches!(ctrl_shift_s, Some(Message::SaveProject)));
+
+        // Verify SaveActivePouOrProject behavior in FerriteStudioApp
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_save_shortcut_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_sc")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        // Active tab is main_safety, modify it
+        app.active_tab = WorkspaceTab::Pou("main_safety".to_string());
+        let _ = app.update(Message::LdAddContact("main_safety".to_string(), 0));
+        assert!(app.is_pou_modified("main_safety"));
+
+        // SaveActivePouOrProject should save main_safety
+        let _ = app.update(Message::SaveActivePouOrProject);
+        assert!(!app.is_pou_modified("main_safety"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pou_explorer_context_menu_and_drag_reorder() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_explorer_dnd_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_exp_dnd")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        assert_eq!(app.pou_context_menu, None);
+        assert_eq!(app.dragging_pou, None);
+
+        // Context menu test
+        let _ = app.update(Message::OpenPouContextMenu("main_safety".to_string()));
+        assert_eq!(app.pou_context_menu, Some("main_safety".to_string()));
+
+        let _ = app.update(Message::ClosePouContextMenu);
+        assert_eq!(app.pou_context_menu, None);
+
+        // Drag and drop test: move main_safety (index 0) to math_pid (index 2)
+        let p_from = app.project.manifest.pous[0].name.clone();
+        let p_to = app.project.manifest.pous[2].name.clone();
+
+        let _ = app.update(Message::PouDragStarted(p_from.clone()));
+        assert_eq!(app.dragging_pou, Some(p_from.clone()));
+
+        let _ = app.update(Message::PouDragHovered(p_to.clone()));
+        assert_eq!(app.drag_hover_pou, Some(p_to));
+
+        let _ = app.update(Message::PouDragDropped);
+        assert_eq!(app.dragging_pou, None);
+        assert_eq!(app.drag_hover_pou, None);
+        assert_eq!(app.project.manifest.pous[2].name, p_from);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+
+    #[test]
+    fn test_fbd_library_window_open_close_and_messages() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_fbd_win_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_fbd_win")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        // Search query updates
+        assert_eq!(app.fbd_library_search_query, "");
+        let _ = app.update(Message::FbdLibrarySearchChanged("timer".to_string()));
+        assert_eq!(app.fbd_library_search_query, "timer");
+
+        // Window close when None is no-op
+        assert_eq!(app.fbd_library_window_id, None);
+        let _ = app.update(Message::CloseFbdLibraryWindow);
+        assert_eq!(app.fbd_library_window_id, None);
+
+        // Window open/close lifecycle
+        let dummy_id = iced::window::Id::unique();
+        app.fbd_library_window_id = Some(dummy_id);
+
+        let title = app.title(dummy_id);
+        assert!(title.contains("Function Block Library") || title.contains("Biblioth"));
+
+        let _ = app.view(dummy_id);
+
+        // Close request via WindowCloseRequested
+        let _ = app.update(Message::WindowCloseRequested(dummy_id));
+        assert_eq!(app.fbd_library_window_id, None);
+
+        // Close request via CloseFbdLibraryWindow
+        app.fbd_library_window_id = Some(dummy_id);
+        let _ = app.update(Message::CloseFbdLibraryWindow);
+        assert_eq!(app.fbd_library_window_id, None);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_fbd_library_catalog_and_filtering() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_fbd_lib_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_fbd_lib")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        // Set search query and render
+        app.fbd_library_search_query = "pid".to_string();
+        let _view = crate::fbd_library_window::render_fbd_library_window(&app);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+    #[test]
+    fn test_ladder_paste_below_active_rung() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_ld_paste_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_ld_paste")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        let pou_name = "main_safety".to_string();
+        app.active_tab = WorkspaceTab::Pou(pou_name.clone());
+
+        let initial_rungs = if let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get(&pou_name) {
+            ld.rungs.len()
+        } else {
+            0
+        };
+        assert!(initial_rungs > 0, "Initial ladder POU must have rungs");
+
+        // Select rung 0
+        app.ld_selected = Some((pou_name.clone(), crate::canvas_ld::LdElementKey::Rung(0)));
+        app.ld_selected_elements = vec![crate::canvas_ld::LdElementKey::Rung(0)];
+
+        // Copy active selection
+        let _ = app.update(Message::CopySelection);
+
+        // Prepare clipboard payload
+        let copied_rung = ferrite_lang_ld::LdRung {
+            id: "Rung_Copied".to_string(),
+            comment: "Pasted safety rung".to_string(),
+            elements: Vec::new(),
+            coils: Vec::new(),
+        };
+        let payload = crate::clipboard::serialize_clipboard(crate::clipboard::FerriteClipboardData::Ladder {
+            rungs: vec![copied_rung],
+        })?;
+
+        // Paste clipboard
+        let _ = app.update(Message::ClipboardPasted(Some(payload)));
+
+        // Verify inserted immediately below rung 0 (at index 1)
+        if let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get(&pou_name) {
+            assert_eq!(ld.rungs.len(), initial_rungs + 1);
+            assert_eq!(app.ld_selected, Some((pou_name.clone(), crate::canvas_ld::LdElementKey::Rung(1))));
+        } else {
+            panic!("Expected LD POU");
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_sfc_paste_with_grid_delta_and_unique_ids() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_sfc_paste_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_sfc_paste")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        let pou_name = "batch_seq".to_string();
+        app.active_tab = WorkspaceTab::Pou(pou_name.clone());
+
+        let step = ferrite_lang_sfc::SfcStep {
+            id: "Step_1".to_string(),
+            name: "Step_1".to_string(),
+            kind: ferrite_lang_sfc::StepKind::Initial,
+            actions: Vec::new(),
+            grid_pos: Some((10, 10)),
+        };
+        let trans = ferrite_lang_sfc::SfcTransition {
+            id: "Trans_1".to_string(),
+            receptivity: "Sensor_1".to_string(),
+            from_steps: vec!["Step_1".to_string()],
+            to_steps: vec!["Step_2".to_string()],
+            convergence: ferrite_lang_sfc::ConvergenceKind::default(),
+            divergence: ferrite_lang_sfc::DivergenceKind::default(),
+            grid_pos: Some((10, 14)),
+        };
+        let payload = crate::clipboard::serialize_clipboard(crate::clipboard::FerriteClipboardData::Sfc {
+            steps: vec![step],
+            transitions: vec![trans],
+        })?;
+
+        let _ = app.update(Message::ClipboardPasted(Some(payload)));
+
+        if let Some(ferrite_project::PouSource::Sfc(sfc)) = app.project.pous.get(&pou_name) {
+            // Find newly pasted step (must have grid_pos (12, 12))
+            let pasted_step = sfc.steps.iter().find(|s| s.grid_pos == Some((12, 12))).ok_or("Pasted step with (+2, +2) delta not found")?;
+            assert_ne!(pasted_step.id, "Step_1", "Pasted step must have unique non-colliding ID");
+
+            let pasted_trans = sfc.transitions.iter().find(|t| t.grid_pos == Some((12, 16))).ok_or("Pasted trans with (+2, +2) delta not found")?;
+            assert_ne!(pasted_trans.id, "Trans_1", "Pasted trans must have unique non-colliding ID");
+            assert!(pasted_trans.from_steps.contains(&pasted_step.id), "Transition link must be remapped to new step ID");
+        } else {
+            panic!("Expected SFC POU");
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_fbd_paste_with_unique_ids() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_fbd_paste_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_fbd_paste")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        let pou_name = "pump_ctrl".to_string();
+        app.active_tab = WorkspaceTab::Pou(pou_name.clone());
+        app.fbd_selected_block = Some(0);
+
+        let initial_blocks = if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
+            fbd.blocks.len()
+        } else {
+            0
+        };
+
+        let block = ferrite_lang_fbd::FbdBlock {
+            id: "TON_1".to_string(),
+            kind: ferrite_lang_fbd::FbdBlockKind::And,
+            inputs: std::collections::HashMap::new(),
+            outputs: std::collections::HashMap::new(),
+        };
+        let payload = crate::clipboard::serialize_clipboard(crate::clipboard::FerriteClipboardData::Fbd {
+            blocks: vec![block],
+        })?;
+
+        let _ = app.update(Message::ClipboardPasted(Some(payload)));
+
+        if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
+            assert_eq!(fbd.blocks.len(), initial_blocks + 1);
+            let pasted_block = &fbd.blocks[1];
+            assert_ne!(pasted_block.id, "TON_1");
+            assert_eq!(app.fbd_selected_block, Some(1));
+        } else {
+            panic!("Expected FBD POU");
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_fbd_block_drag_and_drop_reorders_blocks() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_fbd_reorder_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_fbd_reorder")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        let pou_name = "pump_ctrl".to_string();
+        app.active_tab = WorkspaceTab::Pou(pou_name.clone());
+
+        let initial_blocks = if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
+            fbd.blocks.len()
+        } else {
+            0
+        };
+        assert!(initial_blocks >= 2, "pump_ctrl should have at least 2 blocks");
+
+        let first_id = if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
+            fbd.blocks[0].id.clone()
+        } else {
+            String::new()
+        };
+
+        // Drag block 0 onto block 1
+        let _ = app.update(Message::FbdBlockDragStarted(pou_name.clone(), 0));
+        assert_eq!(app.fbd_dragging_block, Some(0));
+
+        let _ = app.update(Message::FbdBlockDragHovered(pou_name.clone(), 1));
+        assert_eq!(app.fbd_drag_hover_block, Some(1));
+
+        let _ = app.update(Message::FbdBlockDragDropped);
+        assert_eq!(app.fbd_dragging_block, None);
+        assert_eq!(app.fbd_drag_hover_block, None);
+
+        // First block is now at index 1
+        if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
+            assert_eq!(fbd.blocks[1].id, first_id);
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_custom_fbd_builder_validation_and_messages() -> Result<(), Box<dyn std::error::Error>> {
+        let unique_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("ferrite_app_test_{unique_id}"));
+        let p = ferrite_project::Project::scaffold(&temp_dir, "FbdCustomTest")?;
+        let mut app = FerriteStudioApp::new(p);
+
+        // 1. Toggle builder
+        assert!(!app.custom_fbd_builder_open);
+        let _ = app.update(Message::ToggleCustomFbdBuilder);
+        assert!(app.custom_fbd_builder_open);
+
+        // 2. ST Validation
+        let _ = app.update(Message::CustomFbdStCodeChanged("INVALID ST SYNTAX {{{".to_string()));
+        assert!(app.custom_fbd_validation_error.is_some());
+
+        let _ = app.update(Message::CustomFbdStCodeChanged("OUT := IN1 AND IN2;".to_string()));
+        assert!(app.custom_fbd_validation_error.is_none());
+
+        // Multiline ST logic with Enter key
+        let _ = app.update(Message::CustomFbdStAction(iced::widget::text_editor::Action::Edit(
+            iced::widget::text_editor::Edit::Enter,
+        )));
+        assert!(app.custom_fbd_st_content.text().contains('\n'));
+
+        // 3. Name validation on save
+        let _ = app.update(Message::CustomFbdNameChanged("Bad Name.WithDot".to_string()));
+        let _ = app.update(Message::SaveCustomFbdBlock);
+        assert!(app.custom_fbd_validation_error.is_some());
+        assert!(app.custom_fbd_builder_open); // Stays open on error
+
+        // 4. Valid save
+        let _ = app.update(Message::CustomFbdNameChanged("MySafetyCheck".to_string()));
+        let _ = app.update(Message::CustomFbdDescChanged("Checks dual permissives".to_string()));
+        let _ = app.update(Message::CustomFbdInputsChanged("IN1, IN2".to_string()));
+        let _ = app.update(Message::CustomFbdOutputsChanged("OUT".to_string()));
+        let _ = app.update(Message::CustomFbdStCodeChanged("OUT := IN1 AND IN2;".to_string()));
+        let _ = app.update(Message::SaveCustomFbdBlock);
+
+        assert!(app.custom_fbd_validation_error.is_none());
+        assert!(!app.custom_fbd_builder_open);
+        assert!(app.global_custom_fbs.iter().any(|b| b.name == "MySafetyCheck"));
+
+        // 5. Edit block
+        let _ = app.update(Message::EditCustomFbdBlock("MySafetyCheck".to_string()));
+        assert!(app.custom_fbd_builder_open);
+        assert_eq!(app.custom_fbd_name_input, "MySafetyCheck");
+        assert_eq!(app.custom_fbd_desc_input, "Checks dual permissives");
+
+        // 6. Add custom block to canvas
+        let def = app
+            .global_custom_fbs
+            .iter()
+            .find(|b| b.name == "MySafetyCheck")
+            .cloned()
+            .ok_or("MySafetyCheck not found")?;
+        let _ = app.update(Message::AddCustomFbdToCanvas(def));
+
+        // Find FBD POU and verify block and composite definition were added
+        let has_composite_pou = app.project.pous.values().any(|src| {
+            if let ferrite_project::PouSource::Fbd(fbd) = src {
+                fbd.composites.iter().any(|c| c.name == "MySafetyCheck")
+                    && fbd.blocks.iter().any(|b| b.id.starts_with("MySafetyCheck"))
+            } else {
+                false
+            }
+        });
+        assert!(has_composite_pou, "FBD POU should contain composite definition and instance");
+
+        // 7. Delete block
+        let _ = app.update(Message::DeleteCustomFbdBlock("MySafetyCheck".to_string()));
+        assert!(!app.global_custom_fbs.iter().any(|b| b.name == "MySafetyCheck"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
 }

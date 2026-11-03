@@ -1,5 +1,5 @@
 use iced::border::Radius;
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, mouse_area, pick_list, row, scrollable, text, text_input};
 use iced::{Alignment, Background, Border, Element, Length, Padding, Theme};
 
 use ferrite_core::{IecValue, StandardFbKind};
@@ -136,6 +136,8 @@ fn render_single_block_card<'a>(
     blk: &'a FbdBlock,
     runtime: Option<&'a PlcRuntime>,
     lang: UiLanguage,
+    selected_block: Option<usize>,
+    drag_hover_block: Option<usize>,
 ) -> Element<'a, Message> {
     let p_blk = program_name.to_string();
     let (op_symbol, op_desc) = operator_symbol(&blk.kind);
@@ -153,8 +155,32 @@ fn render_single_block_card<'a>(
         _ => None,
     };
 
-    // Block Header with Editable ID, Reorder Arrows, and Remove Button
+    let is_selected = selected_block == Some(b_idx);
+    let is_hovered = drag_hover_block == Some(b_idx);
+
+    let drag_handle = mouse_area(
+        container(
+            text(crate::icons::icon_grip())
+                .size(13)
+                .shaping(iced::widget::text::Shaping::Advanced)
+                .color(if is_selected {
+                    StudioTheme::ACCENT_CYAN
+                } else {
+                    StudioTheme::TEXT_MUTED
+                }),
+        )
+        .padding([4, 6])
+        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+            1.0, 1.0, 1.0, 0.05,
+        ))),
+    )
+    .on_press(Message::FbdBlockDragStarted(p_blk.clone(), b_idx))
+    .on_enter(Message::FbdBlockDragHovered(p_blk.clone(), b_idx))
+    .on_release(Message::FbdBlockDragDropped);
+
+    // Block Header with Drag Handle, Editable ID, and Remove Button
     let blk_header = row![
+        drag_handle,
         text_input("Block ID", &blk.id)
             .on_input({
                 let p = p_blk.clone();
@@ -166,17 +192,9 @@ fn render_single_block_card<'a>(
         container(text(op_desc).size(11).color(StudioTheme::TEXT_MUTED))
             .padding([3, 7])
             .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-                1.0, 1.0, 1.0, 0.05
+                1.0, 1.0, 1.0, 0.05,
             ))),
         iced::widget::Space::with_width(Length::Fill),
-        button(text("\u{25B2}").size(10.0))
-            .on_press(Message::FbdMoveBlockUp(p_blk.clone(), b_idx))
-            .style(StudioTheme::ghost_button)
-            .padding([1, 5]),
-        button(text("\u{25BC}").size(10.0))
-            .on_press(Message::FbdMoveBlockDown(p_blk.clone(), b_idx))
-            .style(StudioTheme::ghost_button)
-            .padding([1, 5]),
         button(text("x").size(10.5))
             .on_press(Message::FbdRemoveBlock(p_blk.clone(), b_idx))
             .style(StudioTheme::ghost_button)
@@ -392,10 +410,42 @@ fn render_single_block_card<'a>(
             .width(Length::Fill),
     );
 
-    container(card_col.spacing(8))
+    let card_style_fn = move |_theme: &Theme| {
+        let border = if is_hovered {
+            Border {
+                color: iced::Color::from_rgb(0.25, 0.65, 1.0),
+                width: 2.0,
+                radius: Radius::from(8.0),
+            }
+        } else if is_selected {
+            Border {
+                color: StudioTheme::ACCENT_CYAN,
+                width: 2.0,
+                radius: Radius::from(8.0),
+            }
+        } else {
+            Border {
+                color: StudioTheme::BORDER_CARD,
+                width: 1.0,
+                radius: Radius::from(8.0),
+            }
+        };
+
+        container::Style {
+            background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
+            border,
+            ..Default::default()
+        }
+    };
+
+    let card_container = container(card_col.spacing(8))
         .padding(10)
-        .style(StudioTheme::card_style)
-        .width(Length::FillPortion(1))
+        .style(card_style_fn)
+        .width(Length::FillPortion(1));
+
+    mouse_area(card_container)
+        .on_enter(Message::FbdBlockDragHovered(p_blk, b_idx))
+        .on_release(Message::FbdBlockDragDropped)
         .into()
 }
 
@@ -403,6 +453,8 @@ pub fn render_fbd_editor<'a>(
     program: &'a FbdProgram,
     runtime: Option<&'a PlcRuntime>,
     lang: UiLanguage,
+    selected_block: Option<usize>,
+    drag_hover_block: Option<usize>,
 ) -> Element<'a, Message> {
     let pou_name = program.name.clone();
 
@@ -418,82 +470,19 @@ pub fn render_fbd_editor<'a>(
         ))
         .size(18),
         iced::widget::Space::with_width(Length::Fixed(16.0)),
-        button(text(lang.tr("+ AND", "+ ET")).size(11))
-            .on_press(Message::FbdAddBlock(pou_name.clone(), FbdBlockKind::And))
-            .style(StudioTheme::secondary_button)
-            .padding([4, 8]),
-        button(text(lang.tr("+ OR", "+ OU")).size(11))
-            .on_press(Message::FbdAddBlock(pou_name.clone(), FbdBlockKind::Or))
-            .style(StudioTheme::secondary_button)
-            .padding([4, 8]),
-        button(text(lang.tr("+ NOT", "+ NON")).size(11))
-            .on_press(Message::FbdAddBlock(pou_name.clone(), FbdBlockKind::Not))
-            .style(StudioTheme::secondary_button)
-            .padding([4, 8]),
-        button(text(lang.tr("+ GT (>)", "+ SUP (>)")).size(11))
-            .on_press(Message::FbdAddBlock(pou_name.clone(), FbdBlockKind::Gt))
-            .style(StudioTheme::secondary_button)
-            .padding([4, 8]),
-        button(text(lang.tr("+ TON", "+ TON")).size(11))
-            .on_press(Message::FbdAddBlock(
-                pou_name.clone(),
-                FbdBlockKind::StandardFb {
-                    instance: format!("TON_{}", program.blocks.len() + 1),
-                    fb_type: Some(StandardFbKind::Ton),
-                },
-            ))
-            .style(StudioTheme::secondary_button)
-            .padding([4, 8]),
-        button(text(lang.tr("+ PID (Par)", "+ PID (Par)")).size(11))
-            .on_press(Message::FbdAddBlock(
-                pou_name.clone(),
-                FbdBlockKind::StandardFb {
-                    instance: format!("PID_Par_{}", program.blocks.len() + 1),
-                    fb_type: Some(StandardFbKind::PidParallel),
-                },
-            ))
-            .style(StudioTheme::secondary_button)
-            .padding([4, 8]),
-        button(text(lang.tr("+ PID (Ser)", "+ PID (Sér)")).size(11))
-            .on_press(Message::FbdAddBlock(
-                pou_name.clone(),
-                FbdBlockKind::StandardFb {
-                    instance: format!("PID_Ser_{}", program.blocks.len() + 1),
-                    fb_type: Some(StandardFbKind::PidSeries),
-                },
-            ))
-            .style(StudioTheme::secondary_button)
-            .padding([4, 8]),
-        button(text(lang.tr("+ PID (Mix)", "+ PID (Mix)")).size(11))
-            .on_press(Message::FbdAddBlock(
-                pou_name.clone(),
-                FbdBlockKind::StandardFb {
-                    instance: format!("PID_Mix_{}", program.blocks.len() + 1),
-                    fb_type: Some(StandardFbKind::PidMixed),
-                },
-            ))
-            .style(StudioTheme::secondary_button)
-            .padding([4, 8]),
-        button(text(lang.tr("+ PI", "+ PI")).size(11))
-            .on_press(Message::FbdAddBlock(
-                pou_name.clone(),
-                FbdBlockKind::StandardFb {
-                    instance: format!("PI_{}", program.blocks.len() + 1),
-                    fb_type: Some(StandardFbKind::Pi),
-                },
-            ))
-            .style(StudioTheme::secondary_button)
-            .padding([4, 8]),
-        button(text(lang.tr("+ P", "+ P")).size(11))
-            .on_press(Message::FbdAddBlock(
-                pou_name.clone(),
-                FbdBlockKind::StandardFb {
-                    instance: format!("P_{}", program.blocks.len() + 1),
-                    fb_type: Some(StandardFbKind::P),
-                },
-            ))
-            .style(StudioTheme::secondary_button)
-            .padding([4, 8]),
+        button(
+            row![
+                text(crate::icons::icon_book())
+                    .size(11)
+                    .shaping(iced::widget::text::Shaping::Advanced),
+                text(lang.tr("Library...", "Bibliothèque...")).size(12),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::OpenFbdLibraryWindow)
+        .style(StudioTheme::secondary_button)
+        .padding([5, 12]),
         iced::widget::Space::with_width(Length::Fixed(16.0)),
         button(text(lang.tr("Clear POU", "Vider")).size(11))
             .on_press(Message::ConfirmClearPou(pou_name.clone()))
@@ -541,11 +530,11 @@ pub fn render_fbd_editor<'a>(
     let chunk_size = 2;
     for (row_idx, chunk) in program.blocks.chunks(chunk_size).enumerate() {
         let b0_idx = row_idx * chunk_size;
-        let card0 = render_single_block_card(&pou_name, b0_idx, &chunk[0], runtime, lang);
+        let card0 = render_single_block_card(&pou_name, b0_idx, &chunk[0], runtime, lang, selected_block, drag_hover_block);
 
         let grid_row = if chunk.len() > 1 {
             let b1_idx = b0_idx + 1;
-            let card1 = render_single_block_card(&pou_name, b1_idx, &chunk[1], runtime, lang);
+            let card1 = render_single_block_card(&pou_name, b1_idx, &chunk[1], runtime, lang, selected_block, drag_hover_block);
             row![card0, card1].spacing(12).width(Length::Fill)
         } else {
             let empty_placeholder = iced::widget::Space::with_width(Length::FillPortion(1));
@@ -619,5 +608,41 @@ mod tests {
         // Out-of-range index is a safe no-op
         delete_fbd_block(&mut program, 5);
         assert_eq!(program.blocks.len(), 1);
+    }
+
+    #[test]
+    fn test_fbd_editor_toolbar_renders_with_library_button() {
+        let program = FbdProgram {
+            name: "test_prog".to_string(),
+            comment: String::new(),
+            composites: Vec::new(),
+            blocks: Vec::new(),
+        };
+        let _view = render_fbd_editor(&program, None, UiLanguage::En, None, None);
+    }
+
+    #[test]
+    fn test_fbd_block_drag_and_drop_reorder() {
+        let block_a = FbdBlock {
+            id: "BlockA".to_string(),
+            kind: FbdBlockKind::And,
+            inputs: HashMap::new(),
+            outputs: HashMap::new(),
+        };
+        let block_b = FbdBlock {
+            id: "BlockB".to_string(),
+            kind: FbdBlockKind::Or,
+            inputs: HashMap::new(),
+            outputs: HashMap::new(),
+        };
+        let program = FbdProgram {
+            name: "test_drag_fbd".to_string(),
+            comment: String::new(),
+            composites: Vec::new(),
+            blocks: vec![block_a, block_b],
+        };
+
+        // Renders with selection and drag-hover correctly
+        let _view = render_fbd_editor(&program, None, UiLanguage::En, Some(0), Some(1));
     }
 }

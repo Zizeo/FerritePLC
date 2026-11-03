@@ -63,3 +63,21 @@ pub fn icon_check() -> &'static str {
         "✓"
     }
 }
+
+/// Returns the save/floppy icon.
+pub fn icon_save() -> &'static str {
+    if crate::is_nerd_font_available() {
+        "\u{f0c7}" // nf-fa-floppy_o
+    } else {
+        "??"
+    }
+}
+
+/// Returns the drag grip handle icon (nf-fa-bars / unicode ⠿ or ≡).
+pub fn icon_grip() -> &'static str {
+    if crate::is_nerd_font_available() {
+        "\u{f0c9}" // nf-fa-bars
+    } else {
+        "⠿"
+    }
+}

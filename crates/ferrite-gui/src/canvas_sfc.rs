@@ -2627,7 +2627,7 @@ pub fn render_sfc_editor<'a>(
             or_conv_btn,
             and_div_btn,
             or_div_btn,
-            Space::with_width(Length::Fill),
+            Space::with_width(Length::Fixed(12.0)),
             deselect_btn
         ]
         .spacing(10)
@@ -3819,6 +3819,8 @@ mod tests {
         let _elem_step =
             render_sfc_editor(&program, None, UiLanguage::En, Some(&sel_step_key), &[]);
 
+        let multi_sel = [SfcElementKey::Step("10".to_string()), SfcElementKey::Transition("1".to_string())];
+        let _elem_multi = render_sfc_editor(&program, None, UiLanguage::En, None, &multi_sel);
         // 4. Verify render_sfc_editor renders full view with Transition inspector
         let sel_trans_key = SfcElementKey::Transition("1".to_string());
         let _elem_trans =
