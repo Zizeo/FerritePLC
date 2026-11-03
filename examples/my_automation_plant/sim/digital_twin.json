@@ -1,0 +1,426 @@
+{
+  "elements": [
+    {
+      "id": 1,
+      "label": "Reaction Vessel (T-101)",
+      "position": [
+        260.0,
+        160.0
+      ],
+      "size": [
+        180.0,
+        240.0
+      ],
+      "rotation": 0.0,
+      "flip_h": false,
+      "flip_v": false,
+      "z_index": 1,
+      "element_type": "Tank",
+      "binding": {
+        "variable_id": "Tank_Level",
+        "access_mode": "ReadOnly",
+        "active_color": [
+          0,
+          150,
+          255,
+          255
+        ],
+        "inactive_color": [
+          20,
+          70,
+          120,
+          255
+        ],
+        "blink": null
+      },
+      "base_color": [
+        120,
+        140,
+        160,
+        255
+      ],
+      "button_mode": "Toggle"
+    },
+    {
+      "id": 2,
+      "label": "Fill Valve (V-1)",
+      "position": [
+        120.0,
+        120.0
+      ],
+      "size": [
+        64.0,
+        48.0
+      ],
+      "rotation": 0.0,
+      "flip_h": false,
+      "flip_v": false,
+      "z_index": 2,
+      "element_type": "Valve",
+      "binding": {
+        "variable_id": "Fill_Valve",
+        "access_mode": "ReadOnly",
+        "active_color": [
+          46,
+          204,
+          113,
+          255
+        ],
+        "inactive_color": [
+          108,
+          122,
+          137,
+          255
+        ],
+        "blink": null
+      },
+      "base_color": [
+        180,
+        190,
+        200,
+        255
+      ],
+      "button_mode": "Toggle"
+    },
+    {
+      "id": 3,
+      "label": "Inlet Line",
+      "position": [
+        184.0,
+        140.0
+      ],
+      "size": [
+        120.0,
+        12.0
+      ],
+      "rotation": 0.0,
+      "flip_h": false,
+      "flip_v": false,
+      "z_index": 0,
+      "element_type": "Pipe",
+      "binding": {
+        "variable_id": "Fill_Valve",
+        "access_mode": "ReadOnly",
+        "active_color": [
+          52,
+          152,
+          219,
+          255
+        ],
+        "inactive_color": [
+          70,
+          80,
+          95,
+          255
+        ],
+        "blink": null
+      },
+      "base_color": [
+        70,
+        80,
+        95,
+        255
+      ],
+      "button_mode": "Toggle"
+    },
+    {
+      "id": 4,
+      "label": "Dosing Valve (V-2)",
+      "position": [
+        380.0,
+        90.0
+      ],
+      "size": [
+        60.0,
+        44.0
+      ],
+      "rotation": 90.0,
+      "flip_h": false,
+      "flip_v": false,
+      "z_index": 2,
+      "element_type": "Valve",
+      "binding": {
+        "variable_id": "Dosing_Valve",
+        "access_mode": "ReadOnly",
+        "active_color": [
+          46,
+          204,
+          113,
+          255
+        ],
+        "inactive_color": [
+          108,
+          122,
+          137,
+          255
+        ],
+        "blink": null
+      },
+      "base_color": [
+        180,
+        190,
+        200,
+        255
+      ],
+      "button_mode": "Toggle"
+    },
+    {
+      "id": 5,
+      "label": "Mixer Motor (M-101)",
+      "position": [
+        315.0,
+        240.0
+      ],
+      "size": [
+        70.0,
+        60.0
+      ],
+      "rotation": 0.0,
+      "flip_h": false,
+      "flip_v": false,
+      "z_index": 3,
+      "element_type": {
+        "Actuator": "AgitatorMixer"
+      },
+      "binding": {
+        "variable_id": "Agitator_Fast",
+        "access_mode": "ReadOnly",
+        "active_color": [
+          241,
+          196,
+          15,
+          255
+        ],
+        "inactive_color": [
+          80,
+          90,
+          105,
+          255
+        ],
+        "blink": null
+      },
+      "base_color": [
+        80,
+        90,
+        105,
+        255
+      ],
+      "button_mode": "Toggle"
+    },
+    {
+      "id": 6,
+      "label": "Drain Valve (V-3)",
+      "position": [
+        320.0,
+        420.0
+      ],
+      "size": [
+        60.0,
+        44.0
+      ],
+      "rotation": 0.0,
+      "flip_h": false,
+      "flip_v": false,
+      "z_index": 2,
+      "element_type": "Valve",
+      "binding": {
+        "variable_id": "Drain_Valve",
+        "access_mode": "ReadOnly",
+        "active_color": [
+          46,
+          204,
+          113,
+          255
+        ],
+        "inactive_color": [
+          108,
+          122,
+          137,
+          255
+        ],
+        "blink": null
+      },
+      "base_color": [
+        180,
+        190,
+        200,
+        255
+      ],
+      "button_mode": "Toggle"
+    },
+    {
+      "id": 7,
+      "label": "Discharge Pump (P-101)",
+      "position": [
+        440.0,
+        410.0
+      ],
+      "size": [
+        70.0,
+        70.0
+      ],
+      "rotation": 0.0,
+      "flip_h": false,
+      "flip_v": false,
+      "z_index": 3,
+      "element_type": {
+        "Actuator": "CentrifugalPump"
+      },
+      "binding": {
+        "variable_id": "Pump_Active",
+        "access_mode": "ReadOnly",
+        "active_color": [
+          46,
+          204,
+          113,
+          255
+        ],
+        "inactive_color": [
+          100,
+          110,
+          125,
+          255
+        ],
+        "blink": null
+      },
+      "base_color": [
+        100,
+        110,
+        125,
+        255
+      ],
+      "button_mode": "Toggle"
+    },
+    {
+      "id": 8,
+      "label": "START (PB)",
+      "position": [
+        480.0,
+        280.0
+      ],
+      "size": [
+        90.0,
+        36.0
+      ],
+      "rotation": 0.0,
+      "flip_h": false,
+      "flip_v": false,
+      "z_index": 4,
+      "element_type": "PushButton",
+      "binding": {
+        "variable_id": "Start_Button",
+        "access_mode": "ReadWrite",
+        "active_color": [
+          39,
+          174,
+          96,
+          255
+        ],
+        "inactive_color": [
+          46,
+          204,
+          113,
+          255
+        ],
+        "blink": null
+      },
+      "base_color": [
+        46,
+        204,
+        113,
+        255
+      ],
+      "button_mode": "Toggle"
+    },
+    {
+      "id": 9,
+      "label": "STOP (PB)",
+      "position": [
+        480.0,
+        330.0
+      ],
+      "size": [
+        90.0,
+        36.0
+      ],
+      "rotation": 0.0,
+      "flip_h": false,
+      "flip_v": false,
+      "z_index": 4,
+      "element_type": "PushButton",
+      "binding": {
+        "variable_id": "Stop_Button",
+        "access_mode": "ReadWrite",
+        "active_color": [
+          192,
+          57,
+          43,
+          255
+        ],
+        "inactive_color": [
+          231,
+          76,
+          60,
+          255
+        ],
+        "blink": null
+      },
+      "base_color": [
+        231,
+        76,
+        60,
+        255
+      ],
+      "button_mode": "Toggle"
+    },
+    {
+      "id": 10,
+      "label": "Alarm Beacon",
+      "position": [
+        500.0,
+        210.0
+      ],
+      "size": [
+        48.0,
+        48.0
+      ],
+      "rotation": 0.0,
+      "flip_h": false,
+      "flip_v": false,
+      "z_index": 4,
+      "element_type": "IndicatorLed",
+      "binding": {
+        "variable_id": "High_Temp_Alarm",
+        "access_mode": "ReadOnly",
+        "active_color": [
+          255,
+          75,
+          75,
+          255
+        ],
+        "inactive_color": [
+          80,
+          30,
+          30,
+          255
+        ],
+        "blink": {
+          "enabled": true,
+          "trigger_state": true,
+          "interval_ms": 300
+        }
+      },
+      "base_color": [
+        180,
+        50,
+        50,
+        255
+      ],
+      "button_mode": "Toggle"
+    }
+  ],
+  "selected_id": null,
+  "snap_to_grid": true,
+  "grid_size": 10.0,
+  "next_id": 100
+}

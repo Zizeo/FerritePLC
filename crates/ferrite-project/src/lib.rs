@@ -1196,11 +1196,40 @@ END_PROGRAM
         })
     }
 
-    /// Atomically saves the entire project (`FerriteProject.fplc`, `symbols/*`, `pous/*`, `sim/scenarios.toml`).
-    pub fn save(&self, target_dir: &Path) -> Result<(), ProjectError> {
+    /// Atomically saves only `FerriteProject.fplc`.
+    pub fn save_manifest(&self, target_dir: &Path) -> Result<(), ProjectError> {
         let manifest_toml = toml::to_string_pretty(&self.manifest)
             .map_err(|e| ProjectError::TomlSer(e.to_string()))?;
         Self::atomic_write_str(&target_dir.join(MANIFEST_FILE_NAME), &manifest_toml)?;
+        Ok(())
+    }
+
+    /// Atomically saves a single POU file on disk (`pous/<name>.<ext>`) without writing other POUs.
+    pub fn save_pou(&self, target_dir: &Path, pou_name: &str) -> Result<PathBuf, ProjectError> {
+        let entry = self
+            .manifest
+            .pous
+            .iter()
+            .find(|e| e.name == pou_name)
+            .ok_or(ProjectError::ValidationFailed(1))?;
+        let pou = self
+            .pous
+            .get(pou_name)
+            .ok_or(ProjectError::ValidationFailed(1))?;
+        let pou_path = target_dir.join(&entry.path);
+        let serialized = match pou {
+            PouSource::Ld(p) => p.to_json_pretty()?,
+            PouSource::Sfc(p) => p.to_json_pretty()?,
+            PouSource::St(p) => p.source.clone(),
+            PouSource::Fbd(p) => p.to_json_pretty()?,
+        };
+        Self::atomic_write_str(&pou_path, &serialized)?;
+        Ok(pou_path)
+    }
+
+    /// Atomically saves the entire project (`FerriteProject.fplc`, `symbols/*`, `pous/*`, `sim/scenarios.toml`).
+    pub fn save(&self, target_dir: &Path) -> Result<(), ProjectError> {
+        self.save_manifest(target_dir)?;
 
         let tags_toml = toml::to_string_pretty(&self.global_tags)
             .map_err(|e| ProjectError::TomlSer(e.to_string()))?;
@@ -1221,15 +1250,8 @@ END_PROGRAM
         Self::atomic_write_str(&target_dir.join("sim").join("scenarios.toml"), &sim_toml)?;
 
         for entry in &self.manifest.pous {
-            if let Some(pou) = self.pous.get(&entry.name) {
-                let pou_path = target_dir.join(&entry.path);
-                let serialized = match pou {
-                    PouSource::Ld(p) => p.to_json_pretty()?,
-                    PouSource::Sfc(p) => p.to_json_pretty()?,
-                    PouSource::St(p) => p.source.clone(),
-                    PouSource::Fbd(p) => p.to_json_pretty()?,
-                };
-                Self::atomic_write_str(&pou_path, &serialized)?;
+            if self.pous.contains_key(&entry.name) {
+                self.save_pou(target_dir, &entry.name)?;
             }
         }
 
@@ -1291,7 +1313,8 @@ END_PROGRAM
         }
         self.pous.insert(name.to_string(), pou_src);
         let root = self.root_dir.clone();
-        self.save(&root)?;
+        self.save_manifest(&root)?;
+        self.save_pou(&root, name)?;
         Ok(root.join(rel_path))
     }
 
@@ -1368,10 +1391,11 @@ END_PROGRAM
 
         self.pous.insert(clean_new.to_string(), pou_src);
 
-        // Save project state to disk if root_dir exists
+        // Save manifest and renamed POU to disk if root_dir exists
         if self.root_dir.exists() {
             let root = self.root_dir.clone();
-            self.save(&root)?;
+            self.save_manifest(&root)?;
+            self.save_pou(&root, clean_new)?;
         }
         Ok(())
     }
@@ -1422,6 +1446,39 @@ END_PROGRAM
         true
     }
 
+    /// Reorders a POU from `from_name`'s position to `to_name`'s position.
+    pub fn reorder_pou(&mut self, from_name: &str, to_name: &str) -> bool {
+        if from_name == to_name {
+            return false;
+        }
+        let Some(from_idx) = self.manifest.pous.iter().position(|p| p.name == from_name) else {
+            return false;
+        };
+        let Some(to_idx) = self.manifest.pous.iter().position(|p| p.name == to_name) else {
+            return false;
+        };
+
+        let item = self.manifest.pous.remove(from_idx);
+        self.manifest.pous.insert(to_idx, item);
+
+        // Update tasks pou_order
+        for task in &mut self.manifest.tasks {
+            if let Some(t_from) = task.pou_order.iter().position(|p| p == from_name)
+                && let Some(t_to) = task.pou_order.iter().position(|p| p == to_name)
+            {
+                let t_item = task.pou_order.remove(t_from);
+                task.pou_order.insert(t_to, t_item);
+            }
+        }
+
+        if self.root_dir.exists() {
+            let root = self.root_dir.clone();
+            let _ = self.save_manifest(&root);
+        }
+
+        true
+    }
+
     /// Deletes a POU across manifest, pous map, task execution orders, and on-disk files.
     pub fn delete_pou(&mut self, name: &str) -> Result<(), ProjectError> {
         self.pous.remove(name);
@@ -1439,7 +1496,7 @@ END_PROGRAM
         }
         if self.root_dir.exists() {
             let root = self.root_dir.clone();
-            self.save(&root)?;
+            self.save_manifest(&root)?;
         }
         Ok(())
     }
@@ -1797,6 +1854,66 @@ mod tests {
         for task in &proj.manifest.tasks {
             assert!(!task.pou_order.contains(&"pump_ctrl".to_string()));
         }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_project_save_single_pou() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_save_single_pou_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let mut proj = Project::scaffold(&temp_dir, "test_save_pou")?;
+
+        // Modify both `main_safety` and `math_pid` in memory
+        if let Some(PouSource::Ld(ld)) = proj.pous.get_mut("main_safety") {
+            ld.comment = "Updated main_safety comment".to_string();
+        }
+        if let Some(PouSource::St(st)) = proj.pous.get_mut("math_pid") {
+            st.source = "PROGRAM math_pid\n    (* Modified unsaved ST *)\nEND_PROGRAM\n".to_string();
+        }
+
+        // Save only `main_safety`
+        proj.save_pou(&temp_dir, "main_safety")?;
+
+        // Reload from disk: `main_safety` must have the update, while `math_pid` must remain untouched
+        let reloaded = Project::load(&temp_dir)?;
+        let Some(PouSource::Ld(reloaded_ld)) = reloaded.pous.get("main_safety") else {
+            return Err("main_safety missing".into());
+        };
+        assert_eq!(reloaded_ld.comment, "Updated main_safety comment");
+
+        let Some(PouSource::St(reloaded_st)) = reloaded.pous.get("math_pid") else {
+            return Err("math_pid missing".into());
+        };
+        assert!(!reloaded_st.source.contains("Modified unsaved ST"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_project_reorder_pou_arbitrary() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_reorder_arbitrary_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let mut proj = Project::scaffold(&temp_dir, "test_reorder_arb")?;
+        assert!(proj.manifest.pous.len() >= 3);
+        let orig_first = proj.manifest.pous[0].name.clone();
+        let orig_third = proj.manifest.pous[2].name.clone();
+
+        // Reorder: move first POU to third position
+        assert!(proj.reorder_pou(&orig_first, &orig_third));
+        assert_eq!(proj.manifest.pous[2].name, orig_first);
+
+        // Reorder onto itself is no-op returning false
+        assert!(!proj.reorder_pou(&orig_first, &orig_first));
+
+        // Reorder unknown POU returns false
+        assert!(!proj.reorder_pou("non_existent", &orig_first));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
