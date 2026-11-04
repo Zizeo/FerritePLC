@@ -565,7 +565,7 @@ pub fn handle_key_event(event: iced::keyboard::Event) -> Option<Message> {
 
 impl FerriteStudioApp {
     pub fn new(initial_project: Project) -> Self {
-        Self::with_language(initial_project, crate::i18n::detect_os_language())
+        Self::with_language(initial_project, crate::settings::load_saved_language_or_os())
     }
 
     pub fn with_language(mut initial_project: Project, ui_lang: UiLanguage) -> Self {
@@ -2079,6 +2079,7 @@ impl FerriteStudioApp {
             Message::WindowCreated(_id) => Task::none(),
             Message::SetLanguage(lang) => {
                 self.ui_lang = lang;
+                let _ = crate::settings::save_language_preference(lang);
                 Task::none()
             }
             Message::SetTheme(theme) => {

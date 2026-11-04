@@ -13,6 +13,7 @@ pub mod fbd_library_window;
 pub mod help_window;
 pub mod i18n;
 pub mod icons;
+pub mod settings;
 pub mod theme;
 pub mod trend_plotter;
 
@@ -24,6 +25,7 @@ pub type StudioApp = FerriteStudioApp;
 
 use ferrite_project::{MANIFEST_FILE_NAME, Project, ProjectError};
 pub use i18n::UiLanguage;
+pub use settings::UserSettings;
 pub use theme::StudioTheme;
 use thiserror::Error;
 
@@ -127,7 +129,8 @@ pub fn resolve_or_scaffold_project(initial_path: Option<&Path>) -> Result<Projec
 
 /// Launches the native FerritePLC Studio desktop IDE & PLC Simulator window.
 pub fn run_gui(initial_path: Option<PathBuf>) -> Result<(), GuiError> {
-    run_gui_with_lang(initial_path, UiLanguage::En)
+    let lang = settings::load_saved_language_or_os();
+    run_gui_with_lang(initial_path, lang)
 }
 
 /// Launches the native FerritePLC Studio desktop IDE & PLC Simulator window with a specific initial UI language (`En` or `Fr`).
@@ -2585,6 +2588,50 @@ mod tests {
             }
         }
 
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_language_preference_persisted_across_app_restarts() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!("ferrite_gui_lang_persist_test_{}", std::process::id()));
+        let settings_file = temp_dir.join("settings.json");
+        std::fs::create_dir_all(&temp_dir)?;
+
+        crate::settings::set_custom_settings_path(Some(settings_file.clone()));
+
+        let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+
+        // 1. First app launch: set language to French
+        {
+            let mut app = FerriteStudioApp::new(proj.clone());
+            let _ = app.update(Message::SetLanguage(UiLanguage::Fr));
+            assert_eq!(app.ui_lang, UiLanguage::Fr);
+        } // App is "closed" here
+
+        // Verify settings file was created and contains French
+        let saved = UserSettings::load_from_path(&settings_file)?;
+        assert_eq!(saved.language, Some(UiLanguage::Fr));
+
+        // 2. Second app launch ("reopen"): should automatically load French
+        {
+            let app = FerriteStudioApp::new(proj.clone());
+            assert_eq!(app.ui_lang, UiLanguage::Fr);
+        }
+
+        // 3. Third app launch: change to German, close and reopen
+        {
+            let mut app = FerriteStudioApp::new(proj.clone());
+            let _ = app.update(Message::SetLanguage(UiLanguage::De));
+            assert_eq!(app.ui_lang, UiLanguage::De);
+        }
+
+        {
+            let app = FerriteStudioApp::new(proj);
+            assert_eq!(app.ui_lang, UiLanguage::De);
+        }
+
+        crate::settings::set_custom_settings_path(None);
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
