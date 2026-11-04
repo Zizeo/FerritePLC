@@ -137,6 +137,7 @@ pub enum Message {
     None,
     // Navigation & Layout
     ToggleActiveMenu(Option<ActiveMenu>),
+    MenuHover(ActiveMenu),
     SelectTab(WorkspaceTab),
     SelectBottomTab(BottomDockTab),
     ToggleLeftExplorer,
@@ -1605,6 +1606,12 @@ impl FerriteStudioApp {
             | Message::DetachBottomDock
             | Message::SetLanguage(_)
             | Message::SetTheme(_)
+            | Message::OpenHelpWindow
+            | Message::CloseHelpWindow
+            | Message::OpenDigitalTwinWindow
+            | Message::CloseDigitalTwinWindow
+            | Message::OpenFbdLibraryWindow
+            | Message::CloseFbdLibraryWindow
             | Message::SelectTab(_) => {
                 self.active_menu = None;
                 self.pou_context_menu = None;
@@ -1619,6 +1626,12 @@ impl FerriteStudioApp {
                     self.active_menu = None;
                 } else {
                     self.active_menu = menu;
+                }
+                Task::none()
+            }
+            Message::MenuHover(menu) => {
+                if self.active_menu.is_some() {
+                    self.active_menu = Some(menu);
                 }
                 Task::none()
             }

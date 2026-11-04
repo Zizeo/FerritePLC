@@ -1,10 +1,10 @@
 pub mod alarms_panel;
 pub mod app;
-pub mod clipboard;
-pub mod custom_fbd_library;
 pub mod canvas_fbd;
 pub mod canvas_ld;
 pub mod canvas_sfc;
+pub mod clipboard;
+pub mod custom_fbd_library;
 pub mod digital_twin;
 pub mod editor_st;
 pub mod editor_symbols;
@@ -50,8 +50,8 @@ pub fn init_system_and_emoji_fonts() {
                 // Load user-installed fonts (%LOCALAPPDATA%\Microsoft\Windows\Fonts)
                 // Windows 10/11 installs per-user fonts (e.g. Nerd Fonts) here by default
                 if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-                    let user_fonts_dir = std::path::PathBuf::from(local_app_data)
-                        .join(r"Microsoft\Windows\Fonts");
+                    let user_fonts_dir =
+                        std::path::PathBuf::from(local_app_data).join(r"Microsoft\Windows\Fonts");
                     if user_fonts_dir.exists() {
                         db.load_fonts_dir(&user_fonts_dir);
                     }
@@ -67,9 +67,9 @@ pub fn is_nerd_font_available() -> bool {
     if let Ok(mut fs_lock) = iced::advanced::graphics::text::font_system().write() {
         let db = fs_lock.raw().db();
         db.faces().any(|face| {
-            face.families.iter().any(|(name, _)| {
-                name.contains("Nerd Font")
-            })
+            face.families
+                .iter()
+                .any(|(name, _)| name.contains("Nerd Font"))
         })
     } else {
         false
@@ -87,10 +87,10 @@ pub fn resolve_app_font() -> iced::Font {
     }
 }
 
-/// Returns the application window icon parsed from raw 64x64 RGBA image bytes.
+/// Returns the application window icon parsed from raw 128x128 RGBA image bytes.
 pub fn app_window_icon() -> Option<iced::window::Icon> {
-    const ICON_RGBA_BYTES: &[u8] = include_bytes!("../assets/icon_64.rgba");
-    iced::window::icon::from_rgba(ICON_RGBA_BYTES.to_vec(), 64, 64).ok()
+    const ICON_RGBA_BYTES: &[u8] = include_bytes!("../assets/icon_128.rgba");
+    iced::window::icon::from_rgba(ICON_RGBA_BYTES.to_vec(), 128, 128).ok()
 }
 
 #[derive(Debug, Error)]
@@ -167,7 +167,10 @@ mod tests {
     #[test]
     fn test_app_window_icon_loads_successfully() {
         let icon = app_window_icon();
-        assert!(icon.is_some(), "app_window_icon should successfully decode 64x64 RGBA bytes");
+        assert!(
+            icon.is_some(),
+            "app_window_icon should successfully decode 128x128 RGBA bytes"
+        );
     }
 
     #[test]
@@ -905,7 +908,8 @@ mod tests {
     }
 
     #[test]
-    fn test_warm_restart_auto_pauses_and_syncs_shared_io() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_warm_restart_auto_pauses_and_syncs_shared_io() -> Result<(), Box<dyn std::error::Error>>
+    {
         let temp_dir = std::env::temp_dir().join("ferrite_test_warm_restart_ui");
         if temp_dir.exists() {
             let _ = std::fs::remove_dir_all(&temp_dir);
@@ -915,12 +919,12 @@ mod tests {
 
         app.sim_running = true;
         let _ = app.update(Message::ResetSimWarm);
-        assert!(!app.sim_running, "Warm restart must auto-pause the simulation");
+        assert!(
+            !app.sim_running,
+            "Warm restart must auto-pause the simulation"
+        );
 
-        let shared = app
-            .shared_io
-            .read()
-            .map_err(|e| format!("{e}"))?;
+        let shared = app.shared_io.read().map_err(|e| format!("{e}"))?;
         assert_eq!(
             shared.values.get("EStop_OK"),
             Some(&ferrite_core::IecValue::Bool(true))
@@ -931,7 +935,8 @@ mod tests {
     }
 
     #[test]
-    fn test_single_step_advances_exactly_one_scan_cycle() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_single_step_advances_exactly_one_scan_cycle() -> Result<(), Box<dyn std::error::Error>>
+    {
         use crate::app::SimSpeed;
         let temp_dir = std::env::temp_dir().join("ferrite_test_step_single");
         if temp_dir.exists() {
@@ -996,8 +1001,14 @@ mod tests {
         let (cip_s2, _) = is_step_active(rt, "cip_clean", "2");
 
         assert!(cip_s0, "cip_clean Step 0 (Standby) must be active");
-        assert!(!cip_s1, "cip_clean Step 1 must NOT be active while batch_seq has step 1 active");
-        assert!(!cip_s2, "cip_clean Step 2 must NOT be active while batch_seq has step 2 active");
+        assert!(
+            !cip_s1,
+            "cip_clean Step 1 must NOT be active while batch_seq has step 1 active"
+        );
+        assert!(
+            !cip_s2,
+            "cip_clean Step 2 must NOT be active while batch_seq has step 2 active"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
@@ -1005,7 +1016,12 @@ mod tests {
 
     #[test]
     fn test_forces_active_banner_no_bugged_characters() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = env::temp_dir().join(format!("ferrite_forces_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()));
+        let temp_dir = env::temp_dir().join(format!(
+            "ferrite_forces_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
         let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
         let mut app = FerriteStudioApp::new(proj);
 
@@ -1014,7 +1030,11 @@ mod tests {
             rt.force("Start_Button", ferrite_core::IecValue::Bool(true))?;
         }
 
-        let count = app.runtime.as_ref().map(|rt| rt.active_forces_count()).unwrap_or(0);
+        let count = app
+            .runtime
+            .as_ref()
+            .map(|rt| rt.active_forces_count())
+            .unwrap_or(0);
         assert!(count >= 1, "There should be active forces present");
 
         // Format the banner text and assert it uses clean ASCII marker [!] and contains no emoji tofu
@@ -1039,7 +1059,10 @@ mod tests {
     fn test_help_window_messages_and_state() {
         let mut app = StudioApp::new_test_app();
         assert!(app.help_window_id.is_none());
-        assert_eq!(app.help_selected_topic, crate::help_window::HelpTopic::ArchScanLoop);
+        assert_eq!(
+            app.help_selected_topic,
+            crate::help_window::HelpTopic::ArchScanLoop
+        );
         assert_eq!(app.help_search_query, "");
 
         // Test Search input
@@ -1047,8 +1070,13 @@ mod tests {
         assert_eq!(app.help_search_query, "ladder");
 
         // Test Select topic
-        let _ = app.update(Message::SelectHelpTopic(crate::help_window::HelpTopic::LdContacts));
-        assert_eq!(app.help_selected_topic, crate::help_window::HelpTopic::LdContacts);
+        let _ = app.update(Message::SelectHelpTopic(
+            crate::help_window::HelpTopic::LdContacts,
+        ));
+        assert_eq!(
+            app.help_selected_topic,
+            crate::help_window::HelpTopic::LdContacts
+        );
 
         // Test view rendering
         let view_el = app.view_help_window();
@@ -1067,7 +1095,9 @@ mod tests {
         assert!(app.help_window_id.is_none());
 
         // Test Empty search rendering
-        let _ = app.update(Message::HelpSearchChanged("nonexistenttopic123".to_string()));
+        let _ = app.update(Message::HelpSearchChanged(
+            "nonexistenttopic123".to_string(),
+        ));
         let empty_view = app.view_help_window();
         let _ = empty_view;
     }
@@ -1106,11 +1136,7 @@ mod tests {
         let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
             panic!("Expected FBD POU pump_ctrl");
         };
-        let Some(b_idx) = fbd
-            .blocks
-            .iter()
-            .position(|b| b.id == "PID_Test")
-        else {
+        let Some(b_idx) = fbd.blocks.iter().position(|b| b.id == "PID_Test") else {
             panic!("PID_Test block not found");
         };
         let blk = &fbd.blocks[b_idx];
@@ -1130,12 +1156,13 @@ mod tests {
         assert!(blk.outputs.is_empty()); // Outputs start unbound
 
         // Verify fb_instances registry
-        assert!(app
-            .project
-            .fb_instances
-            .instances
-            .iter()
-            .any(|fb| fb.name == "PID_Test" && fb.kind == StandardFbKind::PidParallel));
+        assert!(
+            app.project
+                .fb_instances
+                .instances
+                .iter()
+                .any(|fb| fb.name == "PID_Test" && fb.kind == StandardFbKind::PidParallel)
+        );
 
         // Switch to PI: TI is retained, TD must be removed
         let _ = app.update(Message::FbdChangeCorrectorKind(
@@ -1156,12 +1183,13 @@ mod tests {
         );
         assert!(blk.inputs.contains_key("TI"));
         assert!(!blk.inputs.contains_key("TD"));
-        assert!(app
-            .project
-            .fb_instances
-            .instances
-            .iter()
-            .any(|fb| fb.name == "PID_Test" && fb.kind == StandardFbKind::Pi));
+        assert!(
+            app.project
+                .fb_instances
+                .instances
+                .iter()
+                .any(|fb| fb.name == "PID_Test" && fb.kind == StandardFbKind::Pi)
+        );
 
         // Switch to P: TI must be removed
         let _ = app.update(Message::FbdChangeCorrectorKind(
@@ -1374,7 +1402,9 @@ mod tests {
             assert!(!db.is_empty(), "System fonts should be loaded into fontdb");
 
             let has_fira = db.faces().any(|face| {
-                face.families.iter().any(|(name, _)| name.contains("FiraCode"))
+                face.families
+                    .iter()
+                    .any(|(name, _)| name.contains("FiraCode"))
             });
             #[cfg(target_os = "windows")]
             {
@@ -1382,7 +1412,10 @@ mod tests {
                     let fira_path = std::path::PathBuf::from(local_app_data)
                         .join(r"Microsoft\Windows\Fonts\FiraCodeNerdFont-Regular.ttf");
                     if fira_path.exists() {
-                        assert!(has_fira, "FiraCode Nerd Font in user directory should be loaded into fontdb");
+                        assert!(
+                            has_fira,
+                            "FiraCode Nerd Font in user directory should be loaded into fontdb"
+                        );
                     }
                 }
             }
@@ -1399,10 +1432,8 @@ mod tests {
             let font_system = fs_lock.raw();
 
             // Case 1: Primary font is Segoe UI Emoji with Basic shaping
-            let mut buf1 = cosmic_text::Buffer::new(
-                font_system,
-                cosmic_text::Metrics::new(14.0, 18.0),
-            );
+            let mut buf1 =
+                cosmic_text::Buffer::new(font_system, cosmic_text::Metrics::new(14.0, 18.0));
             buf1.set_text(
                 font_system,
                 "📖 🔒 ⚠️ ✏️ ⚙️",
@@ -1424,10 +1455,8 @@ mod tests {
             }
 
             // Case 2: SansSerif with Advanced shaping (fallback to Segoe UI Emoji)
-            let mut buf2 = cosmic_text::Buffer::new(
-                font_system,
-                cosmic_text::Metrics::new(14.0, 18.0),
-            );
+            let mut buf2 =
+                cosmic_text::Buffer::new(font_system, cosmic_text::Metrics::new(14.0, 18.0));
             buf2.set_text(
                 font_system,
                 "📖 🔒 ⚠️ ✏️ ⚙️",
@@ -1445,9 +1474,9 @@ mod tests {
             }
 
             // Case 3: FiraCode Nerd Font with Nerd Font icon codepoints
-            let local_fonts = std::env::var("LOCALAPPDATA").map(|l| {
-                std::path::PathBuf::from(l).join(r"Microsoft\Windows\Fonts")
-            }).ok();
+            let local_fonts = std::env::var("LOCALAPPDATA")
+                .map(|l| std::path::PathBuf::from(l).join(r"Microsoft\Windows\Fonts"))
+                .ok();
             if let Some(dir) = local_fonts {
                 let fira_path = dir.join("FiraCodeNerdFont-Regular.ttf");
                 if fira_path.exists() {
@@ -1460,7 +1489,8 @@ mod tests {
                     buf3.set_text(
                         font_system,
                         "\u{f02d} \u{f023} \u{f071} \u{f040} \u{f013}",
-                        cosmic_text::Attrs::new().family(cosmic_text::Family::Name("FiraCode Nerd Font")),
+                        cosmic_text::Attrs::new()
+                            .family(cosmic_text::Family::Name("FiraCode Nerd Font")),
                         cosmic_text::Shaping::Basic,
                     );
                     buf3.shape_until_scroll(font_system, false);
@@ -1478,7 +1508,8 @@ mod tests {
     }
 
     #[test]
-    fn test_digital_twin_os_window_edit_and_runtime_modes() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_digital_twin_os_window_edit_and_runtime_modes() -> Result<(), Box<dyn std::error::Error>>
+    {
         use ferrite_twin::{
             ActuatorKind, ButtonActionMode, ColorEditTarget, ElementKind, ShapeType, TwinMode,
         };
@@ -1566,14 +1597,19 @@ mod tests {
         });
         assert!(app.digital_twin_workspace.context_menu.is_some());
         let _ = app.update(Message::TwinOpenInspector(circle_id));
-        assert_eq!(app.digital_twin_workspace.inspector_open_for, Some(circle_id));
+        assert_eq!(
+            app.digital_twin_workspace.inspector_open_for,
+            Some(circle_id)
+        );
 
         let _ = app.update(Message::TwinToggleBinding(circle_id, true));
         let _ = app.update(Message::TwinSetVariable(
             circle_id,
             "High_Temp_Alarm".to_string(),
         ));
-        let _ = app.update(Message::TwinSelectColorTarget(ColorEditTarget::InactiveColor));
+        let _ = app.update(Message::TwinSelectColorTarget(
+            ColorEditTarget::InactiveColor,
+        ));
         let _ = app.update(Message::TwinSetColorHex("#FF0000".to_string()));
         // Invalid hex must be ignored safely
         let _ = app.update(Message::TwinSetColorHex("#GG0011".to_string()));
@@ -1622,7 +1658,10 @@ mod tests {
         let _ = app.update(Message::TwinOpenInspector(pb_id));
         let _ = app.update(Message::TwinToggleBinding(pb_id, true));
         let _ = app.update(Message::TwinSetVariable(pb_id, "Start_Button".to_string()));
-        let _ = app.update(Message::TwinSetButtonMode(pb_id, ButtonActionMode::Momentary));
+        let _ = app.update(Message::TwinSetButtonMode(
+            pb_id,
+            ButtonActionMode::Momentary,
+        ));
 
         // 5. Save Digital Twin layout to project disk
         let _ = app.update(Message::TwinSaveToProject);
@@ -1693,7 +1732,8 @@ mod tests {
     }
 
     #[test]
-    fn test_per_pou_dirty_tracking_and_individual_pou_save() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_per_pou_dirty_tracking_and_individual_pou_save()
+    -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_per_pou_save_{}",
             std::time::SystemTime::now()
@@ -1767,7 +1807,9 @@ mod tests {
         // Verify SaveActivePouOrProject behavior in FerriteStudioApp
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_save_shortcut_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let proj = ferrite_project::Project::scaffold(&temp_dir, "test_sc")?;
         let mut app = FerriteStudioApp::new(proj);
@@ -1789,7 +1831,9 @@ mod tests {
     fn test_pou_explorer_context_menu_and_drag_reorder() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_explorer_dnd_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let proj = ferrite_project::Project::scaffold(&temp_dir, "test_exp_dnd")?;
         let mut app = FerriteStudioApp::new(proj);
@@ -1823,12 +1867,13 @@ mod tests {
         Ok(())
     }
 
-
     #[test]
     fn test_fbd_library_window_open_close_and_messages() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_fbd_win_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let proj = ferrite_project::Project::scaffold(&temp_dir, "test_fbd_win")?;
         let mut app = FerriteStudioApp::new(proj);
@@ -1869,7 +1914,9 @@ mod tests {
     fn test_fbd_library_catalog_and_filtering() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_fbd_lib_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let proj = ferrite_project::Project::scaffold(&temp_dir, "test_fbd_lib")?;
         let mut app = FerriteStudioApp::new(proj);
@@ -1885,7 +1932,9 @@ mod tests {
     fn test_ladder_paste_below_active_rung() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_ld_paste_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let proj = ferrite_project::Project::scaffold(&temp_dir, "test_ld_paste")?;
         let mut app = FerriteStudioApp::new(proj);
@@ -1893,11 +1942,12 @@ mod tests {
         let pou_name = "main_safety".to_string();
         app.active_tab = WorkspaceTab::Pou(pou_name.clone());
 
-        let initial_rungs = if let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get(&pou_name) {
-            ld.rungs.len()
-        } else {
-            0
-        };
+        let initial_rungs =
+            if let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get(&pou_name) {
+                ld.rungs.len()
+            } else {
+                0
+            };
         assert!(initial_rungs > 0, "Initial ladder POU must have rungs");
 
         // Select rung 0
@@ -1914,9 +1964,11 @@ mod tests {
             elements: Vec::new(),
             coils: Vec::new(),
         };
-        let payload = crate::clipboard::serialize_clipboard(crate::clipboard::FerriteClipboardData::Ladder {
-            rungs: vec![copied_rung],
-        })?;
+        let payload = crate::clipboard::serialize_clipboard(
+            crate::clipboard::FerriteClipboardData::Ladder {
+                rungs: vec![copied_rung],
+            },
+        )?;
 
         // Paste clipboard
         let _ = app.update(Message::ClipboardPasted(Some(payload)));
@@ -1924,7 +1976,10 @@ mod tests {
         // Verify inserted immediately below rung 0 (at index 1)
         if let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get(&pou_name) {
             assert_eq!(ld.rungs.len(), initial_rungs + 1);
-            assert_eq!(app.ld_selected, Some((pou_name.clone(), crate::canvas_ld::LdElementKey::Rung(1))));
+            assert_eq!(
+                app.ld_selected,
+                Some((pou_name.clone(), crate::canvas_ld::LdElementKey::Rung(1)))
+            );
         } else {
             panic!("Expected LD POU");
         }
@@ -1937,7 +1992,9 @@ mod tests {
     fn test_sfc_paste_with_grid_delta_and_unique_ids() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_sfc_paste_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let proj = ferrite_project::Project::scaffold(&temp_dir, "test_sfc_paste")?;
         let mut app = FerriteStudioApp::new(proj);
@@ -1961,21 +2018,39 @@ mod tests {
             divergence: ferrite_lang_sfc::DivergenceKind::default(),
             grid_pos: Some((10, 14)),
         };
-        let payload = crate::clipboard::serialize_clipboard(crate::clipboard::FerriteClipboardData::Sfc {
-            steps: vec![step],
-            transitions: vec![trans],
-        })?;
+        let payload =
+            crate::clipboard::serialize_clipboard(crate::clipboard::FerriteClipboardData::Sfc {
+                steps: vec![step],
+                transitions: vec![trans],
+            })?;
 
         let _ = app.update(Message::ClipboardPasted(Some(payload)));
 
         if let Some(ferrite_project::PouSource::Sfc(sfc)) = app.project.pous.get(&pou_name) {
             // Find newly pasted step (must have grid_pos (12, 12))
-            let pasted_step = sfc.steps.iter().find(|s| s.grid_pos == Some((12, 12))).ok_or("Pasted step with (+2, +2) delta not found")?;
-            assert_ne!(pasted_step.id, "Step_1", "Pasted step must have unique non-colliding ID");
+            let pasted_step = sfc
+                .steps
+                .iter()
+                .find(|s| s.grid_pos == Some((12, 12)))
+                .ok_or("Pasted step with (+2, +2) delta not found")?;
+            assert_ne!(
+                pasted_step.id, "Step_1",
+                "Pasted step must have unique non-colliding ID"
+            );
 
-            let pasted_trans = sfc.transitions.iter().find(|t| t.grid_pos == Some((12, 16))).ok_or("Pasted trans with (+2, +2) delta not found")?;
-            assert_ne!(pasted_trans.id, "Trans_1", "Pasted trans must have unique non-colliding ID");
-            assert!(pasted_trans.from_steps.contains(&pasted_step.id), "Transition link must be remapped to new step ID");
+            let pasted_trans = sfc
+                .transitions
+                .iter()
+                .find(|t| t.grid_pos == Some((12, 16)))
+                .ok_or("Pasted trans with (+2, +2) delta not found")?;
+            assert_ne!(
+                pasted_trans.id, "Trans_1",
+                "Pasted trans must have unique non-colliding ID"
+            );
+            assert!(
+                pasted_trans.from_steps.contains(&pasted_step.id),
+                "Transition link must be remapped to new step ID"
+            );
         } else {
             panic!("Expected SFC POU");
         }
@@ -1988,7 +2063,9 @@ mod tests {
     fn test_fbd_paste_with_unique_ids() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_fbd_paste_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let proj = ferrite_project::Project::scaffold(&temp_dir, "test_fbd_paste")?;
         let mut app = FerriteStudioApp::new(proj);
@@ -1997,11 +2074,12 @@ mod tests {
         app.active_tab = WorkspaceTab::Pou(pou_name.clone());
         app.fbd_selected_block = Some(0);
 
-        let initial_blocks = if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
-            fbd.blocks.len()
-        } else {
-            0
-        };
+        let initial_blocks =
+            if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
+                fbd.blocks.len()
+            } else {
+                0
+            };
 
         let block = ferrite_lang_fbd::FbdBlock {
             id: "TON_1".to_string(),
@@ -2009,9 +2087,10 @@ mod tests {
             inputs: std::collections::HashMap::new(),
             outputs: std::collections::HashMap::new(),
         };
-        let payload = crate::clipboard::serialize_clipboard(crate::clipboard::FerriteClipboardData::Fbd {
-            blocks: vec![block],
-        })?;
+        let payload =
+            crate::clipboard::serialize_clipboard(crate::clipboard::FerriteClipboardData::Fbd {
+                blocks: vec![block],
+            })?;
 
         let _ = app.update(Message::ClipboardPasted(Some(payload)));
 
@@ -2032,7 +2111,9 @@ mod tests {
     fn test_fbd_block_drag_and_drop_reorders_blocks() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_fbd_reorder_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let proj = ferrite_project::Project::scaffold(&temp_dir, "test_fbd_reorder")?;
         let mut app = FerriteStudioApp::new(proj);
@@ -2040,18 +2121,23 @@ mod tests {
         let pou_name = "pump_ctrl".to_string();
         app.active_tab = WorkspaceTab::Pou(pou_name.clone());
 
-        let initial_blocks = if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
-            fbd.blocks.len()
-        } else {
-            0
-        };
-        assert!(initial_blocks >= 2, "pump_ctrl should have at least 2 blocks");
+        let initial_blocks =
+            if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
+                fbd.blocks.len()
+            } else {
+                0
+            };
+        assert!(
+            initial_blocks >= 2,
+            "pump_ctrl should have at least 2 blocks"
+        );
 
-        let first_id = if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
-            fbd.blocks[0].id.clone()
-        } else {
-            String::new()
-        };
+        let first_id =
+            if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
+                fbd.blocks[0].id.clone()
+            } else {
+                String::new()
+            };
 
         // Drag block 0 onto block 1
         let _ = app.update(Message::FbdBlockDragStarted(pou_name.clone(), 0));
@@ -2088,35 +2174,49 @@ mod tests {
         assert!(app.custom_fbd_builder_open);
 
         // 2. ST Validation
-        let _ = app.update(Message::CustomFbdStCodeChanged("INVALID ST SYNTAX {{{".to_string()));
+        let _ = app.update(Message::CustomFbdStCodeChanged(
+            "INVALID ST SYNTAX {{{".to_string(),
+        ));
         assert!(app.custom_fbd_validation_error.is_some());
 
-        let _ = app.update(Message::CustomFbdStCodeChanged("OUT := IN1 AND IN2;".to_string()));
+        let _ = app.update(Message::CustomFbdStCodeChanged(
+            "OUT := IN1 AND IN2;".to_string(),
+        ));
         assert!(app.custom_fbd_validation_error.is_none());
 
         // Multiline ST logic with Enter key
-        let _ = app.update(Message::CustomFbdStAction(iced::widget::text_editor::Action::Edit(
-            iced::widget::text_editor::Edit::Enter,
-        )));
+        let _ = app.update(Message::CustomFbdStAction(
+            iced::widget::text_editor::Action::Edit(iced::widget::text_editor::Edit::Enter),
+        ));
         assert!(app.custom_fbd_st_content.text().contains('\n'));
 
         // 3. Name validation on save
-        let _ = app.update(Message::CustomFbdNameChanged("Bad Name.WithDot".to_string()));
+        let _ = app.update(Message::CustomFbdNameChanged(
+            "Bad Name.WithDot".to_string(),
+        ));
         let _ = app.update(Message::SaveCustomFbdBlock);
         assert!(app.custom_fbd_validation_error.is_some());
         assert!(app.custom_fbd_builder_open); // Stays open on error
 
         // 4. Valid save
         let _ = app.update(Message::CustomFbdNameChanged("MySafetyCheck".to_string()));
-        let _ = app.update(Message::CustomFbdDescChanged("Checks dual permissives".to_string()));
+        let _ = app.update(Message::CustomFbdDescChanged(
+            "Checks dual permissives".to_string(),
+        ));
         let _ = app.update(Message::CustomFbdInputsChanged("IN1, IN2".to_string()));
         let _ = app.update(Message::CustomFbdOutputsChanged("OUT".to_string()));
-        let _ = app.update(Message::CustomFbdStCodeChanged("OUT := IN1 AND IN2;".to_string()));
+        let _ = app.update(Message::CustomFbdStCodeChanged(
+            "OUT := IN1 AND IN2;".to_string(),
+        ));
         let _ = app.update(Message::SaveCustomFbdBlock);
 
         assert!(app.custom_fbd_validation_error.is_none());
         assert!(!app.custom_fbd_builder_open);
-        assert!(app.global_custom_fbs.iter().any(|b| b.name == "MySafetyCheck"));
+        assert!(
+            app.global_custom_fbs
+                .iter()
+                .any(|b| b.name == "MySafetyCheck")
+        );
 
         // 5. Edit block
         let _ = app.update(Message::EditCustomFbdBlock("MySafetyCheck".to_string()));
@@ -2142,14 +2242,67 @@ mod tests {
                 false
             }
         });
-        assert!(has_composite_pou, "FBD POU should contain composite definition and instance");
+        assert!(
+            has_composite_pou,
+            "FBD POU should contain composite definition and instance"
+        );
 
         // 7. Delete block
         let _ = app.update(Message::DeleteCustomFbdBlock("MySafetyCheck".to_string()));
-        assert!(!app.global_custom_fbs.iter().any(|b| b.name == "MySafetyCheck"));
+        assert!(
+            !app.global_custom_fbs
+                .iter()
+                .any(|b| b.name == "MySafetyCheck")
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
+    #[test]
+    fn test_menu_hover_and_auto_dismissal() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("ferrite_gui_menu_hover_test");
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = FerriteStudioApp::new(proj);
 
+        // 1. Initial state: active_menu is None
+        assert_eq!(app.active_menu, None);
+
+        // 2. Hovering when active_menu is None does NOT open the menu
+        let _ = app.update(Message::MenuHover(crate::app::ActiveMenu::Plc));
+        assert_eq!(app.active_menu, None);
+
+        // 3. Opening File menu
+        let _ = app.update(Message::ToggleActiveMenu(Some(crate::app::ActiveMenu::File)));
+        assert_eq!(app.active_menu, Some(crate::app::ActiveMenu::File));
+
+        // 4. Hovering over PLC while File is open switches to PLC
+        let _ = app.update(Message::MenuHover(crate::app::ActiveMenu::Plc));
+        assert_eq!(app.active_menu, Some(crate::app::ActiveMenu::Plc));
+
+        // 5. Hovering over Panels switches to Panels
+        let _ = app.update(Message::MenuHover(crate::app::ActiveMenu::Panels));
+        assert_eq!(app.active_menu, Some(crate::app::ActiveMenu::Panels));
+
+        // 6. Action executions automatically close active_menu
+        let _ = app.update(Message::OpenHelpWindow);
+        assert_eq!(app.active_menu, None, "OpenHelpWindow should dismiss active_menu");
+
+        // Open menu again, then trigger OpenDigitalTwinWindow
+        let _ = app.update(Message::ToggleActiveMenu(Some(crate::app::ActiveMenu::Panels)));
+        assert_eq!(app.active_menu, Some(crate::app::ActiveMenu::Panels));
+        let _ = app.update(Message::OpenDigitalTwinWindow);
+        assert_eq!(app.active_menu, None, "OpenDigitalTwinWindow should dismiss active_menu");
+
+        // Open menu again, then dismiss via backdrop / ToggleActiveMenu(None)
+        let _ = app.update(Message::ToggleActiveMenu(Some(crate::app::ActiveMenu::Options)));
+        assert_eq!(app.active_menu, Some(crate::app::ActiveMenu::Options));
+        let _ = app.update(Message::ToggleActiveMenu(None));
+        assert_eq!(app.active_menu, None, "ToggleActiveMenu(None) should dismiss active_menu");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }
