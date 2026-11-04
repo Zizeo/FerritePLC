@@ -59,6 +59,11 @@ pub enum ActiveMenu {
     Options,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveSubmenu {
+    Language,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BottomDockTab {
     #[default]
@@ -138,6 +143,8 @@ pub enum Message {
     // Navigation & Layout
     ToggleActiveMenu(Option<ActiveMenu>),
     MenuHover(ActiveMenu),
+    ToggleSubmenu(Option<ActiveSubmenu>),
+    SubmenuHover(Option<ActiveSubmenu>),
     SelectTab(WorkspaceTab),
     SelectBottomTab(BottomDockTab),
     ToggleLeftExplorer,
@@ -504,6 +511,7 @@ pub struct FerriteStudioApp {
     pub ld_canvas_pan: HashMap<String, Vector>,
     pub ld_canvas_zoom: HashMap<String, f32>,
     pub active_menu: Option<ActiveMenu>,
+    pub active_submenu: Option<ActiveSubmenu>,
 }
 
 pub fn handle_keyboard_shortcut(
@@ -657,6 +665,7 @@ impl FerriteStudioApp {
             show_right_io: true,
             show_bottom_dock: true,
             active_menu: None,
+            active_submenu: None,
             detach_left_explorer: false,
             detach_right_io: false,
             detach_bottom_dock: false,
@@ -1614,7 +1623,9 @@ impl FerriteStudioApp {
             | Message::CloseFbdLibraryWindow
             | Message::SelectTab(_) => {
                 self.active_menu = None;
+
                 self.pou_context_menu = None;
+                self.active_submenu = None;
             }
             _ => {}
         }
@@ -1622,8 +1633,11 @@ impl FerriteStudioApp {
         match message {
             Message::None => Task::none(),
             Message::ToggleActiveMenu(menu) => {
+
+                self.active_submenu = None;
                 if self.active_menu == menu {
                     self.active_menu = None;
+
                 } else {
                     self.active_menu = menu;
                 }
@@ -1632,11 +1646,25 @@ impl FerriteStudioApp {
             Message::MenuHover(menu) => {
                 if self.active_menu.is_some() {
                     self.active_menu = Some(menu);
+                    self.active_submenu = None;
                 }
+                Task::none()
+            }
+            Message::ToggleSubmenu(sub) => {
+                if self.active_submenu == sub {
+                    self.active_submenu = None;
+                } else {
+                    self.active_submenu = sub;
+                }
+                Task::none()
+            }
+            Message::SubmenuHover(sub) => {
+                self.active_submenu = sub;
                 Task::none()
             }
             Message::SelectTab(tab) => {
                 self.active_menu = None;
+
                 self.active_tab = tab;
                 Task::none()
             }
@@ -2900,6 +2928,7 @@ impl FerriteStudioApp {
             }
             Message::ClosePouContextMenu => {
                 self.pou_context_menu = None;
+                self.active_submenu = None;
                 Task::none()
             }
             Message::PouDragStarted(pou_name) => {
@@ -2907,6 +2936,7 @@ impl FerriteStudioApp {
                 self.dragging_pou = Some(pou_name);
                 self.drag_hover_pou = None;
                 self.pou_context_menu = None;
+                self.active_submenu = None;
                 Task::none()
             }
             Message::PouDragHovered(pou_name) => {
@@ -6153,37 +6183,28 @@ impl FerriteStudioApp {
             .spacing(1)
             .into(),
             ActiveMenu::Options => column![
-                Self::menu_dropdown_item(
-                    crate::tr!("menu.options.english", self.ui_lang),
-                    None,
-                    self.ui_lang == UiLanguage::En,
-                    Some(Message::SetLanguage(UiLanguage::En)),
-                ),
-                Self::menu_dropdown_item(
-                    crate::tr!("menu.options.french", self.ui_lang),
-                    None,
-                    self.ui_lang == UiLanguage::Fr,
-                    Some(Message::SetLanguage(UiLanguage::Fr)),
-                ),
-                Self::menu_dropdown_item(
-                    crate::tr!("menu.options.pseudo", self.ui_lang),
-                    None,
-                    self.ui_lang == UiLanguage::Pseudo,
-                    Some(Message::SetLanguage(UiLanguage::Pseudo)),
-                ),
+                mouse_area(Self::menu_dropdown_item(
+                    crate::tr!("menu.options.language", self.ui_lang),
+                    Some("▸"),
+                    false,
+                    Some(Message::ToggleSubmenu(Some(ActiveSubmenu::Language))),
+                ))
+                .on_enter(Message::SubmenuHover(Some(ActiveSubmenu::Language))),
                 Self::menu_dropdown_divider(),
-                Self::menu_dropdown_item(
+                mouse_area(Self::menu_dropdown_item(
                     crate::tr!("menu.options.theme_dark", self.ui_lang),
                     None,
                     self.ui_theme == UiTheme::Dark,
                     Some(Message::SetTheme(UiTheme::Dark)),
-                ),
-                Self::menu_dropdown_item(
+                ))
+                .on_enter(Message::SubmenuHover(None)),
+                mouse_area(Self::menu_dropdown_item(
                     crate::tr!("menu.options.theme_light", self.ui_lang),
                     None,
                     self.ui_theme == UiTheme::Light,
                     Some(Message::SetTheme(UiTheme::Light)),
-                ),
+                ))
+                .on_enter(Message::SubmenuHover(None)),
             ]
             .spacing(1)
             .into(),
@@ -6191,6 +6212,61 @@ impl FerriteStudioApp {
 
         container(items_col)
             .width(250)
+            .padding(4)
+            .style(|_| container::Style {
+                background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
+                border: Border {
+                    color: StudioTheme::BORDER_CARD,
+                    width: 1.0,
+                    radius: Radius::from(6.0),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 12.0,
+                },
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn view_language_submenu(&self) -> Element<'_, Message> {
+        let items_col = column![
+            Self::menu_dropdown_item(
+                "English".to_string(),
+                None,
+                self.ui_lang == UiLanguage::En,
+                Some(Message::SetLanguage(UiLanguage::En)),
+            ),
+            Self::menu_dropdown_item(
+                "Français".to_string(),
+                None,
+                self.ui_lang == UiLanguage::Fr,
+                Some(Message::SetLanguage(UiLanguage::Fr)),
+            ),
+            Self::menu_dropdown_item(
+                "Deutsch".to_string(),
+                None,
+                self.ui_lang == UiLanguage::De,
+                Some(Message::SetLanguage(UiLanguage::De)),
+            ),
+            Self::menu_dropdown_item(
+                "Español".to_string(),
+                None,
+                self.ui_lang == UiLanguage::Es,
+                Some(Message::SetLanguage(UiLanguage::Es)),
+            ),
+            Self::menu_dropdown_item(
+                "Italiano".to_string(),
+                None,
+                self.ui_lang == UiLanguage::It,
+                Some(Message::SetLanguage(UiLanguage::It)),
+            ),
+        ]
+        .spacing(1);
+
+        container(items_col)
+            .width(180)
             .padding(4)
             .style(|_| container::Style {
                 background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
@@ -6427,7 +6503,12 @@ impl FerriteStudioApp {
                 ActiveMenu::Options => 248.0,
             };
 
-            let menu_card = container(self.view_active_menu())
+            let mut menu_content = row![self.view_active_menu()].spacing(2);
+            if active == ActiveMenu::Options && self.active_submenu == Some(ActiveSubmenu::Language) {
+                menu_content = menu_content.push(self.view_language_submenu());
+            }
+
+            let menu_card = container(menu_content)
                 .padding(iced::Padding {
                     top: 35.0,
                     left: x_offset,
@@ -6591,8 +6672,10 @@ impl FerriteStudioApp {
         let lang_btn = button(text(self.ui_lang.code()).size(11))
             .on_press(Message::SetLanguage(match self.ui_lang {
                 UiLanguage::En => UiLanguage::Fr,
-                UiLanguage::Fr => UiLanguage::En,
-                UiLanguage::Pseudo => UiLanguage::En,
+                UiLanguage::Fr => UiLanguage::De,
+                UiLanguage::De => UiLanguage::Es,
+                UiLanguage::Es => UiLanguage::It,
+                UiLanguage::It => UiLanguage::En,
             }))
             .style(StudioTheme::ghost_button)
             .padding([6, 10]);

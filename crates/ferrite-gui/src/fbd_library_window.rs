@@ -536,8 +536,9 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
 
         for item in matching_items {
             let desc = match lang {
-                crate::i18n::UiLanguage::En | crate::i18n::UiLanguage::Pseudo => item.description_en,
+
                 crate::i18n::UiLanguage::Fr => item.description_fr,
+                _ => item.description_en,
             };
 
             let add_btn = if let Some(ref target_pou) = active_fbd_pou {

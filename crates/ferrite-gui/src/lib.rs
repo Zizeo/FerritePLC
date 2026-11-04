@@ -2341,7 +2341,7 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn test_ui_rendering_in_all_locales_including_pseudo() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_ui_rendering_in_all_locales() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join("ferrite_gui_locales_render_test");
         if temp_dir.exists() {
             let _ = std::fs::remove_dir_all(&temp_dir);
@@ -2350,7 +2350,7 @@ mod tests {
         let mut app = FerriteStudioApp::new(proj);
         let win_id = iced::window::Id::unique();
 
-        for lang in [UiLanguage::En, UiLanguage::Fr, UiLanguage::Pseudo] {
+        for lang in UiLanguage::ALL {
             let _ = app.update(Message::SetLanguage(lang));
             assert_eq!(app.ui_lang, lang);
 
@@ -2390,6 +2390,66 @@ mod tests {
             let _ = app.view(win_id);
             app.sfc_delete_modal = None;
         }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_options_language_submenu_side_dropdown() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("ferrite_gui_lang_submenu_test");
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = FerriteStudioApp::new(proj);
+        let win_id = iced::window::Id::unique();
+
+        // 1. Initial state
+        assert_eq!(app.active_menu, None);
+        assert_eq!(app.active_submenu, None);
+
+        // 2. Open Options menu
+        let _ = app.update(Message::ToggleActiveMenu(Some(crate::app::ActiveMenu::Options)));
+        assert_eq!(app.active_menu, Some(crate::app::ActiveMenu::Options));
+        assert_eq!(app.active_submenu, None);
+
+        // 3. Hovering Language item opens side-dropdown submenu
+        let _ = app.update(Message::SubmenuHover(Some(crate::app::ActiveSubmenu::Language)));
+        assert_eq!(app.active_submenu, Some(crate::app::ActiveSubmenu::Language));
+
+        // 4. View renders without panic when language submenu is open alongside Options menu
+        let _ = app.view(win_id);
+
+        // 5. Hovering Theme item closes side-dropdown submenu
+        let _ = app.update(Message::SubmenuHover(None));
+        assert_eq!(app.active_submenu, None);
+        assert_eq!(app.active_menu, Some(crate::app::ActiveMenu::Options));
+
+        // 6. Clicking Language item toggles submenu open
+        let _ = app.update(Message::ToggleSubmenu(Some(crate::app::ActiveSubmenu::Language)));
+        assert_eq!(app.active_submenu, Some(crate::app::ActiveSubmenu::Language));
+
+        // 7. Selecting German sets ui_lang to De, dismisses menu and submenu
+        let _ = app.update(Message::SetLanguage(UiLanguage::De));
+        assert_eq!(app.ui_lang, UiLanguage::De);
+        assert_eq!(app.active_menu, None);
+        assert_eq!(app.active_submenu, None);
+        assert_eq!(crate::tr!("menu.file.save_project", app.ui_lang), "Projekt speichern");
+
+        // 8. Selecting Spanish sets ui_lang to Es
+        let _ = app.update(Message::SetLanguage(UiLanguage::Es));
+        assert_eq!(app.ui_lang, UiLanguage::Es);
+        assert_eq!(app.active_menu, None);
+        assert_eq!(app.active_submenu, None);
+        assert_eq!(crate::tr!("menu.file.save_project", app.ui_lang), "Guardar proyecto");
+
+        // 9. Selecting Italian sets ui_lang to It
+        let _ = app.update(Message::SetLanguage(UiLanguage::It));
+        assert_eq!(app.ui_lang, UiLanguage::It);
+        assert_eq!(app.active_menu, None);
+        assert_eq!(app.active_submenu, None);
+        assert_eq!(crate::tr!("menu.file.save_project", app.ui_lang), "Salva progetto");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
