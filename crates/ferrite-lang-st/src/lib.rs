@@ -66,6 +66,18 @@ pub enum Token {
     While,
     #[regex(r"(?i)END_WHILE")]
     EndWhile,
+    #[regex(r"(?i)REPEAT")]
+    Repeat,
+    #[regex(r"(?i)UNTIL")]
+    Until,
+    #[regex(r"(?i)END_REPEAT")]
+    EndRepeat,
+    #[regex(r"(?i)EXIT")]
+    Exit,
+    #[regex(r"(?i)CONTINUE")]
+    Continue,
+    #[regex(r"(?i)RETURN")]
+    Return,
     #[regex(r"(?i)AND")]
     And,
     #[regex(r"(?i)OR")]
@@ -135,12 +147,36 @@ pub enum Token {
     Colon,
 }
 
-pub fn tokenize(src: &str, pou_name: &str) -> Result<Vec<Token>, StError> {
+/// Converts a 0-based byte offset in `src` into 1-based `(line, column)` coordinates.
+pub fn byte_offset_to_line_col(src: &str, byte_offset: usize) -> (usize, usize) {
+    let clamped = byte_offset.min(src.len());
+    let prefix = &src[..clamped];
+    let mut line = 1usize;
+    let mut col = 1usize;
+    for ch in prefix.chars() {
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+pub fn tokenize_with_spans(
+    src: &str,
+    pou_name: &str,
+) -> Result<(Vec<Token>, Vec<std::ops::Range<usize>>), StError> {
     let mut lexer = Token::lexer(src);
     let mut tokens = Vec::new();
+    let mut spans = Vec::new();
     while let Some(res) = lexer.next() {
         match res {
-            Ok(tok) => tokens.push(tok),
+            Ok(tok) => {
+                tokens.push(tok);
+                spans.push(lexer.span());
+            }
             Err(()) => {
                 let span = lexer.span();
                 return Err(StError::LexError {
@@ -152,21 +188,48 @@ pub fn tokenize(src: &str, pou_name: &str) -> Result<Vec<Token>, StError> {
             }
         }
     }
+    Ok((tokens, spans))
+}
+
+pub fn tokenize(src: &str, pou_name: &str) -> Result<Vec<Token>, StError> {
+    let (tokens, _) = tokenize_with_spans(src, pou_name)?;
     Ok(tokens)
 }
 
 struct Parser<'a> {
     tokens: &'a [Token],
+    spans: &'a [std::ops::Range<usize>],
+    src: &'a str,
     pos: usize,
     pou_name: &'a str,
 }
 
 impl<'a> Parser<'a> {
-    fn new(tokens: &'a [Token], pou_name: &'a str) -> Self {
+    fn new(
+        tokens: &'a [Token],
+        spans: &'a [std::ops::Range<usize>],
+        src: &'a str,
+        pou_name: &'a str,
+    ) -> Self {
         Self {
             tokens,
+            spans,
+            src,
             pos: 0,
             pou_name,
+        }
+    }
+
+    fn syntax_error(&self, token_idx: usize, detail: impl Into<String>) -> StError {
+        let offset = self
+            .spans
+            .get(token_idx)
+            .map(|r| r.start)
+            .unwrap_or(self.src.len());
+        let (line, col) = byte_offset_to_line_col(self.src, offset);
+        StError::SyntaxError {
+            pou: self.pou_name.to_string(),
+            message: format!("line {line}, col {col}: {}", detail.into()),
         }
     }
 
@@ -183,30 +246,28 @@ impl<'a> Parser<'a> {
     }
 
     fn expect(&mut self, expected: &Token) -> Result<(), StError> {
+        let err_idx = self.pos;
         match self.next() {
             Some(tok) if tok == expected => Ok(()),
-            Some(other) => Err(StError::SyntaxError {
-                pou: self.pou_name.to_string(),
-                message: format!("expected {expected:?}, found {other:?}"),
-            }),
-            None => Err(StError::SyntaxError {
-                pou: self.pou_name.to_string(),
-                message: format!("expected {expected:?}, found end of input"),
-            }),
+            Some(other) => Err(self.syntax_error(
+                err_idx,
+                format!("expected {expected:?}, found {other:?}"),
+            )),
+            None => Err(self.syntax_error(
+                err_idx,
+                format!("expected {expected:?}, found end of input"),
+            )),
         }
     }
 
     fn expect_ident(&mut self) -> Result<String, StError> {
+        let err_idx = self.pos;
         match self.next() {
             Some(Token::Ident(s)) | Some(Token::DirectAddress(s)) => Ok(s.clone()),
-            Some(other) => Err(StError::SyntaxError {
-                pou: self.pou_name.to_string(),
-                message: format!("expected identifier, found {other:?}"),
-            }),
-            None => Err(StError::SyntaxError {
-                pou: self.pou_name.to_string(),
-                message: "expected identifier, found end of input".to_string(),
-            }),
+            Some(other) => {
+                Err(self.syntax_error(err_idx, format!("expected identifier, found {other:?}")))
+            }
+            None => Err(self.syntax_error(err_idx, "expected identifier, found end of input")),
         }
     }
 
@@ -226,10 +287,10 @@ impl<'a> Parser<'a> {
             }
         }
         if let Some(rem) = self.peek() {
-            return Err(StError::SyntaxError {
-                pou: self.pou_name.to_string(),
-                message: format!("unexpected token {rem:?} after statements"),
-            });
+            return Err(self.syntax_error(
+                self.pos,
+                format!("unexpected token {rem:?} after statements"),
+            ));
         }
         Ok(stmts)
     }
@@ -253,11 +314,25 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_stmt(&mut self) -> Result<IrStmt, StError> {
+        let err_idx = self.pos;
         match self.peek() {
             Some(Token::If) => self.parse_if(),
             Some(Token::Case) => self.parse_case(),
             Some(Token::For) => self.parse_for(),
             Some(Token::While) => self.parse_while(),
+            Some(Token::Repeat) => self.parse_repeat(),
+            Some(Token::Exit) => {
+                self.next();
+                Ok(IrStmt::Exit)
+            }
+            Some(Token::Continue) => {
+                self.next();
+                Ok(IrStmt::Continue)
+            }
+            Some(Token::Return) => {
+                self.next();
+                Ok(IrStmt::Return)
+            }
             Some(Token::Ident(_)) | Some(Token::DirectAddress(_)) => {
                 let name = self.expect_ident()?;
                 if self.peek() == Some(&Token::LParen) {
@@ -268,14 +343,11 @@ impl<'a> Parser<'a> {
                     Ok(IrStmt::Assign { target: name, expr })
                 }
             }
-            Some(other) => Err(StError::SyntaxError {
-                pou: self.pou_name.to_string(),
-                message: format!("unexpected token {other:?} at start of statement"),
-            }),
-            None => Err(StError::SyntaxError {
-                pou: self.pou_name.to_string(),
-                message: "unexpected end of input in statement".to_string(),
-            }),
+            Some(other) => Err(self.syntax_error(
+                err_idx,
+                format!("unexpected token {other:?} at start of statement"),
+            )),
+            None => Err(self.syntax_error(err_idx, "unexpected end of input in statement")),
         }
     }
 
@@ -416,6 +488,18 @@ impl<'a> Parser<'a> {
         let body = self.parse_stmt_list(&[Token::EndWhile])?;
         self.expect(&Token::EndWhile)?;
         Ok(IrStmt::While { cond, body })
+    }
+
+    fn parse_repeat(&mut self) -> Result<IrStmt, StError> {
+        self.expect(&Token::Repeat)?;
+        let body = self.parse_stmt_list(&[Token::Until])?;
+        self.expect(&Token::Until)?;
+        let until_cond = self.parse_expr()?;
+        if self.peek() == Some(&Token::Semi) {
+            self.next();
+        }
+        self.expect(&Token::EndRepeat)?;
+        Ok(IrStmt::Repeat { body, until_cond })
     }
 
     fn parse_fb_call(&mut self, instance: String) -> Result<IrStmt, StError> {
@@ -654,22 +738,22 @@ impl<'a> Parser<'a> {
 
 /// Parses a standalone ST expression (used in ST and Grafcet transition receptivities).
 pub fn parse_st_expression(src: &str, pou_name: &str) -> Result<IrExpr, StError> {
-    let tokens = tokenize(src, pou_name)?;
-    let mut parser = Parser::new(&tokens, pou_name);
+    let (tokens, spans) = tokenize_with_spans(src, pou_name)?;
+    let mut parser = Parser::new(&tokens, &spans, src, pou_name);
     let expr = parser.parse_expr()?;
     if let Some(rem) = parser.peek() {
-        return Err(StError::SyntaxError {
-            pou: pou_name.to_string(),
-            message: format!("unexpected token {rem:?} in expression"),
-        });
+        return Err(parser.syntax_error(
+            parser.pos,
+            format!("unexpected token {rem:?} in expression"),
+        ));
     }
     Ok(expr)
 }
 
 /// Parses a list of ST statements (used in ST POUs and Grafcet step actions).
 pub fn parse_st_statements(src: &str, pou_name: &str) -> Result<Vec<IrStmt>, StError> {
-    let tokens = tokenize(src, pou_name)?;
-    let mut parser = Parser::new(&tokens, pou_name);
+    let (tokens, spans) = tokenize_with_spans(src, pou_name)?;
+    let mut parser = Parser::new(&tokens, &spans, src, pou_name);
     parser.parse_program()
 }
 
@@ -729,9 +813,7 @@ impl ExecutablePou for CompiledStPou {
 
     fn execute(&mut self, ctx: &mut ScanContext<'_>) -> Result<(), RuntimeError> {
         let pou_name = self.id.as_str();
-        for stmt in &self.statements {
-            stmt.execute(ctx, pou_name)?;
-        }
+        let _ = IrStmt::execute_block(&self.statements, ctx, pou_name)?;
         Ok(())
     }
 }
@@ -868,6 +950,107 @@ mod tests {
         assert_eq!(ctx.read_symbol("Val_Clamped")?, IecValue::Real(7.0));
         // MAX(9.0, 100.0) = 100.0
         assert_eq!(ctx.read_symbol("Val_Max")?, IecValue::Real(100.0));
+        Ok(())
+    }
+
+    #[test]
+    fn test_st_repeat_exit_continue_return_and_extended_stdlib() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::default();
+        tags.register_tag(TagEntry::new(
+            "Counter",
+            IecType::Int,
+            None,
+            IecValue::Int(0),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new("i", IecType::Int, None, IecValue::Int(0), ""))?;
+        tags.register_tag(TagEntry::new(
+            "Sum_Odd",
+            IecType::Int,
+            None,
+            IecValue::Int(0),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Selected",
+            IecType::Real,
+            None,
+            IecValue::Real(0.0),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Shifted",
+            IecType::Int,
+            None,
+            IecValue::Int(0),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Msg_Out",
+            IecType::String,
+            None,
+            IecValue::String(String::new()),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "After_Return",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+
+        let st_src = r#"
+        PROGRAM ext_test
+            REPEAT
+                Counter := Counter + 1;
+                IF Counter = 5 THEN
+                    EXIT;
+                END_IF;
+            UNTIL Counter >= 10
+            END_REPEAT;
+
+            FOR i := 1 TO 6 DO
+                IF (i MOD 2) = 0 THEN
+                    CONTINUE;
+                END_IF;
+                Sum_Odd := Sum_Odd + i;
+            END_FOR;
+
+            Selected := SEL(TRUE, 10.5, MUX(1, 20.0, 42.5, 99.0));
+            Shifted := SHL(3, 2) + REAL_TO_INT(FLOOR(3.9));
+            Msg_Out := CONCAT(LEFT('FERRITE_PLC', 7), RIGHT('0123_OK', 3));
+
+            RETURN;
+            After_Return := TRUE;
+        END_PROGRAM
+        "#;
+
+        let prog = StProgram::parse("ext_test", st_src)?;
+        let mut compiled = prog.compile(&tags)?;
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+        compiled.execute(&mut ctx)?;
+
+        assert_eq!(ctx.read_symbol("Counter")?, IecValue::Int(5));
+        assert_eq!(ctx.read_symbol("Sum_Odd")?, IecValue::Int(9)); // 1 + 3 + 5
+        assert_eq!(ctx.read_symbol("Selected")?, IecValue::Real(42.5));
+        assert_eq!(ctx.read_symbol("Shifted")?, IecValue::Int(15)); // (3 << 2) + 3 = 15
+        assert_eq!(
+            ctx.read_symbol("Msg_Out")?,
+            IecValue::String("FERRITE_OK".to_string())
+        );
+        assert!(!ctx.read_bool("After_Return")?);
+
+        // Verify line:col reporting on syntax errors
+        let bad_src = "PROGRAM bad\n    Counter := 1;\n    IF Counter\nEND_PROGRAM";
+        let err = StProgram::parse("bad", bad_src).err();
+        assert!(err.is_some());
+        if let Some(StError::SyntaxError { message, .. }) = err {
+            assert!(message.contains("line 4"));
+        }
+
         Ok(())
     }
 }

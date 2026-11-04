@@ -1285,6 +1285,7 @@ END_PROGRAM
                     kind: StepKind::Initial,
                     actions: vec![],
                     grid_pos: Some((60, 40)),
+                    ..Default::default()
                 }],
                 transitions: vec![],
             }),

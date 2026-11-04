@@ -222,4 +222,99 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_ctud_blink_hysteresis_ramp_and_scale_lin_fbs() -> Result<(), RuntimeError> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+        tags.create_fb("Cnt_UD", StandardFbKind::Ctud);
+        tags.create_fb("Pulser", StandardFbKind::Blink);
+        tags.create_fb("Schmitt", StandardFbKind::Hysteresis);
+        tags.create_fb("Slew", StandardFbKind::RampReal);
+        tags.create_fb("Analog_In", StandardFbKind::ScaleLin);
+
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 100, 1);
+
+        // 1. CTUD: count up twice to reach PV=2, then count down once
+        ctx.write_symbol("Cnt_UD.PV", IecValue::Int(2))?;
+        ctx.write_symbol("Cnt_UD.CU", IecValue::Bool(true))?;
+        ctx.evaluate_fb("Cnt_UD")?;
+        assert_eq!(ctx.read_symbol("Cnt_UD.CV")?, IecValue::Int(1));
+        assert!(!ctx.read_bool("Cnt_UD.QU")?);
+        assert!(!ctx.read_bool("Cnt_UD.QD")?);
+
+        ctx.write_symbol("Cnt_UD.CU", IecValue::Bool(false))?;
+        ctx.evaluate_fb("Cnt_UD")?;
+        ctx.write_symbol("Cnt_UD.CU", IecValue::Bool(true))?;
+        ctx.evaluate_fb("Cnt_UD")?;
+        assert_eq!(ctx.read_symbol("Cnt_UD.CV")?, IecValue::Int(2));
+        assert!(ctx.read_bool("Cnt_UD.QU")?);
+
+        ctx.write_symbol("Cnt_UD.CU", IecValue::Bool(false))?;
+        ctx.write_symbol("Cnt_UD.CD", IecValue::Bool(true))?;
+        ctx.evaluate_fb("Cnt_UD")?;
+        assert_eq!(ctx.read_symbol("Cnt_UD.CV")?, IecValue::Int(1));
+        assert!(!ctx.read_bool("Cnt_UD.QU")?);
+
+        // 2. BLINK: TIMEHIGH=200ms, TIMELOW=200ms, dt=100ms
+        ctx.write_symbol("Pulser.TIMEHIGH", IecValue::Time(200))?;
+        ctx.write_symbol("Pulser.TIMELOW", IecValue::Time(200))?;
+        ctx.write_symbol("Pulser.ENABLE", IecValue::Bool(true))?;
+        ctx.evaluate_fb("Pulser")?; // et = 100ms -> HIGH
+        assert!(ctx.read_bool("Pulser.OUT")?);
+        ctx.evaluate_fb("Pulser")?; // et = 200ms -> toggles to LOW
+        assert!(!ctx.read_bool("Pulser.OUT")?);
+        ctx.evaluate_fb("Pulser")?; // et = 100ms -> stays LOW
+        assert!(!ctx.read_bool("Pulser.OUT")?);
+        ctx.evaluate_fb("Pulser")?; // et = 200ms -> toggles to HIGH
+        assert!(ctx.read_bool("Pulser.OUT")?);
+
+        // 3. HYSTERESIS: LOW=30, HIGH=70
+        ctx.write_symbol("Schmitt.LOW", IecValue::Real(30.0))?;
+        ctx.write_symbol("Schmitt.HIGH", IecValue::Real(70.0))?;
+        ctx.write_symbol("Schmitt.IN", IecValue::Real(50.0))?;
+        ctx.evaluate_fb("Schmitt")?;
+        assert!(!ctx.read_bool("Schmitt.OUT")?);
+
+        ctx.write_symbol("Schmitt.IN", IecValue::Real(75.0))?;
+        ctx.evaluate_fb("Schmitt")?;
+        assert!(ctx.read_bool("Schmitt.OUT")?);
+
+        ctx.write_symbol("Schmitt.IN", IecValue::Real(50.0))?;
+        ctx.evaluate_fb("Schmitt")?;
+        assert!(ctx.read_bool("Schmitt.OUT")?); // Deadband holds TRUE
+
+        ctx.write_symbol("Schmitt.IN", IecValue::Real(25.0))?;
+        ctx.evaluate_fb("Schmitt")?;
+        assert!(!ctx.read_bool("Schmitt.OUT")?);
+
+        // 4. RAMP_REAL: target IN=10.0, ASCEND=50.0/s, dt=100ms (step = 5.0)
+        ctx.write_symbol("Slew.IN", IecValue::Real(10.0))?;
+        ctx.write_symbol("Slew.ASCEND", IecValue::Real(50.0))?;
+        ctx.write_symbol("Slew.DESCEND", IecValue::Real(50.0))?;
+        ctx.evaluate_fb("Slew")?;
+        assert_eq!(ctx.read_symbol("Slew.OUT")?, IecValue::Real(5.0));
+        assert!(!ctx.read_bool("Slew.Q")?);
+        ctx.evaluate_fb("Slew")?;
+        assert_eq!(ctx.read_symbol("Slew.OUT")?, IecValue::Real(10.0));
+        assert!(ctx.read_bool("Slew.Q")?);
+
+        // 5. SCALE_LIN: 4..20 mA -> 0..500.0 bar
+        ctx.write_symbol("Analog_In.IN_MIN", IecValue::Real(4.0))?;
+        ctx.write_symbol("Analog_In.IN_MAX", IecValue::Real(20.0))?;
+        ctx.write_symbol("Analog_In.OUT_MIN", IecValue::Real(0.0))?;
+        ctx.write_symbol("Analog_In.OUT_MAX", IecValue::Real(500.0))?;
+        ctx.write_symbol("Analog_In.IN", IecValue::Real(12.0))?;
+        ctx.evaluate_fb("Analog_In")?;
+        assert_eq!(ctx.read_symbol("Analog_In.OUT")?, IecValue::Real(250.0));
+        assert!(!ctx.read_bool("Analog_In.ERR")?);
+
+        // Out-of-range wire break (2.0 mA < 4.0 mA) clamps to 0.0 and asserts ERR
+        ctx.write_symbol("Analog_In.IN", IecValue::Real(2.0))?;
+        ctx.evaluate_fb("Analog_In")?;
+        assert_eq!(ctx.read_symbol("Analog_In.OUT")?, IecValue::Real(0.0));
+        assert!(ctx.read_bool("Analog_In.ERR")?);
+
+        Ok(())
+    }
 }

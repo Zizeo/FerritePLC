@@ -195,8 +195,63 @@ pub static FBD_CATALOG: &[FbdCatalogItem] = &[
             fb_type: Some(StandardFbKind::Ctd),
         },
     },
+    FbdCatalogItem {
+        name: "CTUD",
+        category: "Timers & Counters",
+        description_en: "Up/Down Counter (IEC 61131-3)",
+        description_fr: "Compteur/Décompteur bidirectionnel (IEC 61131-3)",
+        pin_signature: "CU, CD, R, LD, PV -> QU, QD, CV",
+        make_kind: |idx| FbdBlockKind::StandardFb {
+            instance: format!("CTUD_{}", idx + 1),
+            fb_type: Some(StandardFbKind::Ctud),
+        },
+    },
+    FbdCatalogItem {
+        name: "BLINK",
+        category: "Timers & Counters",
+        description_en: "Asymmetric square-wave clock generator (OSCAT)",
+        description_fr: "Générateur d'horloge rectangulaire asymétrique",
+        pin_signature: "ENABLE, TIMELOW, TIMEHIGH -> OUT",
+        make_kind: |idx| FbdBlockKind::StandardFb {
+            instance: format!("BLINK_{}", idx + 1),
+            fb_type: Some(StandardFbKind::Blink),
+        },
+    },
 
     // --- Regulation & Controllers ---
+    FbdCatalogItem {
+        name: "HYSTERESIS",
+        category: "Regulation & PID",
+        description_en: "Schmitt-trigger deadband comparator (LOW..HIGH)",
+        description_fr: "Comparateur à hystérésis / bande morte (LOW..HIGH)",
+        pin_signature: "IN, LOW, HIGH -> Q",
+        make_kind: |idx| FbdBlockKind::StandardFb {
+            instance: format!("HYST_{}", idx + 1),
+            fb_type: Some(StandardFbKind::Hysteresis),
+        },
+    },
+    FbdCatalogItem {
+        name: "RAMP_REAL",
+        category: "Regulation & PID",
+        description_en: "Slew-rate limiter with rising/falling slopes (units/s)",
+        description_fr: "Limiteur de rampe avec pentes montée/descente (unités/s)",
+        pin_signature: "IN, ASC, DSC, RESET -> OUT",
+        make_kind: |idx| FbdBlockKind::StandardFb {
+            instance: format!("RAMP_{}", idx + 1),
+            fb_type: Some(StandardFbKind::RampReal),
+        },
+    },
+    FbdCatalogItem {
+        name: "SCALE_LIN",
+        category: "Regulation & PID",
+        description_en: "Linear analog sensor/actuator scaling (4-20mA / 0-27648)",
+        description_fr: "Mise à l'échelle linéaire analogique (4-20mA / 0-27648)",
+        pin_signature: "IN, IN_MIN, IN_MAX, OUT_MIN, OUT_MAX -> OUT, ERR",
+        make_kind: |idx| FbdBlockKind::StandardFb {
+            instance: format!("SCALE_{}", idx + 1),
+            fb_type: Some(StandardFbKind::ScaleLin),
+        },
+    },
     FbdCatalogItem {
         name: "PID (Parallel)",
         category: "Regulation & PID",

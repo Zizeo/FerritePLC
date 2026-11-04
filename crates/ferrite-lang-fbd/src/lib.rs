@@ -348,6 +348,8 @@ impl FbdProgram {
                 compiled_st_stmts,
                 slot_out: IecValue::Bool(false),
                 slot_q: IecValue::Bool(false),
+                slot_qu: IecValue::Bool(false),
+                slot_qd: IecValue::Bool(false),
                 slot_et: IecValue::Time(0),
                 slot_cv: IecValue::Int(0),
                 slot_err: IecValue::Real(0.0),
@@ -364,11 +366,13 @@ impl FbdProgram {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PinSlot {
-    PrimaryOut,  // OUT (Real for Correctors, Bool for logic/timers)
-    BoolOut,     // Q, Q1
-    ElapsedTime, // ET
-    CountValue,  // CV
-    ErrorOut,    // ERR
+    PrimaryOut,   // OUT (Real for Correctors/RampReal/ScaleLin, Bool for logic/timers)
+    BoolOut,      // Q, Q1
+    CountUpOut,   // QU
+    CountDownOut, // QD
+    ElapsedTime,  // ET
+    CountValue,   // CV
+    ErrorOut,     // ERR
     Named(String),
 }
 
@@ -378,6 +382,8 @@ impl PinSlot {
             "ET" => Self::ElapsedTime,
             "CV" => Self::CountValue,
             "ERR" => Self::ErrorOut,
+            "QU" => Self::CountUpOut,
+            "QD" => Self::CountDownOut,
             "Q" | "Q1" => Self::BoolOut,
             "OUT" => Self::PrimaryOut,
             _ => Self::Named(pin.to_string()),
@@ -401,6 +407,8 @@ struct CompiledFbdBlock {
     compiled_st_stmts: Option<Vec<ferrite_ir::IrStmt>>,
     slot_out: IecValue,
     slot_q: IecValue,
+    slot_qu: IecValue,
+    slot_qd: IecValue,
     slot_et: IecValue,
     slot_cv: IecValue,
     slot_err: IecValue,
@@ -412,6 +420,8 @@ impl CompiledFbdBlock {
         match slot {
             PinSlot::PrimaryOut => self.slot_out.clone(),
             PinSlot::BoolOut => self.slot_q.clone(),
+            PinSlot::CountUpOut => self.slot_qu.clone(),
+            PinSlot::CountDownOut => self.slot_qd.clone(),
             PinSlot::ElapsedTime => self.slot_et.clone(),
             PinSlot::CountValue => self.slot_cv.clone(),
             PinSlot::ErrorOut => self.slot_err.clone(),
@@ -534,15 +544,26 @@ impl ExecutablePou for CompiledFbdPou {
                     }
                     ctx.evaluate_fb(instance)?;
                     if let Some(fb) = ctx.tags.get_fb(instance) {
-                        if fb.kind.is_corrector() {
+                        if fb.kind.is_corrector()
+                            || matches!(
+                                fb.kind,
+                                StandardFbKind::RampReal | StandardFbKind::ScaleLin
+                            )
+                        {
                             self.blocks[idx].slot_out = IecValue::Real(fb.out_real);
                         } else {
                             self.blocks[idx].slot_out = IecValue::Bool(fb.q);
                         }
                         self.blocks[idx].slot_q = IecValue::Bool(fb.q);
+                        self.blocks[idx].slot_qu = IecValue::Bool(fb.qu);
+                        self.blocks[idx].slot_qd = IecValue::Bool(fb.qd);
                         self.blocks[idx].slot_et = IecValue::Time(fb.et_ms);
                         self.blocks[idx].slot_cv = IecValue::Int(fb.cv);
-                        self.blocks[idx].slot_err = IecValue::Real(fb.err_real);
+                        self.blocks[idx].slot_err = if fb.kind == StandardFbKind::ScaleLin {
+                            IecValue::Bool(fb.q)
+                        } else {
+                            IecValue::Real(fb.err_real)
+                        };
                     }
                 }
                 FbdBlockKind::Composite { .. } => {

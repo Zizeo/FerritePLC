@@ -135,6 +135,10 @@ pub struct SfcStep {
     pub actions: Vec<SfcAction>,
     #[serde(default)]
     pub grid_pos: Option<(i32, i32)>,
+    #[serde(default)]
+    pub max_duration: Option<String>,
+    #[serde(default)]
+    pub macro_body: Vec<String>,
 }
 
 impl SfcStep {
@@ -145,12 +149,30 @@ impl SfcStep {
             kind,
             actions: Vec::new(),
             grid_pos: None,
+            max_duration: None,
+            macro_body: Vec::new(),
         }
     }
 
     pub fn with_pos(mut self, x: i32, y: i32) -> Self {
         self.grid_pos = Some((x, y));
         self
+    }
+
+    pub fn with_max_duration(mut self, duration: impl Into<String>) -> Self {
+        self.max_duration = Some(duration.into());
+        self
+    }
+
+    pub fn with_macro_body(mut self, substeps: Vec<String>) -> Self {
+        self.macro_body = substeps;
+        self
+    }
+
+    pub fn max_duration_ms(&self) -> Option<u64> {
+        self.max_duration
+            .as_deref()
+            .and_then(parse_iec_time_literal)
     }
 }
 
@@ -1939,6 +1961,7 @@ mod tests {
                         duration: None,
                     }],
                     grid_pos: Some((100, 100)),
+                    ..Default::default()
                 },
                 SfcStep::new("10", "T2_Idle", StepKind::Initial),
                 SfcStep {
@@ -1951,6 +1974,7 @@ mod tests {
                         duration: None,
                     }],
                     grid_pos: Some((400, 100)),
+                    ..Default::default()
                 },
             ],
             transitions: vec![
@@ -2139,7 +2163,7 @@ mod tests {
                         target: "Batch_Count := Batch_Count + 1;".to_string(), // 32 chars
                         duration: None,
                     }],
-                    grid_pos: None,
+                    grid_pos: None, ..Default::default()
                 },
                 SfcStep::new("2", "Branch_B", StepKind::Normal),
             ],

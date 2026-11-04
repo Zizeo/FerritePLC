@@ -53,6 +53,38 @@ fn is_output_energized(rt: &PlcRuntime, target: &str) -> bool {
     matches!(rt.read_value(target), Ok(IecValue::Bool(true)))
 }
 
+fn read_input_live_value(rt: &PlcRuntime, src: &FbdInputSource) -> Option<String> {
+    match src {
+        FbdInputSource::Value { expr } => rt
+            .read_value(expr.trim())
+            .ok()
+            .or_else(|| IecValue::parse_literal(expr.trim(), None).ok())
+            .map(format_live_iec_value),
+        FbdInputSource::Link {
+            from_block,
+            from_pin,
+        } => {
+            let sym = format!("{from_block}.{from_pin}");
+            rt.read_value(&sym).ok().map(format_live_iec_value)
+        }
+    }
+}
+
+fn read_output_live_value(rt: &PlcRuntime, target: &str) -> Option<String> {
+    rt.read_value(target.trim()).ok().map(format_live_iec_value)
+}
+
+fn format_live_iec_value(val: IecValue) -> String {
+    match val {
+        IecValue::Bool(b) => if b { "TRUE".to_string() } else { "FALSE".to_string() },
+        IecValue::Int(i) => format!("{i}"),
+        IecValue::Dint(d) => format!("{d}"),
+        IecValue::Real(r) => format!("{r:.1}"),
+        IecValue::Time(ms) => format!("{ms}ms"),
+        IecValue::String(s) => s,
+    }
+}
+
 fn operator_symbol(kind: &FbdBlockKind) -> (&str, &'static str) {
     match kind {
         FbdBlockKind::And => ("&", "AND"),
@@ -89,6 +121,26 @@ fn operator_symbol(kind: &FbdBlockKind) -> (&str, &'static str) {
             fb_type: Some(StandardFbKind::Ctd),
             ..
         } => ("CTD", "COUNT DOWN"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::Ctud),
+            ..
+        } => ("CTUD", "UP/DOWN CNT"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::Blink),
+            ..
+        } => ("BLINK", "CLOCK GEN"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::Hysteresis),
+            ..
+        } => ("HYST", "DEADBAND"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::RampReal),
+            ..
+        } => ("RAMP", "SLEW LIMIT"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::ScaleLin),
+            ..
+        } => ("SCALE", "LIN SCALE"),
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::PidParallel),
             ..
@@ -281,6 +333,28 @@ fn render_single_block_card<'a>(
                 });
 
             let display_pin = pin_display_label(pin_name, is_corrector, lang);
+            let live_badge: Element<'a, Message> = if let Some(rt) = runtime
+                && let Some(val_str) = read_input_live_value(rt, src)
+            {
+                container(
+                    text(format!("= {val_str}"))
+                        .size(9.5)
+                        .font(iced::Font::MONOSPACE)
+                        .color(if is_energized {
+                            StudioTheme::ACCENT_EMERALD
+                        } else {
+                            StudioTheme::ACCENT_CYAN
+                        }),
+                )
+                .padding([1, 4])
+                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                    0.0, 0.85, 0.85, 0.10,
+                )))
+                .into()
+            } else {
+                iced::widget::Space::with_width(Length::Shrink).into()
+            };
+
             let in_row = row![
                 in_dot,
                 text(display_pin)
@@ -295,6 +369,7 @@ fn render_single_block_card<'a>(
                     .width(Length::Fill)
                     .padding([2, 5])
                     .style(StudioTheme::styled_input),
+                live_badge,
                 container(iced::widget::Space::with_width(Length::Fixed(8.0)))
                     .height(Length::Fixed(2.0))
                     .style(move |_| container::Style {
@@ -338,11 +413,43 @@ fn render_single_block_card<'a>(
 
     let mut outputs_col = column![].spacing(6);
     if sorted_outputs.is_empty() {
-        outputs_col = outputs_col.push(
-            text(lang.tr("(Internal)", "(Interne)"))
-                .size(10.5)
-                .color(StudioTheme::TEXT_MUTED),
-        );
+        let fb_live_summary = if let (
+            Some(rt),
+            FbdBlockKind::StandardFb { instance, .. },
+        ) = (runtime, &blk.kind)
+        {
+            rt.tags.get_fb(instance).map(|fb| {
+                format!(
+                    "Q={} OUT={:.1} CV={}",
+                    if fb.q { "1" } else { "0" },
+                    fb.out_real,
+                    fb.cv
+                )
+            })
+        } else {
+            None
+        };
+
+        if let Some(summary) = fb_live_summary {
+            outputs_col = outputs_col.push(
+                container(
+                    text(summary)
+                        .size(9.5)
+                        .font(iced::Font::MONOSPACE)
+                        .color(StudioTheme::ACCENT_EMERALD),
+                )
+                .padding([2, 6])
+                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                    0.063, 0.725, 0.506, 0.12,
+                ))),
+            );
+        } else {
+            outputs_col = outputs_col.push(
+                text(lang.tr("(Internal)", "(Interne)"))
+                    .size(10.5)
+                    .color(StudioTheme::TEXT_MUTED),
+            );
+        }
     } else {
         for (pin_name, target) in sorted_outputs {
             let pin_n = pin_name.clone();
@@ -365,6 +472,28 @@ fn render_single_block_card<'a>(
                 });
 
             let display_pin = pin_display_label(pin_name, is_corrector, lang);
+            let out_live_badge: Element<'a, Message> = if let Some(rt) = runtime
+                && let Some(val_str) = read_output_live_value(rt, target)
+            {
+                container(
+                    text(format!("= {val_str}"))
+                        .size(9.5)
+                        .font(iced::Font::MONOSPACE)
+                        .color(if is_energized {
+                            StudioTheme::ACCENT_EMERALD
+                        } else {
+                            StudioTheme::ACCENT_AMBER
+                        }),
+                )
+                .padding([1, 4])
+                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                    0.96, 0.62, 0.04, 0.12,
+                )))
+                .into()
+            } else {
+                iced::widget::Space::with_width(Length::Shrink).into()
+            };
+
             let out_row = row![
                 container(iced::widget::Space::with_width(Length::Fixed(8.0)))
                     .height(Length::Fixed(2.0))
@@ -384,6 +513,7 @@ fn render_single_block_card<'a>(
                     .width(Length::Fill)
                     .padding([2, 5])
                     .style(StudioTheme::styled_input),
+                out_live_badge,
                 out_dot,
             ]
             .spacing(4)

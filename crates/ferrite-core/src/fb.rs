@@ -36,19 +36,34 @@ pub enum StandardFbKind {
     /// Mixed (Ideal / Standard ISA) PID Corrector: `OUT = Kp * (e + (1/Ti) * ∫e dt + Td * de/dt)`
     #[serde(alias = "PID")]
     PidMixed,
+    /// Up/Down Counter (`CU: BOOL, CD: BOOL, R: BOOL, LD: BOOL, PV: INT -> QU: BOOL, QD: BOOL, CV: INT`)
+    Ctud,
+    /// Pulse Generator / Blinker (`ENABLE: BOOL, TIMELOW: TIME, TIMEHIGH: TIME -> OUT: BOOL`)
+    Blink,
+    /// Hysteresis / Schmitt Trigger (`IN: REAL, HIGH: REAL, LOW: REAL -> OUT: BOOL`)
+    Hysteresis,
+    /// Slew-Rate Limiter (`IN: REAL, ASCEND: REAL, DESCEND: REAL, RESET: BOOL -> OUT: REAL`)
+    RampReal,
+    /// Linear Analog Scaler (`IN: REAL, IN_MIN: REAL, IN_MAX: REAL, OUT_MIN: REAL, OUT_MAX: REAL -> OUT: REAL, ERR: BOOL`)
+    ScaleLin,
 }
 
 impl StandardFbKind {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 19] = [
         Self::Ton,
         Self::Tof,
         Self::Tp,
         Self::Ctu,
         Self::Ctd,
+        Self::Ctud,
         Self::RTrig,
         Self::FTrig,
         Self::Sr,
         Self::Rs,
+        Self::Blink,
+        Self::Hysteresis,
+        Self::RampReal,
+        Self::ScaleLin,
         Self::P,
         Self::Pi,
         Self::PidParallel,
@@ -89,10 +104,15 @@ impl StandardFbKind {
             Self::Tp => "TP",
             Self::Ctu => "CTU",
             Self::Ctd => "CTD",
+            Self::Ctud => "CTUD",
             Self::RTrig => "R_TRIG",
             Self::FTrig => "F_TRIG",
             Self::Sr => "SR",
             Self::Rs => "RS",
+            Self::Blink => "BLINK",
+            Self::Hysteresis => "HYSTERESIS",
+            Self::RampReal => "RAMP_REAL",
+            Self::ScaleLin => "SCALE_LIN",
             Self::P => "P",
             Self::Pi => "PI",
             Self::PidParallel => "PID_PARALLEL",
@@ -108,6 +128,9 @@ impl StandardFbKind {
             Self::PidParallel => "u(t) = Kp·e(t) + (1/Ti)·∫e(t)dt + Td·de(t)/dt",
             Self::PidSeries => "C(s) = Kp · (1 + 1/(Ti·s)) · (1 + Td·s)",
             Self::PidMixed => "u(t) = Kp · [ e(t) + (1/Ti)·∫e(t)dt + Td·de(t)/dt ]",
+            Self::Hysteresis => "OUT = 1 if IN > HIGH; 0 if IN < LOW",
+            Self::RampReal => "|d(OUT)/dt| <= ASCEND / DESCEND",
+            Self::ScaleLin => "OUT = OUT_MIN + ((IN - IN_MIN)/(IN_MAX - IN_MIN))·(OUT_MAX - OUT_MIN)",
             _ => "",
         }
     }
@@ -129,9 +152,21 @@ impl StandardFbKind {
             (Self::Ctu, "PV" | "CV") => Some(IecType::Int),
             (Self::Ctd, "CD" | "LD" | "Q") => Some(IecType::Bool),
             (Self::Ctd, "PV" | "CV") => Some(IecType::Int),
+            (Self::Ctud, "CU" | "CD" | "R" | "LD" | "QU" | "QD" | "Q") => Some(IecType::Bool),
+            (Self::Ctud, "PV" | "CV") => Some(IecType::Int),
             (Self::RTrig | Self::FTrig, "CLK" | "IN" | "Q") => Some(IecType::Bool),
             (Self::Sr, "S1" | "S" | "R" | "Q1" | "Q") => Some(IecType::Bool),
             (Self::Rs, "S" | "R1" | "R" | "Q1" | "Q") => Some(IecType::Bool),
+            (Self::Blink, "ENABLE" | "IN" | "OUT" | "Q") => Some(IecType::Bool),
+            (Self::Blink, "TIMELOW" | "TIMEHIGH" | "ET") => Some(IecType::Time),
+            (Self::Hysteresis, "IN" | "HIGH" | "LOW") => Some(IecType::Real),
+            (Self::Hysteresis, "OUT" | "Q") => Some(IecType::Bool),
+            (Self::RampReal, "IN" | "ASCEND" | "DESCEND" | "OUT") => Some(IecType::Real),
+            (Self::RampReal, "RESET" | "R" | "Q") => Some(IecType::Bool),
+            (Self::ScaleLin, "IN" | "IN_MIN" | "IN_MAX" | "OUT_MIN" | "OUT_MAX" | "OUT") => {
+                Some(IecType::Real)
+            }
+            (Self::ScaleLin, "ERR" | "Q") => Some(IecType::Bool),
             _ => None,
         }
     }
@@ -170,6 +205,18 @@ fn default_out_max() -> f32 {
     1000.0
 }
 
+fn default_time_half_ms() -> u64 {
+    500
+}
+
+fn default_in_max() -> f32 {
+    100.0
+}
+
+fn default_ramp_rate() -> f32 {
+    10.0
+}
+
 /// Fixed, allocation-free state for a shared Function Block instance.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FbInstance {
@@ -187,18 +234,28 @@ pub struct FbInstance {
     #[serde(default)]
     pub ld_bool: bool,
     #[serde(default)]
+    pub cd_bool: bool,
+    #[serde(default)]
     pub q: bool,
-    // Timer pins (ms)
+    #[serde(default)]
+    pub qu: bool,
+    #[serde(default)]
+    pub qd: bool,
+    // Timer / Blink pins (ms)
     #[serde(default)]
     pub pt_ms: u64,
     #[serde(default)]
     pub et_ms: u64,
+    #[serde(default = "default_time_half_ms")]
+    pub time_low_ms: u64,
+    #[serde(default = "default_time_half_ms")]
+    pub time_high_ms: u64,
     // Counter pins
     #[serde(default)]
     pub pv: i16,
     #[serde(default)]
     pub cv: i16,
-    // Corrector (P / PI / PID Parallel / Series / Mixed) parameters & signals
+    // Corrector (P / PI / PID Parallel / Series / Mixed) & Analog parameters & signals
     #[serde(default = "default_kp")]
     pub kp: f32,
     #[serde(default = "default_ti_s")]
@@ -218,6 +275,14 @@ pub struct FbInstance {
     #[serde(default = "default_out_max")]
     pub out_max: f32,
     #[serde(default)]
+    pub in_min: f32,
+    #[serde(default = "default_in_max")]
+    pub in_max: f32,
+    #[serde(default = "default_ramp_rate")]
+    pub ascend_rate: f32,
+    #[serde(default = "default_ramp_rate")]
+    pub descend_rate: f32,
+    #[serde(default)]
     pub integral_accum: f32,
     #[serde(default)]
     pub prev_err: f32,
@@ -229,6 +294,8 @@ pub struct FbInstance {
     #[serde(default)]
     pub prev_in: bool,
     #[serde(default)]
+    pub prev_cd: bool,
+    #[serde(default)]
     pub running: bool,
 }
 
@@ -239,7 +306,10 @@ impl FbInstance {
         self.r_bool = false;
         self.s_bool = false;
         self.ld_bool = false;
+        self.cd_bool = false;
         self.q = false;
+        self.qu = false;
+        self.qd = false;
         self.et_ms = 0;
         self.cv = 0;
         self.err_real = 0.0;
@@ -248,10 +318,16 @@ impl FbInstance {
         self.prev_err = 0.0;
         self.has_prev_sample = false;
         self.prev_in = false;
+        self.prev_cd = false;
         self.running = false;
     }
 
     pub fn new(name: impl Into<String>, kind: StandardFbKind) -> Self {
+        let (out_min, out_max) = match kind {
+            StandardFbKind::Hysteresis => (20.0, 80.0),
+            StandardFbKind::ScaleLin => (0.0, 100.0),
+            _ => (default_out_min(), default_out_max()),
+        };
         let mut inst = Self {
             name: name.into(),
             kind,
@@ -260,9 +336,14 @@ impl FbInstance {
             r_bool: false,
             s_bool: false,
             ld_bool: false,
+            cd_bool: false,
             q: false,
+            qu: false,
+            qd: false,
             pt_ms: 1000,
             et_ms: 0,
+            time_low_ms: default_time_half_ms(),
+            time_high_ms: default_time_half_ms(),
             pv: 0,
             cv: 0,
             kp: default_kp(),
@@ -272,13 +353,18 @@ impl FbInstance {
             pv_real: 0.0,
             err_real: 0.0,
             out_real: 0.0,
-            out_min: default_out_min(),
-            out_max: default_out_max(),
+            out_min,
+            out_max,
+            in_min: 0.0,
+            in_max: default_in_max(),
+            ascend_rate: default_ramp_rate(),
+            descend_rate: default_ramp_rate(),
             integral_accum: 0.0,
             prev_err: 0.0,
             has_prev_sample: false,
             direct_err_mode: false,
             prev_in: false,
+            prev_cd: false,
             running: false,
         };
         if kind == StandardFbKind::FTrig {
@@ -332,6 +418,14 @@ impl FbInstance {
             (StandardFbKind::Ctd, "PV") => Ok(IecValue::Int(self.pv)),
             (StandardFbKind::Ctd, "CV") => Ok(IecValue::Int(self.cv)),
             (StandardFbKind::Ctd, "Q") => Ok(IecValue::Bool(self.q)),
+            (StandardFbKind::Ctud, "CU") => Ok(IecValue::Bool(self.in_bool)),
+            (StandardFbKind::Ctud, "CD") => Ok(IecValue::Bool(self.cd_bool)),
+            (StandardFbKind::Ctud, "R") => Ok(IecValue::Bool(self.r_bool)),
+            (StandardFbKind::Ctud, "LD") => Ok(IecValue::Bool(self.ld_bool)),
+            (StandardFbKind::Ctud, "PV") => Ok(IecValue::Int(self.pv)),
+            (StandardFbKind::Ctud, "CV") => Ok(IecValue::Int(self.cv)),
+            (StandardFbKind::Ctud, "QU" | "Q") => Ok(IecValue::Bool(self.qu)),
+            (StandardFbKind::Ctud, "QD") => Ok(IecValue::Bool(self.qd)),
             (StandardFbKind::RTrig | StandardFbKind::FTrig, "CLK" | "IN") => {
                 Ok(IecValue::Bool(self.in_bool))
             }
@@ -342,6 +436,28 @@ impl FbInstance {
             (StandardFbKind::Rs, "S") => Ok(IecValue::Bool(self.s_bool)),
             (StandardFbKind::Rs, "R1" | "R") => Ok(IecValue::Bool(self.r_bool)),
             (StandardFbKind::Rs, "Q1" | "Q") => Ok(IecValue::Bool(self.q)),
+            (StandardFbKind::Blink, "ENABLE" | "IN") => Ok(IecValue::Bool(self.in_bool)),
+            (StandardFbKind::Blink, "TIMELOW") => Ok(IecValue::Time(self.time_low_ms)),
+            (StandardFbKind::Blink, "TIMEHIGH") => Ok(IecValue::Time(self.time_high_ms)),
+            (StandardFbKind::Blink, "ET") => Ok(IecValue::Time(self.et_ms)),
+            (StandardFbKind::Blink, "OUT" | "Q") => Ok(IecValue::Bool(self.q)),
+            (StandardFbKind::Hysteresis, "IN") => Ok(IecValue::Real(self.pv_real)),
+            (StandardFbKind::Hysteresis, "HIGH") => Ok(IecValue::Real(self.out_max)),
+            (StandardFbKind::Hysteresis, "LOW") => Ok(IecValue::Real(self.out_min)),
+            (StandardFbKind::Hysteresis, "OUT" | "Q") => Ok(IecValue::Bool(self.q)),
+            (StandardFbKind::RampReal, "IN") => Ok(IecValue::Real(self.sp_real)),
+            (StandardFbKind::RampReal, "ASCEND") => Ok(IecValue::Real(self.ascend_rate)),
+            (StandardFbKind::RampReal, "DESCEND") => Ok(IecValue::Real(self.descend_rate)),
+            (StandardFbKind::RampReal, "RESET" | "R") => Ok(IecValue::Bool(self.r_bool)),
+            (StandardFbKind::RampReal, "OUT") => Ok(IecValue::Real(self.out_real)),
+            (StandardFbKind::RampReal, "Q") => Ok(IecValue::Bool(self.q)),
+            (StandardFbKind::ScaleLin, "IN") => Ok(IecValue::Real(self.pv_real)),
+            (StandardFbKind::ScaleLin, "IN_MIN") => Ok(IecValue::Real(self.in_min)),
+            (StandardFbKind::ScaleLin, "IN_MAX") => Ok(IecValue::Real(self.in_max)),
+            (StandardFbKind::ScaleLin, "OUT_MIN") => Ok(IecValue::Real(self.out_min)),
+            (StandardFbKind::ScaleLin, "OUT_MAX") => Ok(IecValue::Real(self.out_max)),
+            (StandardFbKind::ScaleLin, "OUT") => Ok(IecValue::Real(self.out_real)),
+            (StandardFbKind::ScaleLin, "ERR" | "Q") => Ok(IecValue::Bool(self.q)),
             _ => Err(CoreError::UnknownFbPin {
                 instance: self.name.clone(),
                 pin: pin.to_string(),
@@ -450,6 +566,31 @@ impl FbInstance {
             (StandardFbKind::Ctd, "Q") => {
                 self.q = val.as_bool()?;
             }
+            (StandardFbKind::Ctud, "CU") => {
+                self.in_bool = val.as_bool()?;
+            }
+            (StandardFbKind::Ctud, "CD") => {
+                self.cd_bool = val.as_bool()?;
+            }
+            (StandardFbKind::Ctud, "R") => {
+                self.r_bool = val.as_bool()?;
+            }
+            (StandardFbKind::Ctud, "LD") => {
+                self.ld_bool = val.as_bool()?;
+            }
+            (StandardFbKind::Ctud, "PV") => {
+                self.pv = val.as_int()?;
+            }
+            (StandardFbKind::Ctud, "CV") => {
+                self.cv = val.as_int()?;
+            }
+            (StandardFbKind::Ctud, "QU" | "Q") => {
+                self.qu = val.as_bool()?;
+                self.q = self.qu;
+            }
+            (StandardFbKind::Ctud, "QD") => {
+                self.qd = val.as_bool()?;
+            }
             (StandardFbKind::RTrig | StandardFbKind::FTrig, "CLK" | "IN") => {
                 self.in_bool = val.as_bool()?;
             }
@@ -472,6 +613,72 @@ impl FbInstance {
                 self.r_bool = val.as_bool()?;
             }
             (StandardFbKind::Rs, "Q1" | "Q") => {
+                self.q = val.as_bool()?;
+            }
+            (StandardFbKind::Blink, "ENABLE" | "IN") => {
+                self.in_bool = val.as_bool()?;
+            }
+            (StandardFbKind::Blink, "TIMELOW") => {
+                self.time_low_ms = val.as_time_ms()?;
+            }
+            (StandardFbKind::Blink, "TIMEHIGH") => {
+                self.time_high_ms = val.as_time_ms()?;
+            }
+            (StandardFbKind::Blink, "ET") => {
+                self.et_ms = val.as_time_ms()?;
+            }
+            (StandardFbKind::Blink, "OUT" | "Q") => {
+                self.q = val.as_bool()?;
+            }
+            (StandardFbKind::Hysteresis, "IN") => {
+                self.pv_real = val.as_real()?;
+            }
+            (StandardFbKind::Hysteresis, "HIGH") => {
+                self.out_max = val.as_real()?;
+            }
+            (StandardFbKind::Hysteresis, "LOW") => {
+                self.out_min = val.as_real()?;
+            }
+            (StandardFbKind::Hysteresis, "OUT" | "Q") => {
+                self.q = val.as_bool()?;
+            }
+            (StandardFbKind::RampReal, "IN") => {
+                self.sp_real = val.as_real()?;
+            }
+            (StandardFbKind::RampReal, "ASCEND") => {
+                self.ascend_rate = val.as_real()?;
+            }
+            (StandardFbKind::RampReal, "DESCEND") => {
+                self.descend_rate = val.as_real()?;
+            }
+            (StandardFbKind::RampReal, "RESET" | "R") => {
+                self.r_bool = val.as_bool()?;
+            }
+            (StandardFbKind::RampReal, "OUT") => {
+                self.out_real = val.as_real()?;
+            }
+            (StandardFbKind::RampReal, "Q") => {
+                self.q = val.as_bool()?;
+            }
+            (StandardFbKind::ScaleLin, "IN") => {
+                self.pv_real = val.as_real()?;
+            }
+            (StandardFbKind::ScaleLin, "IN_MIN") => {
+                self.in_min = val.as_real()?;
+            }
+            (StandardFbKind::ScaleLin, "IN_MAX") => {
+                self.in_max = val.as_real()?;
+            }
+            (StandardFbKind::ScaleLin, "OUT_MIN") => {
+                self.out_min = val.as_real()?;
+            }
+            (StandardFbKind::ScaleLin, "OUT_MAX") => {
+                self.out_max = val.as_real()?;
+            }
+            (StandardFbKind::ScaleLin, "OUT") => {
+                self.out_real = val.as_real()?;
+            }
+            (StandardFbKind::ScaleLin, "ERR" | "Q") => {
                 self.q = val.as_bool()?;
             }
             _ => {
@@ -574,6 +781,25 @@ impl FbInstance {
                 self.q = self.cv <= 0;
                 self.prev_in = self.in_bool;
             }
+            StandardFbKind::Ctud => {
+                if self.r_bool {
+                    self.cv = 0;
+                } else if self.ld_bool {
+                    self.cv = self.pv;
+                } else {
+                    if self.in_bool && !self.prev_in {
+                        self.cv = self.cv.saturating_add(1);
+                    }
+                    if self.cd_bool && !self.prev_cd {
+                        self.cv = self.cv.saturating_sub(1);
+                    }
+                }
+                self.qu = self.cv >= self.pv;
+                self.qd = self.cv <= 0;
+                self.q = self.qu;
+                self.prev_in = self.in_bool;
+                self.prev_cd = self.cd_bool;
+            }
             StandardFbKind::RTrig => {
                 self.q = self.in_bool && !self.prev_in;
                 self.prev_in = self.in_bool;
@@ -589,6 +815,70 @@ impl FbInstance {
             StandardFbKind::Rs => {
                 // Reset-dominant: Q1 := NOT R1 AND (S OR Q1)
                 self.q = !self.r_bool && (self.s_bool || self.q);
+            }
+            StandardFbKind::Blink => {
+                if !self.in_bool {
+                    self.q = false;
+                    self.et_ms = 0;
+                    self.running = false;
+                } else {
+                    if !self.running {
+                        self.running = true;
+                        self.q = true;
+                        self.et_ms = 0;
+                    }
+                    self.et_ms = self.et_ms.saturating_add(dt_ms);
+                    let phase_limit = if self.q {
+                        self.time_high_ms.max(1)
+                    } else {
+                        self.time_low_ms.max(1)
+                    };
+                    if self.et_ms >= phase_limit {
+                        self.et_ms = self.et_ms.saturating_sub(phase_limit);
+                        self.q = !self.q;
+                    }
+                }
+                self.prev_in = self.in_bool;
+            }
+            StandardFbKind::Hysteresis => {
+                if self.pv_real > self.out_max {
+                    self.q = true;
+                } else if self.pv_real < self.out_min {
+                    self.q = false;
+                }
+            }
+            StandardFbKind::RampReal => {
+                if self.r_bool {
+                    self.out_real = self.sp_real;
+                    self.q = true;
+                } else {
+                    let dt_s = (dt_ms as f32) / 1000.0;
+                    let diff = self.sp_real - self.out_real;
+                    if diff > 0.0 {
+                        let max_step = self.ascend_rate.abs() * dt_s;
+                        self.out_real = (self.out_real + max_step).min(self.sp_real);
+                    } else if diff < 0.0 {
+                        let max_step = self.descend_rate.abs() * dt_s;
+                        self.out_real = (self.out_real - max_step).max(self.sp_real);
+                    }
+                    self.q = (self.sp_real - self.out_real).abs() <= 1e-5;
+                }
+            }
+            StandardFbKind::ScaleLin => {
+                let span_in = self.in_max - self.in_min;
+                if span_in.abs() < 1e-9 {
+                    self.q = true;
+                    self.out_real = self.out_min;
+                } else {
+                    let (in_lo, in_hi) = if self.in_min <= self.in_max {
+                        (self.in_min, self.in_max)
+                    } else {
+                        (self.in_max, self.in_min)
+                    };
+                    self.q = self.pv_real < in_lo || self.pv_real > in_hi;
+                    let ratio = ((self.pv_real - self.in_min) / span_in).clamp(0.0, 1.0);
+                    self.out_real = self.out_min + ratio * (self.out_max - self.out_min);
+                }
             }
             StandardFbKind::P
             | StandardFbKind::Pi

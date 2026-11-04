@@ -1727,7 +1727,12 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 (None, false, None)
             };
 
-            let border_color = if has_error {
+            let step_timeout = active
+                && step
+                    .max_duration_ms()
+                    .is_some_and(|max_ms| elapsed_ms > max_ms);
+
+            let border_color = if has_error || step_timeout {
                 Color::from_rgb(1.0, 0.35, 0.35)
             } else if active {
                 COLOR_ACTIVE_STEP
@@ -1738,7 +1743,9 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             };
 
             // Glow / fill
-            let bg_color = if active {
+            let bg_color = if step_timeout {
+                Color::from_rgb(56.0 / 255.0, 24.0 / 255.0, 28.0 / 255.0)
+            } else if active {
                 Color::from_rgb(22.0 / 255.0, 46.0 / 255.0, 34.0 / 255.0)
             } else {
                 COLOR_STEP_BG
@@ -1754,11 +1761,11 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 Size::new(STEP_WIDTH, STEP_HEIGHT),
                 Stroke::default()
                     .with_color(border_color)
-                    .with_width(if is_selected || has_error { 2.5 } else { 2.0 }),
+                    .with_width(if is_selected || has_error || step_timeout { 2.5 } else { 2.0 }),
             );
 
             // Error halo outline
-            if has_error {
+            if has_error || step_timeout {
                 frame.stroke_rectangle(
                     Point::new(x - 2.0, y - 2.0),
                     Size::new(STEP_WIDTH + 4.0, STEP_HEIGHT + 4.0),
@@ -1775,6 +1782,32 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     Size::new(STEP_WIDTH - 6.0, STEP_HEIGHT - 6.0),
                     Stroke::default().with_color(border_color).with_width(1.2),
                 );
+            } else if step.kind == StepKind::Macro {
+                // IEC 60848 Macro Step: double horizontal bars at top and bottom of step box
+                frame.stroke(
+                    &Path::line(Point::new(x + 2.0, y + 4.0), Point::new(x + STEP_WIDTH - 2.0, y + 4.0)),
+                    Stroke::default().with_color(StudioTheme::ACCENT_PURPLE).with_width(1.5),
+                );
+                frame.stroke(
+                    &Path::line(
+                        Point::new(x + 2.0, y + STEP_HEIGHT - 4.0),
+                        Point::new(x + STEP_WIDTH - 2.0, y + STEP_HEIGHT - 4.0),
+                    ),
+                    Stroke::default().with_color(StudioTheme::ACCENT_PURPLE).with_width(1.5),
+                );
+                let macro_badge = if step.macro_body.is_empty() {
+                    "MACRO".to_string()
+                } else {
+                    format!("MACRO({})", step.macro_body.len())
+                };
+                frame.fill_text(canvas::Text {
+                    content: macro_badge,
+                    position: Point::new(x + STEP_WIDTH - 68.0, y + 35.0),
+                    color: StudioTheme::ACCENT_PURPLE,
+                    size: iced::Pixels(9.5),
+                    font: iced::Font::MONOSPACE,
+                    ..Default::default()
+                });
             }
 
             // Step ID text
@@ -2793,7 +2826,8 @@ mod tests {
             kind: StepKind::Normal,
             actions: vec![],
             grid_pos: Some((60, 40)),
-        };
+                    ..Default::default()
+                };
         let canvas = SfcCanvasProgram {
             pou_name: "test",
             program: &SfcProgram {
@@ -2851,6 +2885,7 @@ mod tests {
                     kind: StepKind::Initial,
                     actions: vec![],
                     grid_pos: Some((60, 40)),
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "1".to_string(),
@@ -2862,6 +2897,7 @@ mod tests {
                         duration: None,
                     }],
                     grid_pos: Some((60, 240)),
+                    ..Default::default()
                 },
             ],
             transitions: vec![SfcTransition {
@@ -3089,7 +3125,7 @@ mod tests {
                         target: "Valve_Water".to_string(),
                         duration: None,
                     }],
-                    grid_pos: None,
+                    grid_pos: None, ..Default::default()
                 },
                 SfcStep {
                     id: "2".to_string(),
@@ -3100,7 +3136,7 @@ mod tests {
                         target: "Count := Count + 1;".to_string(),
                         duration: None,
                     }],
-                    grid_pos: None,
+                    grid_pos: None, ..Default::default()
                 },
                 SfcStep::new("3".to_string(), "Step_Choice".to_string(), StepKind::Normal),
                 SfcStep::new("4".to_string(), "Step_AltA".to_string(), StepKind::Normal),
@@ -3186,6 +3222,7 @@ mod tests {
                     kind: StepKind::Initial,
                     actions: vec![],
                     grid_pos: Some((340, 40)),
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "1".to_string(),
@@ -3193,6 +3230,7 @@ mod tests {
                     kind: StepKind::Normal,
                     actions: vec![],
                     grid_pos: Some((60, 240)),
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "2".to_string(),
@@ -3200,6 +3238,7 @@ mod tests {
                     kind: StepKind::Normal,
                     actions: vec![],
                     grid_pos: Some((340, 440)),
+                    ..Default::default()
                 },
             ],
             transitions: vec![SfcTransition {
@@ -3264,6 +3303,7 @@ mod tests {
                     kind: StepKind::Initial,
                     actions: vec![],
                     grid_pos: Some((60, 40)),
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "1".to_string(),
@@ -3271,6 +3311,7 @@ mod tests {
                     kind: StepKind::Normal,
                     actions: vec![],
                     grid_pos: Some((60, 240)),
+                    ..Default::default()
                 },
             ],
             transitions: vec![
@@ -3371,6 +3412,7 @@ mod tests {
                     kind: StepKind::Initial,
                     actions: vec![],
                     grid_pos: Some((60, 40)),
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "1".to_string(),
@@ -3378,6 +3420,7 @@ mod tests {
                     kind: StepKind::Normal,
                     actions: vec![],
                     grid_pos: Some((260, 40)),
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "2".to_string(),
@@ -3385,6 +3428,7 @@ mod tests {
                     kind: StepKind::Normal,
                     actions: vec![],
                     grid_pos: Some((160, 240)),
+                    ..Default::default()
                 },
             ],
             transitions: vec![
@@ -3423,6 +3467,7 @@ mod tests {
                     kind: StepKind::Initial,
                     actions: vec![],
                     grid_pos: Some((60, 40)),
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "1".to_string(),
@@ -3430,6 +3475,7 @@ mod tests {
                     kind: StepKind::Normal,
                     actions: vec![],
                     grid_pos: Some((260, 40)),
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "2".to_string(),
@@ -3437,6 +3483,7 @@ mod tests {
                     kind: StepKind::Normal,
                     actions: vec![],
                     grid_pos: Some((160, 240)),
+                    ..Default::default()
                 },
             ],
             transitions: vec![SfcTransition {
@@ -3466,6 +3513,7 @@ mod tests {
                     kind: StepKind::Initial,
                     actions: vec![],
                     grid_pos: Some((100, 100)),
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "2".to_string(),
@@ -3473,6 +3521,7 @@ mod tests {
                     kind: StepKind::Normal,
                     actions: vec![],
                     grid_pos: Some((300, 100)),
+                    ..Default::default()
                 },
             ],
             transitions: vec![SfcTransition {
@@ -3592,6 +3641,7 @@ mod tests {
                     kind: StepKind::Initial,
                     actions: vec![],
                     grid_pos: Some((100, 100)),
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "2".into(),
@@ -3599,6 +3649,7 @@ mod tests {
                     kind: StepKind::Normal,
                     actions: vec![],
                     grid_pos: Some((260, 100)),
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "3".into(),
@@ -3606,6 +3657,7 @@ mod tests {
                     kind: StepKind::Normal,
                     actions: vec![],
                     grid_pos: Some((420, 100)),
+                    ..Default::default()
                 },
             ],
             transitions: vec![],
@@ -3784,7 +3836,8 @@ mod tests {
                 },
             ],
             grid_pos: Some((100, 100)),
-        };
+                    ..Default::default()
+                };
 
         let transition = SfcTransition {
             id: "1".to_string(),
@@ -3847,6 +3900,7 @@ mod tests {
                     kind: StepKind::Initial,
                     actions: vec![],
                     grid_pos: Some((100, 100)),
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "2".into(),
@@ -3854,6 +3908,7 @@ mod tests {
                     kind: StepKind::Normal,
                     actions: vec![],
                     grid_pos: Some((100, 300)),
+                    ..Default::default()
                 },
             ],
             transitions: vec![SfcTransition {
@@ -3933,7 +3988,8 @@ mod tests {
                 kind: StepKind::Initial,
                 actions: vec![],
                 grid_pos: Some((60, 40)),
-            }],
+                    ..Default::default()
+                }],
             transitions: vec![],
         };
         project.pous.insert(

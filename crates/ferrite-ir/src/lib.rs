@@ -193,13 +193,29 @@ impl IrExpr {
                             Ok(IecType::Real)
                         }
                     }
-                    "LIMIT" => {
+                    "LIMIT" | "SEL" | "MUX" => {
                         if args.len() >= 2 {
                             args[1].infer_type(tags, pou_name)
                         } else {
                             Ok(IecType::Real)
                         }
                     }
+                    "SHL" | "SHR" | "ROL" | "ROR" => {
+                        if let Some(first) = args.first() {
+                            first.infer_type(tags, pou_name)
+                        } else {
+                            Ok(IecType::Dint)
+                        }
+                    }
+                    "INT_TO_REAL" | "DINT_TO_REAL" | "BOOL_TO_REAL" | "TIME_TO_REAL" => {
+                        Ok(IecType::Real)
+                    }
+                    "REAL_TO_INT" | "DINT_TO_INT" | "BOOL_TO_INT" | "LEN" => Ok(IecType::Int),
+                    "REAL_TO_DINT" | "INT_TO_DINT" | "BOOL_TO_DINT" | "TIME_TO_DINT" => {
+                        Ok(IecType::Dint)
+                    }
+                    "INT_TO_BOOL" | "DINT_TO_BOOL" | "REAL_TO_BOOL" => Ok(IecType::Bool),
+                    "CONCAT" | "LEFT" | "RIGHT" => Ok(IecType::String),
                     _ => Ok(IecType::Real),
                 }
             }
@@ -463,6 +479,248 @@ fn eval_math_function(
             })?;
             Ok(IecValue::Real(v.as_real()?.round()))
         }
+        "CEIL" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "CEIL requires 1 argument".to_string(),
+            })?;
+            Ok(IecValue::Real(v.as_real()?.ceil()))
+        }
+        "FLOOR" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "FLOOR requires 1 argument".to_string(),
+            })?;
+            Ok(IecValue::Real(v.as_real()?.floor()))
+        }
+        "ASIN" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "ASIN requires 1 argument".to_string(),
+            })?;
+            let r = v.as_real()?;
+            if !(-1.0..=1.0).contains(&r) {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: format!("ASIN domain error: value {r} out of [-1, 1]"),
+                });
+            }
+            Ok(IecValue::Real(r.asin()))
+        }
+        "ACOS" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "ACOS requires 1 argument".to_string(),
+            })?;
+            let r = v.as_real()?;
+            if !(-1.0..=1.0).contains(&r) {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: format!("ACOS domain error: value {r} out of [-1, 1]"),
+                });
+            }
+            Ok(IecValue::Real(r.acos()))
+        }
+        "ATAN" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "ATAN requires 1 argument".to_string(),
+            })?;
+            Ok(IecValue::Real(v.as_real()?.atan()))
+        }
+        "LOG" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "LOG requires 1 argument".to_string(),
+            })?;
+            let r = v.as_real()?;
+            if r <= 0.0 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: format!("LOG domain error: non-positive value {r}"),
+                });
+            }
+            Ok(IecValue::Real(r.log10()))
+        }
+        "SEL" => {
+            if args.len() < 3 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: "SEL requires 3 arguments (G, IN0, IN1)".to_string(),
+                });
+            }
+            let g = args[0].as_bool()?;
+            Ok(if g { args[2].clone() } else { args[1].clone() })
+        }
+        "MUX" => {
+            if args.len() < 2 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: "MUX requires at least 2 arguments (K, IN0, ...)".to_string(),
+                });
+            }
+            let k = args[0].as_dint()?.max(0) as usize;
+            let idx = (1 + k).min(args.len() - 1);
+            Ok(args[idx].clone())
+        }
+        "SHL" | "SHR" | "ROL" | "ROR" => {
+            if args.len() < 2 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: format!("{name} requires 2 arguments (IN, N)"),
+                });
+            }
+            let n = (args[1].as_dint()?.max(0) as u32) & 31;
+            match &args[0] {
+                IecValue::Int(v) => {
+                    let u = *v as u16;
+                    let n16 = n & 15;
+                    let res = match name.as_str() {
+                        "SHL" => u.wrapping_shl(n16),
+                        "SHR" => u.wrapping_shr(n16),
+                        "ROL" => u.rotate_left(n16),
+                        _ => u.rotate_right(n16),
+                    };
+                    Ok(IecValue::Int(res as i16))
+                }
+                other => {
+                    let u = other.as_dint()? as u32;
+                    let res = match name.as_str() {
+                        "SHL" => u.wrapping_shl(n),
+                        "SHR" => u.wrapping_shr(n),
+                        "ROL" => u.rotate_left(n),
+                        _ => u.rotate_right(n),
+                    };
+                    Ok(IecValue::Dint(res as i32))
+                }
+            }
+        }
+        "INT_TO_REAL" | "DINT_TO_REAL" | "BOOL_TO_REAL" | "TIME_TO_REAL" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: format!("{name} requires 1 argument"),
+            })?;
+            let r = match v {
+                IecValue::Bool(b) => {
+                    if *b {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                IecValue::Time(ms) => *ms as f32,
+                other => other.as_real()?,
+            };
+            Ok(IecValue::Real(r))
+        }
+        "REAL_TO_INT" | "DINT_TO_INT" | "BOOL_TO_INT" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: format!("{name} requires 1 argument"),
+            })?;
+            let i = match v {
+                IecValue::Real(r) => r.round().clamp(i16::MIN as f32, i16::MAX as f32) as i16,
+                IecValue::Bool(b) => {
+                    if *b {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                other => other.as_int()?,
+            };
+            Ok(IecValue::Int(i))
+        }
+        "REAL_TO_DINT" | "INT_TO_DINT" | "BOOL_TO_DINT" | "TIME_TO_DINT" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: format!("{name} requires 1 argument"),
+            })?;
+            let d = match v {
+                IecValue::Real(r) => r.round().clamp(i32::MIN as f32, i32::MAX as f32) as i32,
+                IecValue::Bool(b) => {
+                    if *b {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                IecValue::Time(ms) => *ms as i32,
+                other => other.as_dint()?,
+            };
+            Ok(IecValue::Dint(d))
+        }
+        "INT_TO_BOOL" | "DINT_TO_BOOL" | "REAL_TO_BOOL" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: format!("{name} requires 1 argument"),
+            })?;
+            let b = match v {
+                IecValue::Bool(b) => *b,
+                IecValue::Real(r) => r.abs() > f32::EPSILON,
+                other => other.as_dint()? != 0,
+            };
+            Ok(IecValue::Bool(b))
+        }
+        "LEN" => {
+            let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "LEN requires 1 argument".to_string(),
+            })?;
+            let len = match v {
+                IecValue::String(s) => s.chars().count() as i16,
+                other => other.to_string().chars().count() as i16,
+            };
+            Ok(IecValue::Int(len))
+        }
+        "CONCAT" => {
+            if args.len() < 2 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: "CONCAT requires at least 2 arguments".to_string(),
+                });
+            }
+            let mut out = String::new();
+            for a in args {
+                match a {
+                    IecValue::String(s) => out.push_str(s),
+                    other => out.push_str(&other.to_string()),
+                }
+            }
+            Ok(IecValue::String(out))
+        }
+        "LEFT" => {
+            if args.len() < 2 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: "LEFT requires 2 arguments (STR, L)".to_string(),
+                });
+            }
+            let s = match &args[0] {
+                IecValue::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let count = args[1].as_dint()?.max(0) as usize;
+            let res: String = s.chars().take(count).collect();
+            Ok(IecValue::String(res))
+        }
+        "RIGHT" => {
+            if args.len() < 2 {
+                return Err(RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: "RIGHT requires 2 arguments (STR, L)".to_string(),
+                });
+            }
+            let s = match &args[0] {
+                IecValue::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let count = args[1].as_dint()?.max(0) as usize;
+            let chars: Vec<char> = s.chars().collect();
+            let start = chars.len().saturating_sub(count);
+            let res: String = chars[start..].iter().collect();
+            Ok(IecValue::String(res))
+        }
         other => Err(RuntimeError::ExecutionError {
             pou: pou_name.to_string(),
             message: format!("Unknown standard function '{other}'"),
@@ -623,6 +881,15 @@ pub fn eval_binary_op(
     }
 }
 
+/// Control-flow signal returned during statement execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StmtControl {
+    None,
+    Break,
+    Continue,
+    Return,
+}
+
 /// Statements in the common FerriteIR.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrStmt {
@@ -650,6 +917,13 @@ pub enum IrStmt {
         cond: IrExpr,
         body: Vec<IrStmt>,
     },
+    Repeat {
+        body: Vec<IrStmt>,
+        until_cond: IrExpr,
+    },
+    Exit,
+    Continue,
+    Return,
     FbCall {
         instance: String,
         inputs: Vec<(String, IrExpr)>,
@@ -660,7 +934,23 @@ pub enum IrStmt {
 impl IrStmt {
     pub fn execute(&self, ctx: &mut ScanContext<'_>, pou_name: &str) -> Result<(), RuntimeError> {
         let mut empty_env = HashMap::new();
-        self.execute_with_env(ctx, &mut empty_env, pou_name)
+        let _ = self.execute_with_env(ctx, &mut empty_env, pou_name)?;
+        Ok(())
+    }
+
+    pub fn execute_block(
+        stmts: &[Self],
+        ctx: &mut ScanContext<'_>,
+        pou_name: &str,
+    ) -> Result<StmtControl, RuntimeError> {
+        let mut env = HashMap::new();
+        for stmt in stmts {
+            let flow = stmt.execute_with_env(ctx, &mut env, pou_name)?;
+            if flow != StmtControl::None {
+                return Ok(flow);
+            }
+        }
+        Ok(StmtControl::None)
     }
 
     pub fn execute_with_env(
@@ -668,7 +958,7 @@ impl IrStmt {
         ctx: &mut ScanContext<'_>,
         env: &mut HashMap<String, IecValue>,
         pou_name: &str,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<StmtControl, RuntimeError> {
         match self {
             Self::Assign { target, expr } => {
                 let val = expr.evaluate_with_env(ctx, env, pou_name)?;
@@ -682,14 +972,17 @@ impl IrStmt {
                 }
                 if let Some(k) = matched_key {
                     env.insert(k, val);
-                    return Ok(());
+                    return Ok(StmtControl::None);
                 }
-                if ctx.tags.tag_id(target).is_some() || target.starts_with('%') || target.contains('.') {
+                if ctx.tags.tag_id(target).is_some()
+                    || target.starts_with('%')
+                    || target.contains('.')
+                {
                     ctx.write_symbol(target, val)?;
                 } else {
                     env.insert(target.clone(), val);
                 }
-                Ok(())
+                Ok(StmtControl::None)
             }
             Self::If {
                 branches,
@@ -698,15 +991,21 @@ impl IrStmt {
                 for (cond, body) in branches {
                     if cond.evaluate_with_env(ctx, env, pou_name)?.as_bool()? {
                         for stmt in body {
-                            stmt.execute_with_env(ctx, env, pou_name)?;
+                            let flow = stmt.execute_with_env(ctx, env, pou_name)?;
+                            if flow != StmtControl::None {
+                                return Ok(flow);
+                            }
                         }
-                        return Ok(());
+                        return Ok(StmtControl::None);
                     }
                 }
                 for stmt in else_body {
-                    stmt.execute_with_env(ctx, env, pou_name)?;
+                    let flow = stmt.execute_with_env(ctx, env, pou_name)?;
+                    if flow != StmtControl::None {
+                        return Ok(flow);
+                    }
                 }
-                Ok(())
+                Ok(StmtControl::None)
             }
             Self::Case {
                 selector,
@@ -717,15 +1016,21 @@ impl IrStmt {
                 for (labels, body) in arms {
                     if labels.contains(&sel_val) {
                         for stmt in body {
-                            stmt.execute_with_env(ctx, env, pou_name)?;
+                            let flow = stmt.execute_with_env(ctx, env, pou_name)?;
+                            if flow != StmtControl::None {
+                                return Ok(flow);
+                            }
                         }
-                        return Ok(());
+                        return Ok(StmtControl::None);
                     }
                 }
                 for stmt in else_body {
-                    stmt.execute_with_env(ctx, env, pou_name)?;
+                    let flow = stmt.execute_with_env(ctx, env, pou_name)?;
+                    if flow != StmtControl::None {
+                        return Ok(flow);
+                    }
                 }
-                Ok(())
+                Ok(StmtControl::None)
             }
             Self::For {
                 var,
@@ -756,13 +1061,25 @@ impl IrStmt {
                         });
                     }
                     env.insert(var.clone(), IecValue::Dint(cur));
+                    let mut broke = false;
                     for stmt in body {
-                        stmt.execute_with_env(ctx, env, pou_name)?;
+                        match stmt.execute_with_env(ctx, env, pou_name)? {
+                            StmtControl::None => {}
+                            StmtControl::Break => {
+                                broke = true;
+                                break;
+                            }
+                            StmtControl::Continue => break,
+                            StmtControl::Return => return Ok(StmtControl::Return),
+                        }
+                    }
+                    if broke {
+                        break;
                     }
                     cur = cur.wrapping_add(step_val);
                     iters += 1;
                 }
-                Ok(())
+                Ok(StmtControl::None)
             }
             Self::While { cond, body } => {
                 let mut iters = 0usize;
@@ -773,13 +1090,59 @@ impl IrStmt {
                             max_iterations: MAX_LOOP_ITERATIONS,
                         });
                     }
+                    let mut broke = false;
                     for stmt in body {
-                        stmt.execute_with_env(ctx, env, pou_name)?;
+                        match stmt.execute_with_env(ctx, env, pou_name)? {
+                            StmtControl::None => {}
+                            StmtControl::Break => {
+                                broke = true;
+                                break;
+                            }
+                            StmtControl::Continue => break,
+                            StmtControl::Return => return Ok(StmtControl::Return),
+                        }
+                    }
+                    if broke {
+                        break;
                     }
                     iters += 1;
                 }
-                Ok(())
+                Ok(StmtControl::None)
             }
+            Self::Repeat { body, until_cond } => {
+                let mut iters = 0usize;
+                loop {
+                    if iters >= MAX_LOOP_ITERATIONS {
+                        return Err(RuntimeError::IterationLimitExceeded {
+                            pou: pou_name.to_string(),
+                            max_iterations: MAX_LOOP_ITERATIONS,
+                        });
+                    }
+                    let mut broke = false;
+                    for stmt in body {
+                        match stmt.execute_with_env(ctx, env, pou_name)? {
+                            StmtControl::None => {}
+                            StmtControl::Break => {
+                                broke = true;
+                                break;
+                            }
+                            StmtControl::Continue => break,
+                            StmtControl::Return => return Ok(StmtControl::Return),
+                        }
+                    }
+                    if broke {
+                        break;
+                    }
+                    iters += 1;
+                    if until_cond.evaluate_with_env(ctx, env, pou_name)?.as_bool()? {
+                        break;
+                    }
+                }
+                Ok(StmtControl::None)
+            }
+            Self::Exit => Ok(StmtControl::Break),
+            Self::Continue => Ok(StmtControl::Continue),
+            Self::Return => Ok(StmtControl::Return),
             Self::FbCall {
                 instance,
                 inputs,
@@ -808,7 +1171,7 @@ impl IrStmt {
                         ctx.write_symbol(target_sym, out_val)?;
                     }
                 }
-                Ok(())
+                Ok(StmtControl::None)
             }
         }
     }
@@ -917,6 +1280,22 @@ impl IrStmt {
                 }
                 Ok(())
             }
+            Self::Repeat { body, until_cond } => {
+                for s in body {
+                    s.validate(tags, pou_name, in_sfc)?;
+                }
+                let cty = until_cond.infer_type(tags, pou_name)?;
+                if cty != IecType::Bool {
+                    return Err(IrError::TypeMismatch {
+                        pou: pou_name.to_string(),
+                        expected: IecType::Bool,
+                        actual: cty,
+                        context: "REPEAT UNTIL condition".to_string(),
+                    });
+                }
+                Ok(())
+            }
+            Self::Exit | Self::Continue | Self::Return => Ok(()),
             Self::FbCall {
                 instance,
                 inputs,
@@ -981,8 +1360,11 @@ pub fn types_compatible(expected: IecType, actual: IecType) -> bool {
             | (IecType::Dint, IecType::Int)
             | (IecType::Real, IecType::Int)
             | (IecType::Real, IecType::Dint)
+            | (IecType::Int, IecType::Real)
+            | (IecType::Dint, IecType::Real)
             | (IecType::Time, IecType::Int)
             | (IecType::Time, IecType::Dint)
+            | (IecType::Time, IecType::Real)
     )
 }
 
