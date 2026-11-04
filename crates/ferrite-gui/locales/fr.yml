@@ -5,6 +5,7 @@ app:
   forces_active: "FORÇAGES ACTIFS (%{count})"
   status_running: "EN EXÉCUTION"
   status_paused: "EN PAUSE"
+  unforce_all: "Annuler forçages"
 
 menu:
   file:
@@ -58,6 +59,7 @@ toolbar:
   step: "Pas-à-pas"
   reset_warm: "Chaud"
   reset_cold: "Froid"
+  speed: "Vitesse :"
   check: "Vérifier"
   undo: "Annuler"
   redo: "Rétablir"
@@ -74,6 +76,26 @@ explorer:
   rename: "Renommer"
   delete: "Supprimer"
   empty: "Aucun POU créé"
+
+symbols:
+  title: "Symboles & Blocs FB"
+  subtitle: "Variables globales et instances de blocs fonctionnels"
+  add_tag: "+ Variable"
+  add_timer: "+ Temporisateur"
+  add_pid: "+ PID"
+  scan_config: "Configuration du Cycle API :"
+  scan_cycle: "Cycle (ms) :"
+  watchdog: "Watchdog (µs) :"
+  tags_title: "Variables Symboliques Globales (%{count})"
+  fb_title: "Instances Blocs Fonctionnels Partagés (%{count})"
+  col_name: "Nom"
+  col_type: "Type"
+  col_addr: "Adresse (%I/%Q/%M)"
+  col_init: "Valeur Init"
+  col_comment: "Commentaire"
+  col_params: "Paramètres"
+  col_action: "Action"
+  delete: "Suppr"
 
 dialog:
   confirm_close:

@@ -1752,8 +1752,8 @@ impl FerriteStudioApp {
                     iced::window::close(id)
                 } else {
                     let (id, open_task) = iced::window::open(iced::window::Settings {
-                        size: iced::Size::new(780.0, 560.0),
-                        min_size: Some(iced::Size::new(500.0, 380.0)),
+                        size: iced::Size::new(840.0, 580.0),
+                        min_size: Some(iced::Size::new(540.0, 400.0)),
                         exit_on_close_request: false,
                         icon: crate::app_window_icon(),
                         ..Default::default()
@@ -6552,7 +6552,7 @@ impl FerriteStudioApp {
                 .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
                     0.961, 0.620, 0.043, 0.2
                 ))),
-                button(text(self.ui_lang.tr("Unforce All", "Annuler forçages")).size(11))
+                button(text(crate::tr!("app.unforce_all", self.ui_lang)).size(11))
                     .on_press(Message::UnforceAllTags)
                     .style(StudioTheme::danger_button)
                     .padding([3, 8]),
@@ -6626,7 +6626,7 @@ impl FerriteStudioApp {
                 .padding([6, 10]);
 
         let speed_group = row![
-            text(self.ui_lang.tr("Speed:", "Vitesse:"))
+            text(crate::tr!("toolbar.speed", self.ui_lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED),
             pick_list(
@@ -7076,7 +7076,7 @@ impl FerriteStudioApp {
                     .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
                         0.220, 0.741, 0.973, 0.12
                     ))),
-                text(self.ui_lang.tr("Symbols & Config", "Symboles & Config")).size(12),
+                text(crate::tr!("explorer.symbols", self.ui_lang)).size(12),
             ]
             .spacing(8)
             .align_y(Alignment::Center),
@@ -7095,7 +7095,7 @@ impl FerriteStudioApp {
                     .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
                         0.063, 0.725, 0.506, 0.15
                     ))),
-                text(self.ui_lang.tr("Digital Twin 2D", "Jumeau Numérique 2D")).size(12),
+                text(crate::tr!("menu.panels.twin", self.ui_lang)).size(12),
             ]
             .spacing(8)
             .align_y(Alignment::Center),

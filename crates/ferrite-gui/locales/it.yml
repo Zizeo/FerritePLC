@@ -5,6 +5,7 @@ app:
   forces_active: "FORZAMENTI ATTIVI (%{count})"
   status_running: "IN ESECUZIONE"
   status_paused: "IN PAUSA"
+  unforce_all: "Sforza tutto"
 
 menu:
   file:
@@ -58,6 +59,7 @@ toolbar:
   step: "Passo"
   reset_warm: "Caldo"
   reset_cold: "Freddo"
+  speed: "Velocità:"
   check: "Verifica"
   undo: "Annulla"
   redo: "Ripeti"
@@ -74,6 +76,26 @@ explorer:
   rename: "Rinomina"
   delete: "Elimina"
   empty: "Nessun POU ancora creato"
+
+symbols:
+  title: "Simboli e Blocchi FB"
+  subtitle: "Tag globali e istanze di blocchi funzione condivisi"
+  add_tag: "+ Variabile"
+  add_timer: "+ Timer"
+  add_pid: "+ PID"
+  scan_config: "Configurazione ciclo PLC:"
+  scan_cycle: "Ciclo (ms):"
+  watchdog: "Watchdog (µs):"
+  tags_title: "Tag Simbolici Globali (%{count})"
+  fb_title: "Istanze Blocchi Funzione Condivise (%{count})"
+  col_name: "Nome"
+  col_type: "Tipo"
+  col_addr: "Indirizzo (%I/%Q/%M)"
+  col_init: "Valore Iniziale"
+  col_comment: "Commento"
+  col_params: "Parametri"
+  col_action: "Azione"
+  delete: "Elimina"
 
 dialog:
   confirm_close:

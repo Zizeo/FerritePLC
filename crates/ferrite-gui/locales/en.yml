@@ -5,6 +5,7 @@ app:
   forces_active: "FORCES ACTIVE (%{count})"
   status_running: "RUNNING"
   status_paused: "PAUSED"
+  unforce_all: "Unforce All"
 
 menu:
   file:
@@ -58,6 +59,7 @@ toolbar:
   step: "Step"
   reset_warm: "Warm"
   reset_cold: "Cold"
+  speed: "Speed:"
   check: "Check"
   undo: "Undo"
   redo: "Redo"
@@ -74,6 +76,26 @@ explorer:
   rename: "Rename"
   delete: "Delete"
   empty: "No POUs created yet"
+
+symbols:
+  title: "Symbols & Function Blocks"
+  subtitle: "Global Tag Registry & Standard Function Block Instances"
+  add_tag: "+ Tag"
+  add_timer: "+ Timer"
+  add_pid: "+ PID"
+  scan_config: "PLC Scan Configuration:"
+  scan_cycle: "Cycle (ms):"
+  watchdog: "Watchdog (µs):"
+  tags_title: "Global Symbolic Tags (%{count})"
+  fb_title: "Shared Function Block Instances (%{count})"
+  col_name: "Name"
+  col_type: "Type"
+  col_addr: "Address (%I/%Q/%M)"
+  col_init: "Init Value"
+  col_comment: "Comment"
+  col_params: "Parameters"
+  col_action: "Action"
+  delete: "Del"
 
 dialog:
   confirm_close:

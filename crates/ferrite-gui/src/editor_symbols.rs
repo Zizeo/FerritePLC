@@ -35,38 +35,73 @@ pub const ALL_FB_KINDS: [FbKindWrapper; 14] = [
 ];
 
 pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Element<'a, Message> {
-    // 1. Toolbar Header
-    let header = row![
-        text(lang.tr(
-            "Unified Symbol Table & Function Block Registry",
-            "Table des Symboles Unifiée & Registre des Blocs Fonctionnels",
-        ))
-        .size(18),
-        iced::widget::Space::with_width(Length::Fill),
-        button(text(lang.tr("+ Add Global Tag", "+ Ajouter Variable Globale")).size(12))
-            .on_press(Message::AddGlobalTag)
-            .style(StudioTheme::primary_button)
-            .padding([6, 12]),
-        button(text(lang.tr("+ Add Timer (TON)", "+ Ajouter Temporisateur (TON)")).size(12))
-            .on_press(Message::AddFbInstance(StandardFbKind::Ton))
-            .style(StudioTheme::secondary_button)
-            .padding([6, 12]),
-        button(text(lang.tr("+ Add PID Corrector", "+ Ajouter Correcteur PID")).size(12))
-            .on_press(Message::AddFbInstance(StandardFbKind::PidMixed))
-            .style(StudioTheme::secondary_button)
-            .padding([6, 12]),
+    // 1. Toolbar Header - Responsive Layout
+    let title_block = column![
+        text(crate::tr!("symbols.title", lang)).size(16),
+        text(crate::tr!("symbols.subtitle", lang))
+            .size(11)
+            .color(StudioTheme::TEXT_MUTED),
     ]
-    .spacing(10)
+    .spacing(2);
+
+    let buttons_row = row![
+        button(
+            row![
+                text("+").size(12).color(StudioTheme::ACCENT_CYAN),
+                text(crate::tr!("symbols.add_tag", lang)).size(11),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::AddGlobalTag)
+        .style(StudioTheme::primary_button)
+        .padding([5, 10]),
+        button(
+            row![
+                text("+").size(12),
+                text(crate::tr!("symbols.add_timer", lang)).size(11),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::AddFbInstance(StandardFbKind::Ton))
+        .style(StudioTheme::secondary_button)
+        .padding([5, 10]),
+        button(
+            row![
+                text("+").size(12),
+                text(crate::tr!("symbols.add_pid", lang)).size(11),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::AddFbInstance(StandardFbKind::PidMixed))
+        .style(StudioTheme::secondary_button)
+        .padding([5, 10]),
+    ]
+    .spacing(8)
     .align_y(Alignment::Center);
+
+    let header = container(
+        row![
+            title_block,
+            iced::widget::Space::with_width(Length::Fill),
+            buttons_row,
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fill);
 
     // 2. PLC Scan Configuration Card
     let scan_config_card = container(
         row![
-            text(lang.tr("PLC Scan Configuration:", "Configuration du Cycle API :")).size(13),
-            text(lang.tr("Scan Cycle (ms):", "Cycle (ms) :"))
-                .size(12)
+            text(crate::tr!("symbols.scan_config", lang)).size(12),
+            iced::widget::Space::with_width(Length::Fixed(6.0)),
+            text(crate::tr!("symbols.scan_cycle", lang))
+                .size(11)
                 .color(StudioTheme::TEXT_SECONDARY),
-            text_input("50", &project.manifest.scan_cycle_ms.to_string(),)
+            text_input("50", &project.manifest.scan_cycle_ms.to_string())
                 .on_input(|s| {
                     if let Ok(ms) = s.parse::<u64>() {
                         Message::ScanCycleMsChanged(ms)
@@ -74,13 +109,14 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                         Message::None
                     }
                 })
-                .width(70)
-                .padding([4, 8])
+                .width(60)
+                .padding([3, 6])
                 .style(StudioTheme::styled_input),
-            text(lang.tr("Watchdog (µs):", "Chien de garde (µs) :"))
-                .size(12)
+            iced::widget::Space::with_width(Length::Fixed(6.0)),
+            text(crate::tr!("symbols.watchdog", lang))
+                .size(11)
                 .color(StudioTheme::TEXT_SECONDARY),
-            text_input("100000", &project.manifest.watchdog_us.to_string(),)
+            text_input("100000", &project.manifest.watchdog_us.to_string())
                 .on_input(|s| {
                     if let Ok(us) = s.parse::<u64>() {
                         Message::WatchdogUsChanged(us)
@@ -88,44 +124,44 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                         Message::None
                     }
                 })
-                .width(90)
-                .padding([4, 8])
+                .width(80)
+                .padding([3, 6])
                 .style(StudioTheme::styled_input),
         ]
-        .spacing(12)
+        .spacing(8)
         .align_y(Alignment::Center),
     )
-    .padding(12)
+    .padding(10)
     .style(StudioTheme::card_style)
     .width(Length::Fill);
 
     // 3. Global Symbolic Tags Table
     let mut tags_table = column![
         row![
-            text(lang.tr("Name", "Nom"))
+            text(crate::tr!("symbols.col_name", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(160),
-            text(lang.tr("IEC Type", "Type CEI"))
+                .width(150),
+            text(crate::tr!("symbols.col_type", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(100),
-            text(lang.tr("Direct Address (%I/%Q/%M)", "Adresse Directe (%I/%Q/%M)"))
+                .width(95),
+            text(crate::tr!("symbols.col_addr", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(130),
-            text(lang.tr("Initial Value", "Valeur Initiale"))
+            text(crate::tr!("symbols.col_init", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(110),
-            text(lang.tr("Comment", "Commentaire"))
+                .width(100),
+            text(crate::tr!("symbols.col_comment", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::Fill),
-            text("Action")
+            text(crate::tr!("symbols.col_action", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(60),
+                .width(55),
         ]
         .spacing(10)
     ]
@@ -138,8 +174,8 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
         let row_item = row![
             text_input("Tag_Name", &tag.name)
                 .on_input(move |s| Message::TagNameChanged(idx, s))
-                .width(160)
-                .padding([4, 8])
+                .width(150)
+                .padding([3, 6])
                 .style(StudioTheme::styled_input),
             pick_list(
                 &[
@@ -153,27 +189,27 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                 Some(tag.data_type),
                 move |ty| Message::TagTypeChanged(idx, ty),
             )
-            .width(100)
+            .width(95)
             .style(StudioTheme::styled_pick_list),
             text_input("%IX0.0", &addr_str)
                 .on_input(move |s| Message::TagAddressChanged(idx, s))
                 .width(130)
-                .padding([4, 8])
+                .padding([3, 6])
                 .style(StudioTheme::styled_input),
             text_input("0", &init_val_str)
                 .on_input(move |s| Message::TagInitialValueChanged(idx, s))
-                .width(110)
-                .padding([4, 8])
+                .width(100)
+                .padding([3, 6])
                 .style(StudioTheme::styled_input),
             text_input("Comment", &tag.comment)
                 .on_input(move |s| Message::TagCommentChanged(idx, s))
                 .width(Length::Fill)
-                .padding([4, 8])
+                .padding([3, 6])
                 .style(StudioTheme::styled_input),
-            button(text(lang.tr("Delete", "Suppr")).size(11))
+            button(text(crate::tr!("symbols.delete", lang)).size(11))
                 .on_press(Message::RemoveGlobalTag(idx))
                 .style(StudioTheme::danger_button)
-                .padding([4, 8]),
+                .padding([3, 6]),
         ]
         .spacing(10)
         .align_y(Alignment::Center);
@@ -183,44 +219,38 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
 
     let global_tags_card = container(
         column![
-            row![
-                text(format!(
-                    "{} ({}) — symbols/global_tags.toml",
-                    lang.tr("Global Symbolic Tags", "Variables Symboliques Globales"),
-                    project.global_tags.tags.len()
-                ))
-                .size(14),
-            ],
+            text(format!(
+                "{} — symbols/global_tags.toml",
+                crate::tr!("symbols.tags_title", lang, count = project.global_tags.tags.len())
+            ))
+            .size(13),
             tags_table,
         ]
         .spacing(12),
     )
-    .padding(16)
+    .padding(14)
     .style(StudioTheme::card_style)
     .width(Length::Fill);
 
     // 4. Shared Function Block Instances Table
     let mut fb_table = column![
         row![
-            text(lang.tr("Instance Name", "Nom d'Instance"))
+            text(crate::tr!("symbols.col_name", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(160),
-            text(lang.tr("FB Type", "Type FB"))
+                .width(150),
+            text(crate::tr!("symbols.col_type", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(120),
-            text(lang.tr(
-                "Parameters (Kp / Ti / Td / PT)",
-                "Paramètres (Kp / Ti / Td / PT)"
-            ))
-            .size(11)
-            .color(StudioTheme::TEXT_MUTED)
-            .width(Length::Fill),
-            text("Action")
+                .width(115),
+            text(crate::tr!("symbols.col_params", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(60),
+                .width(Length::Fill),
+            text(crate::tr!("symbols.col_action", lang))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(55),
         ]
         .spacing(10)
     ]
@@ -242,8 +272,8 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                             Message::None
                         }
                     })
-                    .width(65)
-                    .padding([3, 6])
+                    .width(52)
+                    .padding([2, 5])
                     .style(StudioTheme::styled_input),
                 text("Ti(s):").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("2.0", &ti_str)
@@ -254,8 +284,8 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                             Message::None
                         }
                     })
-                    .width(65)
-                    .padding([3, 6])
+                    .width(52)
+                    .padding([2, 5])
                     .style(StudioTheme::styled_input),
                 text("Td(s):").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("0.5", &td_str)
@@ -266,14 +296,20 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                             Message::None
                         }
                     })
-                    .width(65)
-                    .padding([3, 6])
+                    .width(52)
+                    .padding([2, 5])
                     .style(StudioTheme::styled_input),
-                text(fb.kind.formula_hint())
-                    .size(11)
-                    .color(StudioTheme::TEXT_MUTED),
+                container(
+                    text(fb.kind.formula_hint())
+                        .size(10.0)
+                        .color(StudioTheme::TEXT_MUTED),
+                )
+                .padding([2, 5])
+                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                    1.0, 1.0, 1.0, 0.04,
+                ))),
             ]
-            .spacing(8)
+            .spacing(6)
             .align_y(Alignment::Center)
             .into()
         } else {
@@ -290,8 +326,8 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                             Message::None
                         }
                     })
-                    .width(80)
-                    .padding([3, 6])
+                    .width(70)
+                    .padding([2, 5])
                     .style(StudioTheme::styled_input),
                 text("PV:").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("10", &pv_str)
@@ -302,11 +338,11 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                             Message::None
                         }
                     })
-                    .width(60)
-                    .padding([3, 6])
+                    .width(50)
+                    .padding([2, 5])
                     .style(StudioTheme::styled_input),
             ]
-            .spacing(8)
+            .spacing(6)
             .align_y(Alignment::Center)
             .into()
         };
@@ -314,19 +350,19 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
         let row_item = row![
             text_input("Timer_1", &fb.name)
                 .on_input(move |s| Message::FbNameChanged(idx, s))
-                .width(160)
-                .padding([4, 8])
+                .width(150)
+                .padding([3, 6])
                 .style(StudioTheme::styled_input),
             pick_list(&ALL_FB_KINDS[..], Some(FbKindWrapper(fb.kind)), move |k| {
                 Message::FbKindChanged(idx, k.0)
-            },)
-            .width(120)
+            })
+            .width(115)
             .style(StudioTheme::styled_pick_list),
             param_view,
-            button(text(lang.tr("Delete", "Suppr")).size(11))
+            button(text(crate::tr!("symbols.delete", lang)).size(11))
                 .on_press(Message::RemoveFbInstance(idx))
                 .style(StudioTheme::danger_button)
-                .padding([4, 8]),
+                .padding([3, 6]),
         ]
         .spacing(10)
         .align_y(Alignment::Center);
@@ -336,22 +372,16 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
 
     let fb_instances_card = container(
         column![
-            row![
-                text(format!(
-                    "{} ({}) — symbols/fb_instances.toml",
-                    lang.tr(
-                        "Shared Function Block Instances",
-                        "Instances de Blocs Fonctionnels Partagés"
-                    ),
-                    project.fb_instances.instances.len()
-                ))
-                .size(14),
-            ],
+            text(format!(
+                "{} — symbols/fb_instances.toml",
+                crate::tr!("symbols.fb_title", lang, count = project.fb_instances.instances.len())
+            ))
+            .size(13),
             fb_table,
         ]
         .spacing(12),
     )
-    .padding(16)
+    .padding(14)
     .style(StudioTheme::card_style)
     .width(Length::Fill);
 
@@ -362,8 +392,8 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
             global_tags_card,
             fb_instances_card,
         ]
-        .spacing(16)
-        .padding(20),
+        .spacing(14)
+        .padding(16),
     )
     .into()
 }

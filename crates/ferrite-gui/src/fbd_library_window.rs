@@ -459,7 +459,10 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
                         ]
                         .spacing(6)
                         .align_y(Alignment::Center),
-                        text(desc).size(11).color(StudioTheme::TEXT_SECONDARY),
+                        text(desc)
+                            .size(11)
+                            .color(StudioTheme::TEXT_SECONDARY)
+                            .wrapping(iced::widget::text::Wrapping::Word),
                     ]
                     .spacing(3)
                     .width(Length::Fill),
@@ -570,7 +573,10 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
                         ]
                         .spacing(6)
                         .align_y(Alignment::Center),
-                        text(desc).size(11).color(StudioTheme::TEXT_SECONDARY),
+                        text(desc)
+                            .size(11)
+                            .color(StudioTheme::TEXT_SECONDARY)
+                            .wrapping(iced::widget::text::Wrapping::Word),
                     ]
                     .spacing(3)
                     .width(Length::Fill),

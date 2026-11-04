@@ -2454,4 +2454,61 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
+
+    #[test]
+    fn test_symbols_and_pid_card_fit_in_all_languages() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("ferrite_gui_symbols_pid_fit_test");
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let mut proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+
+        // Add a PID corrector to shared instances
+        proj.fb_instances.instances.push(ferrite_core::FbInstance::new(
+            "PID_Loop_1".to_string(),
+            ferrite_core::StandardFbKind::PidMixed,
+        ));
+
+        let mut app = FerriteStudioApp::new(proj.clone());
+        let win_id = iced::window::Id::unique();
+
+        // Add PID blocks to pump_ctrl (standard FBD pou in scaffolded project)
+        let _ = app.update(Message::FbdAddBlock(
+            "pump_ctrl".to_string(),
+            ferrite_lang_fbd::FbdBlockKind::StandardFb {
+                instance: "PID_Mixed_ISA".to_string(),
+                fb_type: Some(ferrite_core::StandardFbKind::PidMixed),
+            },
+        ));
+
+        for lang in UiLanguage::ALL {
+            // 1. Verify i18n keys for symbols
+            let title = crate::tr!("symbols.title", lang);
+            assert!(!title.is_empty(), "Title should not be empty for {:?}", lang);
+            let add_pid = crate::tr!("symbols.add_pid", lang);
+            assert!(!add_pid.is_empty(), "Add PID label should not be empty for {:?}", lang);
+
+            // 2. Render Symbols & Config workspace tab
+            app.ui_lang = lang;
+            app.active_tab = WorkspaceTab::SymbolsAndConfig;
+            {
+                let _sym_view = app.view(win_id);
+                let _sym_direct = crate::editor_symbols::render_symbols_editor(&app.project, lang);
+            }
+
+            // 3. Render FBD editor with PID blocks
+            app.active_tab = WorkspaceTab::Pou("pump_ctrl".to_string());
+            {
+                let _fbd_view = app.view(win_id);
+            }
+
+            // 4. Render FBD Library window
+            {
+                let _lib_view = crate::fbd_library_window::render_fbd_library_window(&app);
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }

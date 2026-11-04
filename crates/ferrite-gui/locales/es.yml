@@ -5,6 +5,7 @@ app:
   forces_active: "FORZADOS ACTIVOS (%{count})"
   status_running: "EN EJECUCIÓN"
   status_paused: "EN PAUSA"
+  unforce_all: "Desforzar todo"
 
 menu:
   file:
@@ -58,6 +59,7 @@ toolbar:
   step: "Paso"
   reset_warm: "Cálido"
   reset_cold: "Frío"
+  speed: "Velocidad:"
   check: "Comprobar"
   undo: "Deshacer"
   redo: "Rehacer"
@@ -74,6 +76,26 @@ explorer:
   rename: "Renombrar"
   delete: "Eliminar"
   empty: "Aún no hay POUs creados"
+
+symbols:
+  title: "Símbolos y Bloques FB"
+  subtitle: "Variables globales e instancias de bloques funcionales"
+  add_tag: "+ Variable"
+  add_timer: "+ Temporizador"
+  add_pid: "+ PID"
+  scan_config: "Configuración del ciclo PLC:"
+  scan_cycle: "Ciclo (ms):"
+  watchdog: "Watchdog (µs):"
+  tags_title: "Variables Simbólicas Globales (%{count})"
+  fb_title: "Instancias de Bloques FB Compartidas (%{count})"
+  col_name: "Nombre"
+  col_type: "Tipo"
+  col_addr: "Dirección (%I/%Q/%M)"
+  col_init: "Valor Inicial"
+  col_comment: "Comentario"
+  col_params: "Parámetros"
+  col_action: "Acción"
+  delete: "Eliminar"
 
 dialog:
   confirm_close:

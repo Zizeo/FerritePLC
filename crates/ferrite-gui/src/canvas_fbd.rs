@@ -117,12 +117,12 @@ fn operator_symbol(kind: &FbdBlockKind) -> (&str, &'static str) {
 fn pin_display_label(pin: &str, is_corrector: bool, lang: UiLanguage) -> String {
     if is_corrector {
         match pin.to_ascii_uppercase().as_str() {
-            "SP" => lang.tr("Setpoint (SP)", "Consigne (SP)").to_string(),
-            "PV" => lang.tr("Process Value (PV)", "Mesure (PV)").to_string(),
-            "KP" => lang.tr("Gain (Kp)", "Gain (Kp)").to_string(),
+            "SP" => lang.tr("SP (Set)", "SP (Cons)").to_string(),
+            "PV" => lang.tr("PV (Proc)", "PV (Mes)").to_string(),
+            "KP" => "Kp".to_string(),
             "TI" => "Ti (s)".to_string(),
             "TD" => "Td (s)".to_string(),
-            "OUT" => lang.tr("Output (OUT)", "Commande (OUT)").to_string(),
+            "OUT" => lang.tr("OUT (Cmd)", "OUT (Cmd)").to_string(),
             other => other.to_string(),
         }
     } else {
@@ -212,28 +212,31 @@ fn render_single_block_card<'a>(
             StandardFbKind::Pi,
             StandardFbKind::P,
         ];
-        row![
-            text(lang.tr("Architecture:", "Architecture :"))
-                .size(11)
-                .color(StudioTheme::TEXT_MUTED),
-            pick_list(corrector_kinds, Some(cur_k), {
-                let p = p_blk.clone();
-                move |k| Message::FbdChangeCorrectorKind(p.clone(), b_idx, k)
-            })
-            .text_size(11)
-            .padding([2, 6]),
+        column![
+            row![
+                text(lang.tr("Architecture:", "Architecture :"))
+                    .size(10.5)
+                    .color(StudioTheme::TEXT_MUTED),
+                pick_list(corrector_kinds, Some(cur_k), {
+                    let p = p_blk.clone();
+                    move |k| Message::FbdChangeCorrectorKind(p.clone(), b_idx, k)
+                })
+                .text_size(10.5)
+                .padding([2, 5]),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
             container(
                 text(cur_k.formula_hint())
-                    .size(10.0)
+                    .size(9.5)
                     .color(StudioTheme::ACCENT_CYAN),
             )
-            .padding([2, 6])
+            .padding([2, 5])
             .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-                0.220, 0.741, 0.973, 0.10
+                0.220, 0.741, 0.973, 0.10,
             ))),
         ]
-        .spacing(8)
-        .align_y(Alignment::Center)
+        .spacing(3)
     });
 
     // Inputs Column
@@ -282,14 +285,14 @@ fn render_single_block_card<'a>(
                 text(display_pin)
                     .size(10.0)
                     .color(StudioTheme::TEXT_SECONDARY)
-                    .width(if is_corrector { 90 } else { 36 }),
+                    .width(if is_corrector { 58 } else { 36 }),
                 text_input("Source", &expr_str)
                     .on_input({
                         let p = p_blk.clone();
                         let pn = pin_n.clone();
                         move |s| Message::FbdInputSourceChanged(p.clone(), b_idx, pn.clone(), s)
                     })
-                    .width(if is_corrector { 85 } else { 105 })
+                    .width(if is_corrector { 72 } else { 100 })
                     .padding([2, 5])
                     .style(StudioTheme::styled_input),
                 container(iced::widget::Space::with_width(Length::Fixed(8.0)))
@@ -315,10 +318,10 @@ fn render_single_block_card<'a>(
         .spacing(2)
         .align_x(Alignment::Center),
     )
-    .width(Length::Fixed(72.0))
-    .height(Length::Fixed(64.0))
-    .center_x(Length::Fixed(72.0))
-    .center_y(Length::Fixed(64.0))
+    .width(Length::Fixed(58.0))
+    .height(Length::Fixed(52.0))
+    .center_x(Length::Fixed(58.0))
+    .center_y(Length::Fixed(52.0))
     .style(|_theme: &Theme| container::Style {
         background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
         border: Border {
@@ -372,14 +375,14 @@ fn render_single_block_card<'a>(
                 text(display_pin)
                     .size(10.0)
                     .color(StudioTheme::TEXT_SECONDARY)
-                    .width(if is_corrector { 95 } else { 30 }),
+                    .width(if is_corrector { 58 } else { 30 }),
                 text_input("Target", target)
                     .on_input({
                         let p = p_blk.clone();
                         let pn = pin_n.clone();
                         move |s| Message::FbdOutputTargetChanged(p.clone(), b_idx, pn.clone(), s)
                     })
-                    .width(if is_corrector { 85 } else { 105 })
+                    .width(if is_corrector { 72 } else { 100 })
                     .padding([2, 5])
                     .style(StudioTheme::styled_input),
                 out_dot,

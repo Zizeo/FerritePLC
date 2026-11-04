@@ -5,6 +5,7 @@ app:
   forces_active: "FORCIERUNGEN AKTIV (%{count})"
   status_running: "LÄUFT"
   status_paused: "PAUSIERT"
+  unforce_all: "Forcierung aufheben"
 
 menu:
   file:
@@ -58,6 +59,7 @@ toolbar:
   step: "Schritt"
   reset_warm: "Warm"
   reset_cold: "Kalt"
+  speed: "Geschwindigkeit:"
   check: "Prüfen"
   undo: "Rückgängig"
   redo: "Wiederholen"
@@ -74,6 +76,26 @@ explorer:
   rename: "Umbenennen"
   delete: "Löschen"
   empty: "Noch keine POUs erstellt"
+
+symbols:
+  title: "Symbole & Funktionsbausteine"
+  subtitle: "Globale Variablen & Instanzen von Funktionsbausteinen"
+  add_tag: "+ Variable"
+  add_timer: "+ Timer"
+  add_pid: "+ PID"
+  scan_config: "SPS-Zykluskonfiguration:"
+  scan_cycle: "Zyklus (ms):"
+  watchdog: "Watchdog (µs):"
+  tags_title: "Globale symbolische Variablen (%{count})"
+  fb_title: "Gemeinsame FB-Instanzen (%{count})"
+  col_name: "Name"
+  col_type: "Typ"
+  col_addr: "Adresse (%I/%Q/%M)"
+  col_init: "Initialwert"
+  col_comment: "Kommentar"
+  col_params: "Parameter"
+  col_action: "Aktion"
+  delete: "Löschen"
 
 dialog:
   confirm_close:
