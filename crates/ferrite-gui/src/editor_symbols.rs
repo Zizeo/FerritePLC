@@ -55,7 +55,7 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
         )
         .on_press(Message::AddGlobalTag)
         .style(StudioTheme::primary_button)
-        .padding([5, 10]),
+        .padding([8, 16]),
         button(
             row![
                 text("+").size(12),
@@ -66,7 +66,7 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
         )
         .on_press(Message::AddFbInstance(StandardFbKind::Ton))
         .style(StudioTheme::secondary_button)
-        .padding([5, 10]),
+        .padding([8, 16]),
         button(
             row![
                 text("+").size(12),
@@ -77,9 +77,9 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
         )
         .on_press(Message::AddFbInstance(StandardFbKind::PidMixed))
         .style(StudioTheme::secondary_button)
-        .padding([5, 10]),
+        .padding([8, 16]),
     ]
-    .spacing(8)
+    .spacing(12)
     .align_y(Alignment::Center);
 
     let header = container(
@@ -93,77 +93,82 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
     )
     .width(Length::Fill);
 
-    // 2. PLC Scan Configuration Card
+    // 2. PLC Scan Configuration Card - Form with labels stacked above inputs
     let scan_config_card = container(
         row![
             text(crate::tr!("symbols.scan_config", lang)).size(12),
-            iced::widget::Space::with_width(Length::Fixed(6.0)),
-            text(crate::tr!("symbols.scan_cycle", lang))
-                .size(11)
-                .color(StudioTheme::TEXT_SECONDARY),
-            text_input("50", &project.manifest.scan_cycle_ms.to_string())
-                .on_input(|s| {
-                    if let Ok(ms) = s.parse::<u64>() {
-                        Message::ScanCycleMsChanged(ms)
-                    } else {
-                        Message::None
-                    }
-                })
-                .width(60)
-                .padding([3, 6])
-                .style(StudioTheme::styled_input),
-            iced::widget::Space::with_width(Length::Fixed(6.0)),
-            text(crate::tr!("symbols.watchdog", lang))
-                .size(11)
-                .color(StudioTheme::TEXT_SECONDARY),
-            text_input("100000", &project.manifest.watchdog_us.to_string())
-                .on_input(|s| {
-                    if let Ok(us) = s.parse::<u64>() {
-                        Message::WatchdogUsChanged(us)
-                    } else {
-                        Message::None
-                    }
-                })
-                .width(80)
-                .padding([3, 6])
-                .style(StudioTheme::styled_input),
+            iced::widget::Space::with_width(Length::Fill),
+            column![
+                text(crate::tr!("symbols.scan_cycle", lang))
+                    .size(11)
+                    .color(StudioTheme::TEXT_SECONDARY),
+                text_input("50", &project.manifest.scan_cycle_ms.to_string())
+                    .on_input(|s| {
+                        if let Ok(ms) = s.parse::<u64>() {
+                            Message::ScanCycleMsChanged(ms)
+                        } else {
+                            Message::None
+                        }
+                    })
+                    .padding([4, 8])
+                    .style(StudioTheme::styled_input),
+            ]
+            .spacing(4)
+            .width(Length::FillPortion(1)),
+            column![
+                text(crate::tr!("symbols.watchdog", lang))
+                    .size(11)
+                    .color(StudioTheme::TEXT_SECONDARY),
+                text_input("100000", &project.manifest.watchdog_us.to_string())
+                    .on_input(|s| {
+                        if let Ok(us) = s.parse::<u64>() {
+                            Message::WatchdogUsChanged(us)
+                        } else {
+                            Message::None
+                        }
+                    })
+                    .padding([4, 8])
+                    .style(StudioTheme::styled_input),
+            ]
+            .spacing(4)
+            .width(Length::FillPortion(1)),
         ]
-        .spacing(8)
+        .spacing(12)
         .align_y(Alignment::Center),
     )
-    .padding(10)
+    .padding(12)
     .style(StudioTheme::card_style)
     .width(Length::Fill);
 
-    // 3. Global Symbolic Tags Table
+    // 3. Global Symbolic Tags Table - Proportionate FillPortion columns
     let mut tags_table = column![
         row![
             text(crate::tr!("symbols.col_name", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(150),
+                .width(Length::FillPortion(3)),
             text(crate::tr!("symbols.col_type", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(95),
+                .width(Length::FillPortion(2)),
             text(crate::tr!("symbols.col_addr", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(130),
+                .width(Length::FillPortion(2)),
             text(crate::tr!("symbols.col_init", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(100),
+                .width(Length::FillPortion(2)),
             text(crate::tr!("symbols.col_comment", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(Length::Fill),
+                .width(Length::FillPortion(4)),
             text(crate::tr!("symbols.col_action", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(55),
+                .width(Length::Shrink),
         ]
-        .spacing(10)
+        .spacing(12)
     ]
     .spacing(6);
 
@@ -174,8 +179,8 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
         let row_item = row![
             text_input("Tag_Name", &tag.name)
                 .on_input(move |s| Message::TagNameChanged(idx, s))
-                .width(150)
-                .padding([3, 6])
+                .width(Length::FillPortion(3))
+                .padding([4, 8])
                 .style(StudioTheme::styled_input),
             pick_list(
                 &[
@@ -189,29 +194,29 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                 Some(tag.data_type),
                 move |ty| Message::TagTypeChanged(idx, ty),
             )
-            .width(95)
+            .width(Length::FillPortion(2))
             .style(StudioTheme::styled_pick_list),
             text_input("%IX0.0", &addr_str)
                 .on_input(move |s| Message::TagAddressChanged(idx, s))
-                .width(130)
-                .padding([3, 6])
+                .width(Length::FillPortion(2))
+                .padding([4, 8])
                 .style(StudioTheme::styled_input),
             text_input("0", &init_val_str)
                 .on_input(move |s| Message::TagInitialValueChanged(idx, s))
-                .width(100)
-                .padding([3, 6])
+                .width(Length::FillPortion(2))
+                .padding([4, 8])
                 .style(StudioTheme::styled_input),
             text_input("Comment", &tag.comment)
                 .on_input(move |s| Message::TagCommentChanged(idx, s))
-                .width(Length::Fill)
-                .padding([3, 6])
+                .width(Length::FillPortion(4))
+                .padding([4, 8])
                 .style(StudioTheme::styled_input),
             button(text(crate::tr!("symbols.delete", lang)).size(11))
                 .on_press(Message::RemoveGlobalTag(idx))
                 .style(StudioTheme::danger_button)
-                .padding([3, 6]),
+                .padding([8, 16]),
         ]
-        .spacing(10)
+        .spacing(12)
         .align_y(Alignment::Center);
 
         tags_table = tags_table.push(row_item);
@@ -238,21 +243,21 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
             text(crate::tr!("symbols.col_name", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(150),
+                .width(Length::FillPortion(3)),
             text(crate::tr!("symbols.col_type", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(115),
+                .width(Length::FillPortion(2)),
             text(crate::tr!("symbols.col_params", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(Length::Fill),
+                .width(Length::FillPortion(6)),
             text(crate::tr!("symbols.col_action", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(55),
+                .width(Length::Shrink),
         ]
-        .spacing(10)
+        .spacing(12)
     ]
     .spacing(6);
 
@@ -272,8 +277,8 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                             Message::None
                         }
                     })
-                    .width(52)
-                    .padding([2, 5])
+                    .width(Length::FillPortion(1))
+                    .padding([3, 6])
                     .style(StudioTheme::styled_input),
                 text("Ti(s):").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("2.0", &ti_str)
@@ -284,8 +289,8 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                             Message::None
                         }
                     })
-                    .width(52)
-                    .padding([2, 5])
+                    .width(Length::FillPortion(1))
+                    .padding([3, 6])
                     .style(StudioTheme::styled_input),
                 text("Td(s):").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("0.5", &td_str)
@@ -296,8 +301,8 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                             Message::None
                         }
                     })
-                    .width(52)
-                    .padding([2, 5])
+                    .width(Length::FillPortion(1))
+                    .padding([3, 6])
                     .style(StudioTheme::styled_input),
                 container(
                     text(fb.kind.formula_hint())
@@ -326,8 +331,8 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                             Message::None
                         }
                     })
-                    .width(70)
-                    .padding([2, 5])
+                    .width(Length::FillPortion(1))
+                    .padding([3, 6])
                     .style(StudioTheme::styled_input),
                 text("PV:").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("10", &pv_str)
@@ -338,8 +343,8 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                             Message::None
                         }
                     })
-                    .width(50)
-                    .padding([2, 5])
+                    .width(Length::FillPortion(1))
+                    .padding([3, 6])
                     .style(StudioTheme::styled_input),
             ]
             .spacing(6)
@@ -350,21 +355,21 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
         let row_item = row![
             text_input("Timer_1", &fb.name)
                 .on_input(move |s| Message::FbNameChanged(idx, s))
-                .width(150)
-                .padding([3, 6])
+                .width(Length::FillPortion(3))
+                .padding([4, 8])
                 .style(StudioTheme::styled_input),
             pick_list(&ALL_FB_KINDS[..], Some(FbKindWrapper(fb.kind)), move |k| {
                 Message::FbKindChanged(idx, k.0)
             })
-            .width(115)
+            .width(Length::FillPortion(2))
             .style(StudioTheme::styled_pick_list),
-            param_view,
+            container(param_view).width(Length::FillPortion(6)),
             button(text(crate::tr!("symbols.delete", lang)).size(11))
                 .on_press(Message::RemoveFbInstance(idx))
                 .style(StudioTheme::danger_button)
-                .padding([3, 6]),
+                .padding([8, 16]),
         ]
-        .spacing(10)
+        .spacing(12)
         .align_y(Alignment::Center);
 
         fb_table = fb_table.push(row_item);

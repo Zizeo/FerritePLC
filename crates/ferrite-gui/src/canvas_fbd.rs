@@ -186,7 +186,7 @@ fn render_single_block_card<'a>(
                 let p = p_blk.clone();
                 move |s| Message::FbdBlockIdChanged(p.clone(), b_idx, s)
             })
-            .width(115)
+            .width(Length::FillPortion(1))
             .padding([2, 6])
             .style(StudioTheme::styled_input),
         container(text(op_desc).size(11).color(StudioTheme::TEXT_MUTED))
@@ -213,7 +213,7 @@ fn render_single_block_card<'a>(
             StandardFbKind::P,
         ];
         column![
-            row![
+            column![
                 text(lang.tr("Architecture:", "Architecture :"))
                     .size(10.5)
                     .color(StudioTheme::TEXT_MUTED),
@@ -222,21 +222,22 @@ fn render_single_block_card<'a>(
                     move |k| Message::FbdChangeCorrectorKind(p.clone(), b_idx, k)
                 })
                 .text_size(10.5)
-                .padding([2, 5]),
+                .padding([4, 8])
+                .width(Length::Fill),
             ]
-            .spacing(6)
-            .align_y(Alignment::Center),
+            .spacing(4),
             container(
                 text(cur_k.formula_hint())
                     .size(9.5)
-                    .color(StudioTheme::ACCENT_CYAN),
+                    .color(StudioTheme::ACCENT_CYAN)
+                    .wrapping(iced::widget::text::Wrapping::Word),
             )
-            .padding([2, 5])
+            .padding([3, 6])
             .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
                 0.220, 0.741, 0.973, 0.10,
             ))),
         ]
-        .spacing(3)
+        .spacing(6)
     });
 
     // Inputs Column
@@ -284,15 +285,14 @@ fn render_single_block_card<'a>(
                 in_dot,
                 text(display_pin)
                     .size(10.0)
-                    .color(StudioTheme::TEXT_SECONDARY)
-                    .width(if is_corrector { 58 } else { 36 }),
+                    .color(StudioTheme::TEXT_SECONDARY),
                 text_input("Source", &expr_str)
                     .on_input({
                         let p = p_blk.clone();
                         let pn = pin_n.clone();
                         move |s| Message::FbdInputSourceChanged(p.clone(), b_idx, pn.clone(), s)
                     })
-                    .width(if is_corrector { 72 } else { 100 })
+                    .width(Length::Fill)
                     .padding([2, 5])
                     .style(StudioTheme::styled_input),
                 container(iced::widget::Space::with_width(Length::Fixed(8.0)))
@@ -313,15 +313,15 @@ fn render_single_block_card<'a>(
     let center_box = container(
         column![
             text(op_symbol).size(18).color(StudioTheme::TEXT_PRIMARY),
-            text(op_desc).size(9.5).color(StudioTheme::TEXT_MUTED),
+            text(op_desc)
+                .size(9.5)
+                .color(StudioTheme::TEXT_MUTED)
+                .wrapping(iced::widget::text::Wrapping::Word),
         ]
         .spacing(2)
         .align_x(Alignment::Center),
     )
-    .width(Length::Fixed(58.0))
-    .height(Length::Fixed(52.0))
-    .center_x(Length::Fixed(58.0))
-    .center_y(Length::Fixed(52.0))
+    .padding([6, 10])
     .style(|_theme: &Theme| container::Style {
         background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
         border: Border {
@@ -374,15 +374,14 @@ fn render_single_block_card<'a>(
                     }),
                 text(display_pin)
                     .size(10.0)
-                    .color(StudioTheme::TEXT_SECONDARY)
-                    .width(if is_corrector { 58 } else { 30 }),
+                    .color(StudioTheme::TEXT_SECONDARY),
                 text_input("Target", target)
                     .on_input({
                         let p = p_blk.clone();
                         let pn = pin_n.clone();
                         move |s| Message::FbdOutputTargetChanged(p.clone(), b_idx, pn.clone(), s)
                     })
-                    .width(if is_corrector { 72 } else { 100 })
+                    .width(Length::Fill)
                     .padding([2, 5])
                     .style(StudioTheme::styled_input),
                 out_dot,
@@ -472,7 +471,6 @@ pub fn render_fbd_editor<'a>(
             program.name
         ))
         .size(18),
-        iced::widget::Space::with_width(Length::Fixed(16.0)),
         button(
             row![
                 text(crate::icons::icon_book())
@@ -485,14 +483,13 @@ pub fn render_fbd_editor<'a>(
         )
         .on_press(Message::OpenFbdLibraryWindow)
         .style(StudioTheme::secondary_button)
-        .padding([5, 12]),
-        iced::widget::Space::with_width(Length::Fixed(16.0)),
+        .padding([8, 16]),
         button(text(lang.tr("Clear POU", "Vider")).size(11))
             .on_press(Message::ConfirmClearPou(pou_name.clone()))
             .style(StudioTheme::danger_button)
-            .padding([4, 8]),
+            .padding([8, 16]),
     ]
-    .spacing(6)
+    .spacing(12)
     .align_y(Alignment::Center);
 
     let scrollable_header = scrollable(

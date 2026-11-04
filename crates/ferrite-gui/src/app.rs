@@ -6326,20 +6326,36 @@ impl FerriteStudioApp {
                         .color(StudioTheme::TEXT_SECONDARY)
                         .wrapping(iced::widget::text::Wrapping::Word),
                     row![
-                        button(text(crate::tr!("dialog.confirm_close.save_and_exit", self.ui_lang)).size(12))
-                            .on_press(Message::ConfirmCloseSaveAndExit)
-                            .style(StudioTheme::primary_button)
-                            .padding([6, 12]),
-                        button(text(crate::tr!("dialog.confirm_close.discard", self.ui_lang)).size(12))
-                            .on_press(Message::ConfirmCloseDiscardAndExit)
-                            .style(StudioTheme::danger_button)
-                            .padding([6, 12]),
-                        button(text(crate::tr!("dialog.confirm_close.cancel", self.ui_lang)).size(12))
-                            .on_press(Message::ConfirmCloseCancel)
-                            .style(StudioTheme::secondary_button)
-                            .padding([6, 12]),
+                        button(
+                            text(crate::tr!("dialog.confirm_close.save_and_exit", self.ui_lang))
+                                .size(12)
+                                .align_x(iced::alignment::Horizontal::Center)
+                        )
+                        .on_press(Message::ConfirmCloseSaveAndExit)
+                        .style(StudioTheme::primary_button)
+                        .width(Length::FillPortion(1))
+                        .padding([8, 16]),
+                        button(
+                            text(crate::tr!("dialog.confirm_close.discard", self.ui_lang))
+                                .size(12)
+                                .align_x(iced::alignment::Horizontal::Center)
+                        )
+                        .on_press(Message::ConfirmCloseDiscardAndExit)
+                        .style(StudioTheme::danger_button)
+                        .width(Length::FillPortion(1))
+                        .padding([8, 16]),
+                        button(
+                            text(crate::tr!("dialog.confirm_close.cancel", self.ui_lang))
+                                .size(12)
+                                .align_x(iced::alignment::Horizontal::Center)
+                        )
+                        .on_press(Message::ConfirmCloseCancel)
+                        .style(StudioTheme::secondary_button)
+                        .width(Length::FillPortion(1))
+                        .padding([8, 16]),
                     ]
                     .spacing(12)
+                    .width(Length::Fill)
                     .align_y(Alignment::Center),
                 ]
                 .spacing(16),
@@ -6404,16 +6420,27 @@ impl FerriteStudioApp {
                         .color(StudioTheme::TEXT_SECONDARY)
                         .wrapping(iced::widget::text::Wrapping::Word),
                     row![
-                        button(text(crate::tr!("dialog.sfc_delete.delete", self.ui_lang)).size(12))
-                            .on_press(Message::SfcConfirmDeleteSelected)
-                            .style(StudioTheme::danger_button)
-                            .padding([6, 12]),
-                        button(text(crate::tr!("dialog.sfc_delete.cancel", self.ui_lang)).size(12))
-                            .on_press(Message::SfcCancelDeleteSelected)
-                            .style(StudioTheme::secondary_button)
-                            .padding([6, 12]),
+                        button(
+                            text(crate::tr!("dialog.sfc_delete.delete", self.ui_lang))
+                                .size(12)
+                                .align_x(iced::alignment::Horizontal::Center)
+                        )
+                        .on_press(Message::SfcConfirmDeleteSelected)
+                        .style(StudioTheme::danger_button)
+                        .width(Length::FillPortion(1))
+                        .padding([8, 16]),
+                        button(
+                            text(crate::tr!("dialog.sfc_delete.cancel", self.ui_lang))
+                                .size(12)
+                                .align_x(iced::alignment::Horizontal::Center)
+                        )
+                        .on_press(Message::SfcCancelDeleteSelected)
+                        .style(StudioTheme::secondary_button)
+                        .width(Length::FillPortion(1))
+                        .padding([8, 16]),
                     ]
                     .spacing(12)
+                    .width(Length::Fill)
                     .align_y(Alignment::Center),
                 ]
                 .spacing(16),
@@ -6451,17 +6478,26 @@ impl FerriteStudioApp {
                         .wrapping(iced::widget::text::Wrapping::Word),
                     row![
                         button(
-                            text(crate::tr!("dialog.confirm_clear.confirm", self.ui_lang)).size(12)
+                            text(crate::tr!("dialog.confirm_clear.confirm", self.ui_lang))
+                                .size(12)
+                                .align_x(iced::alignment::Horizontal::Center)
                         )
                         .on_press(Message::ExecuteClearPou(p_name))
                         .style(StudioTheme::danger_button)
-                        .padding([6, 12]),
-                        button(text(crate::tr!("dialog.confirm_clear.cancel", self.ui_lang)).size(12))
-                            .on_press(Message::CancelClearPou)
-                            .style(StudioTheme::secondary_button)
-                            .padding([6, 12]),
+                        .width(Length::FillPortion(1))
+                        .padding([8, 16]),
+                        button(
+                            text(crate::tr!("dialog.confirm_clear.cancel", self.ui_lang))
+                                .size(12)
+                                .align_x(iced::alignment::Horizontal::Center)
+                        )
+                        .on_press(Message::CancelClearPou)
+                        .style(StudioTheme::secondary_button)
+                        .width(Length::FillPortion(1))
+                        .padding([8, 16]),
                     ]
                     .spacing(12)
+                    .width(Length::Fill)
                     .align_y(Alignment::Center),
                 ]
                 .spacing(16),
@@ -6606,28 +6642,28 @@ impl FerriteStudioApp {
         } else {
             StudioTheme::primary_button
         })
-        .padding([6, 12]);
+        .padding([8, 16]);
 
         let step_btn = button(text(crate::tr!("toolbar.step", self.ui_lang)).size(12))
             .on_press(Message::StepSimTick)
             .style(StudioTheme::secondary_button)
-            .padding([6, 12]);
+            .padding([8, 16]);
 
         let reset_warm_btn =
             button(text(crate::tr!("toolbar.reset_warm", self.ui_lang)).size(12))
                 .on_press(Message::ResetSimWarm)
                 .style(StudioTheme::secondary_button)
-                .padding([6, 10]);
+                .padding([8, 16]);
 
         let reset_cold_btn =
             button(text(crate::tr!("toolbar.reset_cold", self.ui_lang)).size(12))
                 .on_press(Message::ResetSimCold)
                 .style(StudioTheme::ghost_button)
-                .padding([6, 10]);
+                .padding([8, 16]);
 
-        let speed_group = row![
+        let speed_group = column![
             text(crate::tr!("toolbar.speed", self.ui_lang))
-                .size(11)
+                .size(10.5)
                 .color(StudioTheme::TEXT_MUTED),
             pick_list(
                 &SimSpeed::ALL[..],
@@ -6635,16 +6671,15 @@ impl FerriteStudioApp {
                 Message::SetSimSpeed,
             )
             .style(StudioTheme::styled_pick_list)
-            .padding([3, 6])
-            .width(68),
+            .padding([3, 6]),
         ]
-        .spacing(4)
-        .align_y(Alignment::Center);
+        .spacing(2)
+        .align_x(Alignment::Start);
 
         let check_btn = button(text(crate::tr!("toolbar.check", self.ui_lang)).size(12))
             .on_press(Message::CheckProject)
             .style(StudioTheme::secondary_button)
-            .padding([6, 12]);
+            .padding([8, 16]);
 
         let undo_btn = button(text("< Undo").size(11))
             .on_press_maybe(if self.can_undo() {
@@ -6653,7 +6688,7 @@ impl FerriteStudioApp {
                 None
             })
             .style(StudioTheme::ghost_button)
-            .padding([6, 10]);
+            .padding([8, 14]);
 
         let redo_btn = button(text("Redo >").size(11))
             .on_press_maybe(if self.can_redo() {
@@ -6662,12 +6697,12 @@ impl FerriteStudioApp {
                 None
             })
             .style(StudioTheme::ghost_button)
-            .padding([6, 10]);
+            .padding([8, 14]);
 
         let scenarios_btn = button(text(crate::tr!("toolbar.scenarios", self.ui_lang)).size(12))
             .on_press(Message::RunScenarios)
             .style(StudioTheme::secondary_button)
-            .padding([6, 12]);
+            .padding([8, 16]);
 
         let lang_btn = button(text(self.ui_lang.code()).size(11))
             .on_press(Message::SetLanguage(match self.ui_lang {
@@ -6978,6 +7013,12 @@ impl FerriteStudioApp {
                     .on_release(Message::PouDragDropped)
                     .on_right_press(Message::OpenPouContextMenu(p_ctx));
 
+                let tooltip_item = iced::widget::tooltip(
+                    pou_item,
+                    text(p.name.clone()).size(11),
+                    iced::widget::tooltip::Position::Right,
+                );
+
                 if self.pou_context_menu.as_deref() == Some(&p.name) {
                     let p_save = p.name.clone();
                     let p_ren = p.name.clone();
@@ -6995,7 +7036,7 @@ impl FerriteStudioApp {
                             .on_press(Message::SavePou(p_save))
                             .style(StudioTheme::ghost_button)
                             .width(Length::Fill)
-                            .padding([3, 6]),
+                            .padding([4, 8]),
                             button(
                                 row![
                                     text(self.ui_lang.tr("Rename", "Renommer")).size(11),
@@ -7006,7 +7047,7 @@ impl FerriteStudioApp {
                             .on_press(Message::StartRenamePou(p_ren))
                             .style(StudioTheme::ghost_button)
                             .width(Length::Fill)
-                            .padding([3, 6]),
+                            .padding([4, 8]),
                             button(
                                 row![
                                     text(self.ui_lang.tr("Delete", "Supprimer")).size(11),
@@ -7017,11 +7058,11 @@ impl FerriteStudioApp {
                             .on_press(Message::DeletePou(p_del))
                             .style(StudioTheme::danger_button)
                             .width(Length::Fill)
-                            .padding([3, 6]),
+                            .padding([4, 8]),
                         ]
-                        .spacing(2),
+                        .spacing(4),
                     )
-                    .padding(4)
+                    .padding(6)
                     .width(Length::Fill)
                     .style(move |_| container::Style {
                         background: Some(Background::Color(StudioTheme::BG_SURFACE)),
@@ -7033,9 +7074,9 @@ impl FerriteStudioApp {
                         ..Default::default()
                     });
 
-                    pou_list = pou_list.push(column![pou_item, ctx_card].spacing(2));
+                    pou_list = pou_list.push(column![tooltip_item, ctx_card].spacing(4));
                 } else {
-                    pou_list = pou_list.push(pou_item);
+                    pou_list = pou_list.push(tooltip_item);
                 }
             }
         }
@@ -7057,12 +7098,11 @@ impl FerriteStudioApp {
                 Some(self.new_pou_lang),
                 Message::NewPouLangSelected,
             )
-            .width(75)
             .style(StudioTheme::styled_pick_list),
             button(text("+").size(13))
                 .on_press(Message::AddPouClicked)
                 .style(StudioTheme::primary_button)
-                .padding([4, 8]),
+                .padding([6, 12]),
         ]
         .spacing(6)
         .align_y(Alignment::Center);
@@ -7216,18 +7256,17 @@ impl FerriteStudioApp {
         ]
         .spacing(4);
 
-        let analog_force_row = row![
+        let analog_force_row = column![
             text(self.ui_lang.tr("Force val:", "Val forçage :"))
                 .size(10.5)
                 .color(StudioTheme::TEXT_MUTED),
             text_input("e.g. 85.0", &self.force_analog_input)
                 .on_input(Message::SetForceAnalogInput)
                 .width(Length::Fill)
-                .padding(3)
+                .padding([4, 8])
                 .style(StudioTheme::styled_input),
         ]
-        .spacing(6)
-        .align_y(Alignment::Center);
+        .spacing(4);
 
         let mut tags_list = column![].spacing(4);
 
@@ -7474,7 +7513,7 @@ impl FerriteStudioApp {
         )
         .style(StudioTheme::header_container_style)
         .width(Length::Fill)
-        .height(180)
+        .height(Length::Shrink)
         .into()
     }
 
@@ -7645,14 +7684,14 @@ impl FerriteStudioApp {
                     )
                     .on_press(Message::SetBpTypeScan(!self.bp_type_scan))
                     .style(StudioTheme::secondary_button)
-                    .padding([3, 6]),
+                    .padding([6, 12]),
                     text_input(
                         if self.bp_type_scan { "100" } else { "EStop_OK" },
                         &self.bp_input_val,
                     )
                     .on_input(Message::SetBpInputVal)
-                    .width(110)
-                    .padding(3)
+                    .width(Length::Fill)
+                    .padding([4, 6])
                     .style(StudioTheme::styled_input),
                     button(text(self.ui_lang.tr("+ Add", "+ Ajouter")).size(10.5))
                         .on_press_maybe({
@@ -7672,9 +7711,9 @@ impl FerriteStudioApp {
                             }
                         })
                         .style(StudioTheme::primary_button)
-                        .padding([3, 6]),
+                        .padding([6, 12]),
                 ]
-                .spacing(6)
+                .spacing(8)
                 .align_y(Alignment::Center);
 
                 row![

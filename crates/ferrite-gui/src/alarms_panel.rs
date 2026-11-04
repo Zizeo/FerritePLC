@@ -84,26 +84,29 @@ pub fn render_alarms_panel<'a>(
             text("Severity")
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(50),
-            text("ID").size(11).color(StudioTheme::TEXT_MUTED).width(90),
+                .width(Length::FillPortion(1)),
+            text("ID")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(Length::FillPortion(2)),
             text("Tag")
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(110),
+                .width(Length::FillPortion(2)),
             text("State")
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(70),
+                .width(Length::FillPortion(1)),
             text("Message")
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(Length::Fill),
+                .width(Length::FillPortion(4)),
             text("Action")
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(60),
+                .width(Length::Shrink),
         ]
-        .spacing(8)
+        .spacing(12)
     ]
     .spacing(6);
 
@@ -127,23 +130,24 @@ pub fn render_alarms_panel<'a>(
             button(text("ACK").size(10))
                 .on_press(Message::AcknowledgeAlarm(alarm.definition.id.clone()))
                 .style(StudioTheme::secondary_button)
-                .padding([2, 8])
+                .padding([8, 16])
                 .into()
         } else {
             text("-").size(12).color(StudioTheme::TEXT_MUTED).into()
         };
 
         let item_row = row![
-            text(sev_txt).size(11).color(sev_color).width(50),
-            text(alarm.definition.id.clone()).size(11).width(90),
-            text(alarm.definition.tag.clone()).size(11).width(110),
-            text(state_txt).size(11).width(70),
+            text(sev_txt).size(11).color(sev_color).width(Length::FillPortion(1)),
+            text(alarm.definition.id.clone()).size(11).width(Length::FillPortion(2)),
+            text(alarm.definition.tag.clone()).size(11).width(Length::FillPortion(2)),
+            text(state_txt).size(11).width(Length::FillPortion(1)),
             text(alarm.definition.message.clone())
                 .size(11)
-                .width(Length::Fill),
+                .width(Length::FillPortion(4))
+                .wrapping(iced::widget::text::Wrapping::Word),
             ack_btn,
         ]
-        .spacing(8)
+        .spacing(12)
         .align_y(Alignment::Center);
 
         active_list = active_list.push(item_row);
@@ -177,22 +181,25 @@ pub fn render_alarms_panel<'a>(
             text("Time")
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(70),
+                .width(Length::FillPortion(2)),
             text("Severity")
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(50),
-            text("ID").size(11).color(StudioTheme::TEXT_MUTED).width(80),
+                .width(Length::FillPortion(1)),
+            text("ID")
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED)
+                .width(Length::FillPortion(2)),
             text("State")
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(80),
+                .width(Length::FillPortion(2)),
             text("Event")
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(Length::Fill),
+                .width(Length::FillPortion(4)),
         ]
-        .spacing(8)
+        .spacing(12)
     ]
     .spacing(6);
 
@@ -214,13 +221,16 @@ pub fn render_alarms_panel<'a>(
             let row_item = row![
                 text(format!("T+{}ms", record.timestamp_ms))
                     .size(11)
-                    .width(70),
-                text(sev_txt).size(11).color(sev_color).width(50),
-                text(record.alarm_id.clone()).size(11).width(80),
-                text(format!("{:?}", record.state)).size(11).width(80),
-                text(record.message.clone()).size(11).width(Length::Fill),
+                    .width(Length::FillPortion(2)),
+                text(sev_txt).size(11).color(sev_color).width(Length::FillPortion(1)),
+                text(record.alarm_id.clone()).size(11).width(Length::FillPortion(2)),
+                text(format!("{:?}", record.state)).size(11).width(Length::FillPortion(2)),
+                text(record.message.clone())
+                    .size(11)
+                    .width(Length::FillPortion(4))
+                    .wrapping(iced::widget::text::Wrapping::Word),
             ]
-            .spacing(8)
+            .spacing(12)
             .align_y(Alignment::Center);
 
             journal_list = journal_list.push(row_item);

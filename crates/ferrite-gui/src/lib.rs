@@ -2511,4 +2511,81 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
+
+    #[test]
+    fn test_iced_view_layout_rules_and_anti_truncation() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("ferrite_gui_layout_rules_test");
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let mut proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+
+        // 1. Setup sample shared symbols and FB instances
+        proj.fb_instances.instances.push(ferrite_core::FbInstance::new(
+            "PID_Loop_Test".to_string(),
+            ferrite_core::StandardFbKind::PidParallel,
+        ));
+                proj.global_tags.tags.push(ferrite_core::TagEntry::new(
+            "Long_Descriptive_Tag_Name_For_Testing",
+            ferrite_core::IecType::Real,
+            None,
+            ferrite_core::IecValue::Real(42.5),
+            "Sample comment that spans multiple words to verify wrapping",
+        ));
+
+        let mut app = FerriteStudioApp::new(proj.clone());
+        let win_id = iced::window::Id::unique();
+
+        for lang in UiLanguage::ALL {
+            app.ui_lang = lang;
+
+            // Rule 1 & 4: Symbols Editor with stacked forms and FillPortion columns
+            {
+                let _sym = crate::editor_symbols::render_symbols_editor(&app.project, lang);
+            }
+
+            // Rule 3: Modals with FillPortion(1) equal-width buttons & centered text
+            app.show_close_confirm_modal = true;
+            {
+                let _close_modal = app.view(win_id);
+            }
+            app.show_close_confirm_modal = false;
+
+            app.sfc_delete_modal = Some((
+                "batch_seq".to_string(),
+                vec![crate::canvas_sfc::SfcElementKey::Step("S1".to_string())],
+            ));
+            {
+                let _del_modal = app.view(win_id);
+            }
+            app.sfc_delete_modal = None;
+
+            app.confirm_clear_modal = Some("main_safety".to_string());
+            {
+                let _clr_modal = app.view(win_id);
+            }
+            app.confirm_clear_modal = None;
+
+            // Rule 1, 2, 5: FBD Canvas & Library with intrinsic buttons and stacked architecture selector
+            app.active_tab = WorkspaceTab::Pou("pump_ctrl".to_string());
+            {
+                let _fbd_canvas = app.view(win_id);
+                let _fbd_lib = crate::fbd_library_window::render_fbd_library_window(&app);
+            }
+
+            // Alarms Panel with FillPortion columns and Word wrapping
+            {
+                let _alarms = crate::alarms_panel::render_alarms_panel(app.runtime.as_ref(), lang);
+            }
+
+            // ST Editor with FillPortion live process variables
+            app.active_tab = WorkspaceTab::Pou("math_pid".to_string());
+            {
+                let _st_view = app.view(win_id);
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }

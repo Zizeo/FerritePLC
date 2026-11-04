@@ -351,7 +351,7 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
         } else {
             StudioTheme::primary_button
         })
-        .padding([4, 10]),
+        .padding([8, 16]),
         container(
             text(target_caption)
                 .size(11)
@@ -374,7 +374,7 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
         .style(StudioTheme::ghost_button)
         .padding([4, 8]),
     ]
-    .spacing(8)
+    .spacing(12)
     .align_y(Alignment::Center);
 
     let search_input = text_input(
@@ -430,11 +430,11 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
                 button(text(lang.tr("+ Add", "+ Ajouter")).size(11))
                     .on_press(Message::AddCustomFbdToCanvas((*item).clone()))
                     .style(StudioTheme::primary_button)
-                    .padding([4, 10])
+                    .padding([8, 16])
             } else {
                 button(text(lang.tr("+ Add", "+ Ajouter")).size(11))
                     .style(StudioTheme::ghost_button)
-                    .padding([4, 10])
+                    .padding([8, 16])
             };
 
             let pin_sig = format!("{} -> {}", item.input_pins.join(", "), item.output_pins.join(", "));
@@ -471,7 +471,7 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
                         button(text(lang.tr("Edit", "Modifier")).size(11))
                             .on_press(Message::EditCustomFbdBlock(item.name.clone()))
                             .style(StudioTheme::secondary_button)
-                            .padding([4, 8]),
+                            .padding([8, 16]),
                         button(
                             text(crate::icons::icon_close())
                                 .size(10)
@@ -554,11 +554,11 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
                 button(text(lang.tr("+ Add", "+ Ajouter")).size(11))
                     .on_press(Message::FbdAddBlock(target_pou.clone(), kind))
                     .style(StudioTheme::primary_button)
-                    .padding([4, 10])
+                    .padding([8, 16])
             } else {
                 button(text(lang.tr("+ Add", "+ Ajouter")).size(11))
                     .style(StudioTheme::ghost_button)
-                    .padding([4, 10])
+                    .padding([8, 16])
             };
 
             let card = container(
@@ -712,13 +712,13 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
             button(text(lang.tr("Cancel", "Annuler")).size(11))
                 .on_press(Message::ToggleCustomFbdBuilder)
                 .style(StudioTheme::ghost_button)
-                .padding([4, 10]),
+                .padding([8, 16]),
             button(text(lang.tr("Save Block", "Enregistrer le bloc")).size(11))
                 .on_press(Message::SaveCustomFbdBlock)
                 .style(StudioTheme::primary_button)
-                .padding([4, 12]),
+                .padding([8, 16]),
         ]
-        .spacing(8)
+        .spacing(12)
         .align_y(Alignment::Center);
 
         Some(

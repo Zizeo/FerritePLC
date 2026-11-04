@@ -1631,10 +1631,9 @@ pub fn render_ld_editor<'a>(
         let multi_row = row![
             count_label,
             delete_btn,
-            iced::widget::Space::with_width(Length::Fixed(12.0)),
             deselect_btn,
         ]
-        .spacing(10)
+        .spacing(12)
         .align_y(Alignment::Center);
 
         let scrollable_multi = scrollable(
@@ -1731,7 +1730,6 @@ pub fn render_ld_editor<'a>(
 
         let toolbar_row = row![
             title,
-            iced::widget::Space::with_width(Length::Fixed(12.0)),
             add_rung_btn,
             add_no_btn,
             add_nc_btn,
@@ -1739,10 +1737,9 @@ pub fn render_ld_editor<'a>(
             add_n_btn,
             add_coil_btn,
             add_branch_btn,
-            iced::widget::Space::with_width(Length::Fixed(12.0)),
             clear_btn,
         ]
-        .spacing(6)
+        .spacing(12)
         .align_y(Alignment::Center);
 
         let scrollable_toolbar = scrollable(

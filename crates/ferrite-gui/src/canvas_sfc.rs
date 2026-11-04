@@ -4,7 +4,7 @@ use iced::border::Radius;
 use iced::mouse;
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, event};
 use iced::widget::{
-    Space, button, column, container, pick_list, row, scrollable, text, text_input,
+    button, column, container, pick_list, row, scrollable, text, text_input,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Point, Rectangle, Renderer,
@@ -2627,10 +2627,9 @@ pub fn render_sfc_editor<'a>(
             or_conv_btn,
             and_div_btn,
             or_div_btn,
-            Space::with_width(Length::Fixed(12.0)),
             deselect_btn
         ]
-        .spacing(10)
+        .spacing(12)
         .align_y(Alignment::Center);
 
         let scrollable_multi = scrollable(

@@ -56,7 +56,7 @@ pub fn render_st_editor<'a>(
         button(text(lang.tr("Clear POU", "Vider le POU")).size(12))
             .on_press(Message::ConfirmClearPou(pou_name.clone()))
             .style(StudioTheme::danger_button)
-            .padding([6, 12]),
+            .padding([8, 16]),
     ]
     .spacing(12)
     .align_y(Alignment::Center);
@@ -92,15 +92,15 @@ pub fn render_st_editor<'a>(
                     .unwrap_or_else(|_| "-".to_string());
 
                 let tag_row = row![
-                    text(&tag.name).size(12).width(160),
+                    text(&tag.name).size(12).width(Length::FillPortion(2)),
                     text(tag.data_type.to_string())
                         .size(12)
                         .color(StudioTheme::TEXT_MUTED)
-                        .width(90),
+                        .width(Length::FillPortion(1)),
                     text(val_str)
                         .size(12)
                         .color(StudioTheme::ACCENT_CYAN)
-                        .width(120),
+                        .width(Length::FillPortion(2)),
                 ]
                 .spacing(12)
                 .align_y(Alignment::Center);
