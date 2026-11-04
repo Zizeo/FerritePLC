@@ -22,6 +22,7 @@ pub fn render_st_editor<'a>(
             let msg = match lang {
                 UiLanguage::En => format!("Syntax OK ({} statement(s))", stmts.len()),
                 UiLanguage::Fr => format!("Syntaxe OK ({} instruction(s))", stmts.len()),
+                UiLanguage::Pseudo => crate::i18n::pseudolocalize(&format!("Syntax OK ({} statement(s))", stmts.len())),
             };
             container(text(msg).size(12).color(StudioTheme::ACCENT_EMERALD))
                 .padding([4, 10])

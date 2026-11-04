@@ -6597,6 +6597,7 @@ impl FerriteStudioApp {
             .on_press(Message::SetLanguage(match self.ui_lang {
                 UiLanguage::En => UiLanguage::Fr,
                 UiLanguage::Fr => UiLanguage::En,
+                UiLanguage::Pseudo => UiLanguage::En,
             }))
             .style(StudioTheme::ghost_button)
             .padding([6, 10]);

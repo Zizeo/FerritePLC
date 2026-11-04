@@ -1,3 +1,4 @@
+rust_i18n::i18n!("locales");
 pub mod alarms_panel;
 pub mod app;
 pub mod canvas_fbd;
