@@ -55,6 +55,8 @@ iced = { version = "0.13", features = ["canvas", "tokio", "multi-window", "advan
 rfd = "0.15"
 quick-xml = { version = "0.37", features = ["serialize"] }
 winresource = "0.1"
+rust-i18n = "4.2"
+sys-locale = "0.3"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
