@@ -1,7 +1,7 @@
 use ferrite_core::{
     ExecutablePou, IecType, IecValue, LanguageKind, PouId, RuntimeError, ScanContext, TagTable,
 };
-use ferrite_ir::{IrError, SymbolResolver};
+use ferrite_ir::{IrBinaryOp, IrError, SymbolResolver, eval_binary_op, types_compatible};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -36,10 +36,110 @@ pub enum ContactKind {
 pub enum CoilKind {
     #[serde(alias = "normal", alias = "out")]
     Normal,
+    #[serde(alias = "negated", alias = "not", alias = "/")]
+    Negated,
     #[serde(alias = "S", alias = "set", alias = "latch")]
     Set,
     #[serde(alias = "R", alias = "reset", alias = "unlatch")]
     Reset,
+    #[serde(alias = "P", alias = "rising_edge", alias = "RISING")]
+    RisingEdge,
+    #[serde(alias = "N", alias = "falling_edge", alias = "FALLING")]
+    FallingEdge,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum LdCompareOp {
+    Eq,
+    Ne,
+    Gt,
+    Ge,
+    Lt,
+    Le,
+}
+
+impl LdCompareOp {
+    pub const ALL: [Self; 6] = [Self::Eq, Self::Ne, Self::Gt, Self::Ge, Self::Lt, Self::Le];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Eq => "EQ (==)",
+            Self::Ne => "NE (<>)",
+            Self::Gt => "GT (>)",
+            Self::Ge => "GE (>=)",
+            Self::Lt => "LT (<)",
+            Self::Le => "LE (<=)",
+        }
+    }
+
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::Eq => "EQ",
+            Self::Ne => "NE",
+            Self::Gt => "GT",
+            Self::Ge => "GE",
+            Self::Lt => "LT",
+            Self::Le => "LE",
+        }
+    }
+
+    pub fn to_ir_op(self) -> IrBinaryOp {
+        match self {
+            Self::Eq => IrBinaryOp::Eq,
+            Self::Ne => IrBinaryOp::Ne,
+            Self::Gt => IrBinaryOp::Gt,
+            Self::Ge => IrBinaryOp::Ge,
+            Self::Lt => IrBinaryOp::Lt,
+            Self::Le => IrBinaryOp::Le,
+        }
+    }
+}
+
+impl std::fmt::Display for LdCompareOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum LdMathOp {
+    Move,
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+impl LdMathOp {
+    pub const ALL: [Self; 5] = [Self::Move, Self::Add, Self::Sub, Self::Mul, Self::Div];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Move => "MOVE",
+            Self::Add => "ADD (+)",
+            Self::Sub => "SUB (-)",
+            Self::Mul => "MUL (*)",
+            Self::Div => "DIV (/)",
+        }
+    }
+
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::Move => "MOVE",
+            Self::Add => "ADD",
+            Self::Sub => "SUB",
+            Self::Mul => "MUL",
+            Self::Div => "DIV",
+        }
+    }
+}
+
+impl std::fmt::Display for LdMathOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +160,18 @@ pub enum LdElement {
         inputs: Vec<(String, String)>,
         #[serde(default)]
         outputs: Vec<(String, String)>,
+    },
+    Compare {
+        op: LdCompareOp,
+        left: String,
+        right: String,
+    },
+    MathMove {
+        op: LdMathOp,
+        input1: String,
+        #[serde(default)]
+        input2: Option<String>,
+        dest: String,
     },
 }
 
@@ -207,6 +319,80 @@ impl LdProgram {
                 }
                 Ok(())
             }
+            LdElement::Compare { left, right, .. } => {
+                for operand in [left, right] {
+                    if IecValue::parse_literal(operand, None).is_err() {
+                        let _ = SymbolResolver::validate_readable_symbol(tags, operand, &self.name)
+                            .map_err(|source| LdError::Ir {
+                                pou: self.name.clone(),
+                                source,
+                            })?;
+                    }
+                }
+                Ok(())
+            }
+            LdElement::MathMove {
+                op,
+                input1,
+                input2,
+                dest,
+            } => {
+                let dest_ty = SymbolResolver::validate_writable_symbol(tags, dest, &self.name, false)
+                    .map_err(|source| LdError::Ir {
+                        pou: self.name.clone(),
+                        source,
+                    })?;
+                let in1_ty = if let Ok(v) = IecValue::parse_literal(input1, Some(dest_ty)) {
+                    v.iec_type()
+                } else if let Ok(v) = IecValue::parse_literal(input1, None) {
+                    v.iec_type()
+                } else {
+                    SymbolResolver::validate_readable_symbol(tags, input1, &self.name).map_err(
+                        |source| LdError::Ir {
+                            pou: self.name.clone(),
+                            source,
+                        },
+                    )?
+                };
+                if !types_compatible(dest_ty, in1_ty) {
+                    return Err(LdError::Ir {
+                        pou: self.name.clone(),
+                        source: IrError::TypeMismatch {
+                            pou: self.name.clone(),
+                            expected: dest_ty,
+                            actual: in1_ty,
+                            context: format!("{} input1 -> '{dest}'", op.short_label()),
+                        },
+                    });
+                }
+                if *op != LdMathOp::Move {
+                    let raw2 = input2.as_deref().unwrap_or("0");
+                    let in2_ty = if let Ok(v) = IecValue::parse_literal(raw2, Some(dest_ty)) {
+                        v.iec_type()
+                    } else if let Ok(v) = IecValue::parse_literal(raw2, None) {
+                        v.iec_type()
+                    } else {
+                        SymbolResolver::validate_readable_symbol(tags, raw2, &self.name).map_err(
+                            |source| LdError::Ir {
+                                pou: self.name.clone(),
+                                source,
+                            },
+                        )?
+                    };
+                    if !types_compatible(dest_ty, in2_ty) {
+                        return Err(LdError::Ir {
+                            pou: self.name.clone(),
+                            source: IrError::TypeMismatch {
+                                pou: self.name.clone(),
+                                expected: dest_ty,
+                                actual: in2_ty,
+                                context: format!("{} input2 -> '{dest}'", op.short_label()),
+                            },
+                        });
+                    }
+                }
+                Ok(())
+            }
         }
     }
 
@@ -222,7 +408,25 @@ impl LdProgram {
                     .iter()
                     .map(|e| Self::compile_element(e, tags, &mut edge_count))
                     .collect(),
-                coils: r.coils.clone(),
+                coils: r
+                    .coils
+                    .iter()
+                    .map(|c| {
+                        let edge_idx = match c.kind {
+                            CoilKind::RisingEdge | CoilKind::FallingEdge => {
+                                let idx = edge_count;
+                                edge_count += 1;
+                                Some(idx)
+                            }
+                            _ => None,
+                        };
+                        CompiledCoil {
+                            symbol: c.symbol.clone(),
+                            kind: c.kind,
+                            edge_idx,
+                        }
+                    })
+                    .collect(),
             })
             .collect();
         Ok(CompiledLdPou {
@@ -230,6 +434,16 @@ impl LdProgram {
             rungs,
             edge_states: vec![false; edge_count],
         })
+    }
+
+    fn compile_binding(raw: &str, hint: Option<IecType>) -> FbInputBinding {
+        if let Ok(val) = IecValue::parse_literal(raw, hint) {
+            FbInputBinding::Literal(val)
+        } else if let Ok(val) = IecValue::parse_literal(raw, None) {
+            FbInputBinding::Literal(val)
+        } else {
+            FbInputBinding::Symbol(raw.trim().to_string())
+        }
     }
 
     fn compile_element(
@@ -274,11 +488,7 @@ impl LdProgram {
                     .iter()
                     .map(|(pin, raw)| {
                         let pty = fb_kind.and_then(|k| k.pin_type(pin));
-                        let bound = match IecValue::parse_literal(raw, pty) {
-                            Ok(val) => FbInputBinding::Literal(val),
-                            Err(_) => FbInputBinding::Symbol(raw.clone()),
-                        };
-                        (pin.clone(), bound)
+                        (pin.clone(), Self::compile_binding(raw, pty))
                     })
                     .collect();
                 CompiledElement::InlineFb {
@@ -286,6 +496,30 @@ impl LdProgram {
                     enable_pin: enable_pin.clone(),
                     inputs: compiled_inputs,
                     outputs: outputs.clone(),
+                }
+            }
+            LdElement::Compare { op, left, right } => CompiledElement::Compare {
+                op: *op,
+                left: Self::compile_binding(left, None),
+                right: Self::compile_binding(right, None),
+            },
+            LdElement::MathMove {
+                op,
+                input1,
+                input2,
+                dest,
+            } => {
+                let dest_ty = tags.symbol_type(dest).ok();
+                let in1 = Self::compile_binding(input1, dest_ty);
+                let in2 = input2
+                    .as_deref()
+                    .map(|s| Self::compile_binding(s, dest_ty));
+                CompiledElement::MathMove {
+                    op: *op,
+                    input1: in1,
+                    input2: in2,
+                    dest: dest.clone(),
+                    dest_ty,
                 }
             }
         }
@@ -296,6 +530,15 @@ impl LdProgram {
 enum FbInputBinding {
     Literal(IecValue),
     Symbol(String),
+}
+
+impl FbInputBinding {
+    fn resolve(&self, ctx: &ScanContext<'_>) -> Result<IecValue, RuntimeError> {
+        match self {
+            Self::Literal(v) => Ok(v.clone()),
+            Self::Symbol(sym) => ctx.read_symbol(sym),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -314,12 +557,31 @@ enum CompiledElement {
         inputs: Vec<(String, FbInputBinding)>,
         outputs: Vec<(String, String)>,
     },
+    Compare {
+        op: LdCompareOp,
+        left: FbInputBinding,
+        right: FbInputBinding,
+    },
+    MathMove {
+        op: LdMathOp,
+        input1: FbInputBinding,
+        input2: Option<FbInputBinding>,
+        dest: String,
+        dest_ty: Option<IecType>,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct CompiledCoil {
+    symbol: String,
+    kind: CoilKind,
+    edge_idx: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
 struct CompiledRung {
     elements: Vec<CompiledElement>,
-    coils: Vec<LdCoil>,
+    coils: Vec<CompiledCoil>,
 }
 
 /// Pre-allocated, real-time safe Ladder Diagram executable POU.
@@ -335,10 +597,11 @@ impl CompiledLdPou {
         elements: &[CompiledElement],
         mut power: bool,
         edge_states: &mut [bool],
+        pou_name: &str,
         ctx: &mut ScanContext<'_>,
     ) -> Result<bool, RuntimeError> {
         for elem in elements {
-            power = Self::eval_element(elem, power, edge_states, ctx)?;
+            power = Self::eval_element(elem, power, edge_states, pou_name, ctx)?;
         }
         Ok(power)
     }
@@ -347,6 +610,7 @@ impl CompiledLdPou {
         elem: &CompiledElement,
         power_in: bool,
         edge_states: &mut [bool],
+        pou_name: &str,
         ctx: &mut ScanContext<'_>,
     ) -> Result<bool, RuntimeError> {
         match elem {
@@ -377,7 +641,7 @@ impl CompiledLdPou {
             CompiledElement::Branch { paths } => {
                 let mut any_active = false;
                 for path in paths {
-                    let path_out = Self::eval_elements(path, power_in, edge_states, ctx)?;
+                    let path_out = Self::eval_elements(path, power_in, edge_states, pou_name, ctx)?;
                     if path_out {
                         any_active = true;
                     }
@@ -395,10 +659,7 @@ impl CompiledLdPou {
                     let _ = fb.write_pin(en_pin, &IecValue::Bool(power_in));
                 }
                 for (pin, binding) in inputs {
-                    let val = match binding {
-                        FbInputBinding::Literal(v) => v.clone(),
-                        FbInputBinding::Symbol(sym) => ctx.read_symbol(sym)?,
-                    };
+                    let val = binding.resolve(ctx)?;
                     if let Some(fb) = ctx.tags.get_fb_mut(instance) {
                         fb.write_pin(pin, &val)?;
                     }
@@ -417,6 +678,52 @@ impl CompiledLdPou {
                 };
                 Ok(q_out)
             }
+            CompiledElement::Compare { op, left, right } => {
+                if !power_in {
+                    return Ok(false);
+                }
+                let lv = left.resolve(ctx)?;
+                let rv = right.resolve(ctx)?;
+                let res = eval_binary_op(op.to_ir_op(), &lv, &rv, pou_name)?.as_bool()?;
+                Ok(res)
+            }
+            CompiledElement::MathMove {
+                op,
+                input1,
+                input2,
+                dest,
+                dest_ty,
+            } => {
+                if !power_in {
+                    return Ok(false);
+                }
+                let v1 = input1.resolve(ctx)?;
+                let raw_result = match op {
+                    LdMathOp::Move => v1,
+                    LdMathOp::Add | LdMathOp::Sub | LdMathOp::Mul | LdMathOp::Div => {
+                        let v2 = match input2 {
+                            Some(b) => b.resolve(ctx)?,
+                            None => IecValue::Int(0),
+                        };
+                        let bin_op = match op {
+                            LdMathOp::Add => IrBinaryOp::Add,
+                            LdMathOp::Sub => IrBinaryOp::Sub,
+                            LdMathOp::Mul => IrBinaryOp::Mul,
+                            _ => IrBinaryOp::Div,
+                        };
+                        eval_binary_op(bin_op, &v1, &v2, pou_name)?
+                    }
+                };
+                let coerced = match dest_ty {
+                    Some(IecType::Int) => IecValue::Int(raw_result.as_int()?),
+                    Some(IecType::Dint) => IecValue::Dint(raw_result.as_dint()?),
+                    Some(IecType::Real) => IecValue::Real(raw_result.as_real()?),
+                    Some(IecType::Time) => IecValue::Time(raw_result.as_time_ms()?),
+                    _ => raw_result,
+                };
+                ctx.write_symbol(dest, coerced)?;
+                Ok(true)
+            }
         }
     }
 }
@@ -431,12 +738,17 @@ impl ExecutablePou for CompiledLdPou {
     }
 
     fn execute(&mut self, ctx: &mut ScanContext<'_>) -> Result<(), RuntimeError> {
+        let pou_name = self.id.as_str();
         for rung in &self.rungs {
-            let power = Self::eval_elements(&rung.elements, true, &mut self.edge_states, ctx)?;
+            let power =
+                Self::eval_elements(&rung.elements, true, &mut self.edge_states, pou_name, ctx)?;
             for coil in &rung.coils {
                 match coil.kind {
                     CoilKind::Normal => {
                         ctx.write_symbol(&coil.symbol, IecValue::Bool(power))?;
+                    }
+                    CoilKind::Negated => {
+                        ctx.write_symbol(&coil.symbol, IecValue::Bool(!power))?;
                     }
                     CoilKind::Set => {
                         if power {
@@ -447,6 +759,18 @@ impl ExecutablePou for CompiledLdPou {
                         if power {
                             ctx.write_symbol(&coil.symbol, IecValue::Bool(false))?;
                         }
+                    }
+                    CoilKind::RisingEdge => {
+                        let idx = coil.edge_idx.unwrap_or(0);
+                        let prev = self.edge_states[idx];
+                        self.edge_states[idx] = power;
+                        ctx.write_symbol(&coil.symbol, IecValue::Bool(power && !prev))?;
+                    }
+                    CoilKind::FallingEdge => {
+                        let idx = coil.edge_idx.unwrap_or(0);
+                        let prev = self.edge_states[idx];
+                        self.edge_states[idx] = power;
+                        ctx.write_symbol(&coil.symbol, IecValue::Bool(!power && prev))?;
                     }
                 }
             }
@@ -536,6 +860,186 @@ mod tests {
         ctx.write_symbol("High_Temp_Alarm", IecValue::Bool(true))?;
         compiled.execute(&mut ctx)?;
         assert!(!ctx.read_bool("Permissive_OK")?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_ladder_compare_math_move_and_extended_coils() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+        tags.register_tag(TagEntry::new(
+            "Enable",
+            IecType::Bool,
+            None,
+            IecValue::Bool(true),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Level",
+            IecType::Int,
+            None,
+            IecValue::Int(60),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Scaled_Level",
+            IecType::Int,
+            None,
+            IecValue::Int(0),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Inv_Coil",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Pulse_P",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Pulse_N",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+
+        let ld = LdProgram {
+            name: "ld_ext".to_string(),
+            comment: String::new(),
+            rungs: vec![LdRung {
+                id: "R1".to_string(),
+                comment: String::new(),
+                elements: vec![
+                    LdElement::Contact {
+                        symbol: "Enable".to_string(),
+                        kind: ContactKind::NormallyOpen,
+                    },
+                    LdElement::Compare {
+                        op: LdCompareOp::Ge,
+                        left: "Level".to_string(),
+                        right: "50".to_string(),
+                    },
+                    LdElement::MathMove {
+                        op: LdMathOp::Add,
+                        input1: "Level".to_string(),
+                        input2: Some("15".to_string()),
+                        dest: "Scaled_Level".to_string(),
+                    },
+                ],
+                coils: vec![
+                    LdCoil {
+                        symbol: "Inv_Coil".to_string(),
+                        kind: CoilKind::Negated,
+                    },
+                    LdCoil {
+                        symbol: "Pulse_P".to_string(),
+                        kind: CoilKind::RisingEdge,
+                    },
+                    LdCoil {
+                        symbol: "Pulse_N".to_string(),
+                        kind: CoilKind::FallingEdge,
+                    },
+                ],
+            }],
+        };
+
+        let mut compiled = ld.compile(&tags)?;
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+
+        // Scan 1: Enable=TRUE, Level=60 >= 50 -> rung power TRUE
+        compiled.execute(&mut ctx)?;
+        assert_eq!(ctx.read_symbol("Scaled_Level")?, IecValue::Int(75));
+        assert!(!ctx.read_bool("Inv_Coil")?);
+        assert!(ctx.read_bool("Pulse_P")?);
+        assert!(!ctx.read_bool("Pulse_N")?);
+
+        // Scan 2: rung stays TRUE -> Pulse_P drops to FALSE
+        compiled.execute(&mut ctx)?;
+        assert!(!ctx.read_bool("Pulse_P")?);
+        assert!(!ctx.read_bool("Pulse_N")?);
+
+        // Scan 3: Level drops to 30 (< 50) -> rung power FALSE -> Inv_Coil=TRUE, Pulse_N=TRUE
+        ctx.write_symbol("Level", IecValue::Int(30))?;
+        compiled.execute(&mut ctx)?;
+        assert_eq!(ctx.read_symbol("Scaled_Level")?, IecValue::Int(75)); // unchanged when rung false
+        assert!(ctx.read_bool("Inv_Coil")?);
+        assert!(!ctx.read_bool("Pulse_P")?);
+        assert!(ctx.read_bool("Pulse_N")?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_ld_math_add_with_mixed_int_and_real_numbers() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::default();
+
+        // INT tag Tank_Level (matches user's real project setup)
+        tags.register_tag(TagEntry::new(
+            "Tank_Level",
+            IecType::Int,
+            None,
+            IecValue::Int(10),
+            "",
+        ))?;
+        // REAL tag Tank_Temp
+        tags.register_tag(TagEntry::new(
+            "Tank_Temp",
+            IecType::Real,
+            None,
+            IecValue::Real(20.0),
+            "",
+        ))?;
+
+        let ld = LdProgram {
+            name: "main_safety".to_string(),
+            comment: String::new(),
+            rungs: vec![
+                // Rung 0: ADD Tank_Level + "1.0" -> Tank_Level (INT dest with REAL literal)
+                LdRung {
+                    id: "R0".to_string(),
+                    comment: String::new(),
+                    elements: vec![LdElement::MathMove {
+                        op: LdMathOp::Add,
+                        input1: "Tank_Level".to_string(),
+                        input2: Some("1.0".to_string()),
+                        dest: "Tank_Level".to_string(),
+                    }],
+                    coils: vec![],
+                },
+                // Rung 1: ADD Tank_Temp + "2" -> Tank_Temp (REAL dest with INT literal)
+                LdRung {
+                    id: "R1".to_string(),
+                    comment: String::new(),
+                    elements: vec![LdElement::MathMove {
+                        op: LdMathOp::Add,
+                        input1: "Tank_Temp".to_string(),
+                        input2: Some("2".to_string()),
+                        dest: "Tank_Temp".to_string(),
+                    }],
+                    coils: vec![],
+                },
+            ],
+        };
+
+        // Must validate and compile without "Unknown symbol '1.0'"
+        let mut compiled = ld.compile(&tags)?;
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+
+        compiled.execute(&mut ctx)?;
+        // Tank_Level was 10, plus 1.0 -> 11
+        assert_eq!(ctx.read_symbol("Tank_Level")?, IecValue::Int(11));
+        // Tank_Temp was 20.0, plus 2 -> 22.0
+        assert_eq!(ctx.read_symbol("Tank_Temp")?, IecValue::Real(22.0));
 
         Ok(())
     }

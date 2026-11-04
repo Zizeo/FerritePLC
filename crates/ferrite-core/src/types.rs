@@ -179,14 +179,24 @@ impl IecValue {
                     "FALSE" | "0" => Ok(Self::Bool(false)),
                     _ => Err(CoreError::InvalidLiteral(raw.to_string())),
                 },
-                IecType::Int => trimmed
-                    .parse::<i16>()
-                    .map(Self::Int)
-                    .map_err(|_| CoreError::InvalidLiteral(raw.to_string())),
-                IecType::Dint => trimmed
-                    .parse::<i32>()
-                    .map(Self::Dint)
-                    .map_err(|_| CoreError::InvalidLiteral(raw.to_string())),
+                IecType::Int => {
+                    if let Ok(i) = trimmed.parse::<i16>() {
+                        Ok(Self::Int(i))
+                    } else if let Ok(f) = trimmed.parse::<f64>() {
+                        Ok(Self::Int(f as i16))
+                    } else {
+                        Err(CoreError::InvalidLiteral(raw.to_string()))
+                    }
+                }
+                IecType::Dint => {
+                    if let Ok(d) = trimmed.parse::<i32>() {
+                        Ok(Self::Dint(d))
+                    } else if let Ok(f) = trimmed.parse::<f64>() {
+                        Ok(Self::Dint(f as i32))
+                    } else {
+                        Err(CoreError::InvalidLiteral(raw.to_string()))
+                    }
+                }
                 IecType::Real => trimmed
                     .parse::<f32>()
                     .map(Self::Real)

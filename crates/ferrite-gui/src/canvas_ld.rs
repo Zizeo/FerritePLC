@@ -5,7 +5,7 @@ use iced::{Alignment, Color, Element, Length, Point, Rectangle, Size, Theme, Vec
 use serde::{Deserialize, Serialize};
 
 use ferrite_core::IecValue;
-use ferrite_lang_ld::{CoilKind, ContactKind, LdElement, LdProgram};
+use ferrite_lang_ld::{CoilKind, ContactKind, LdCompareOp, LdElement, LdMathOp, LdProgram};
 use ferrite_runtime::PlcRuntime;
 
 use crate::app::Message;
@@ -21,6 +21,8 @@ pub const RAIL_HEIGHT: f32 = 48.0;
 pub const RAIL_LEFT_X: f32 = 80.0;
 pub const SLOT_WIDTH: f32 = 104.0;
 pub const SLOT_HEIGHT: f32 = 48.0;
+pub const BLOCK_SLOT_WIDTH: f32 = 160.0;
+pub const BLOCK_SLOT_HEIGHT: f32 = 54.0;
 pub const BRANCH_VERTICAL_STEP: f32 = 64.0;
 pub const RUNG_GAP_Y: f32 = 44.0;
 pub const RUNG_HEADER_HEIGHT: f32 = 28.0;
@@ -88,6 +90,7 @@ pub enum LdDropTarget {
 pub struct LdPlacedElement {
     pub key: LdElementKey,
     pub bounds: Rectangle,
+    pub power_in: bool,
     pub energized: bool,
 }
 
@@ -98,6 +101,7 @@ pub struct LdPlacedBranch {
     pub merge_x: f32,
     pub start_y: f32,
     pub paths_y: Vec<f32>,
+    pub power_in: bool,
     pub energized: bool,
 }
 
@@ -334,6 +338,17 @@ impl Default for LdCanvasState {
             pan_start: None,
             modifiers: iced::keyboard::Modifiers::default(),
         }
+    }
+}
+
+fn truncate_fit(s: &str, max_len: usize) -> String {
+    if s.chars().count() <= max_len {
+        s.to_string()
+    } else if max_len > 3 {
+        let prefix: String = s.chars().take(max_len - 2).collect();
+        format!("{prefix}..")
+    } else {
+        s.chars().take(max_len).collect()
     }
 }
 
@@ -825,14 +840,16 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                     &rung_layout.elements,
                 );
 
-                // Main rung baseline between first and last element/branch (clipped around contacts)
-                draw_horizontal_wire_outside_elements(
+                // Main rung baseline between first and last element/branch (segmented power flow)
+                draw_segmented_horizontal_wire(
                     &mut frame,
                     first_elem_x,
                     last_contact_x,
                     rung_layout.wire_y,
-                    wire_stroke,
+                    true,
+                    2.5,
                     &rung_layout.elements,
+                    &rung_layout.branches,
                 );
 
                 // Inter-contact wire segments on identical Y rows
@@ -857,35 +874,51 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
 
             // Draw parallel branch wires in the background clipped around contact cards
             for branch in &rung_layout.branches {
-                let branch_wire_color = if branch.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::BORDER_CARD };
-                let b_stroke = Stroke::default().with_color(branch_wire_color).with_width(2.0);
+                let split_color = if branch.power_in {
+                    StudioTheme::ACCENT_EMERALD
+                } else {
+                    StudioTheme::BORDER_CARD
+                };
+                let merge_color = if branch.energized {
+                    StudioTheme::ACCENT_EMERALD
+                } else {
+                    StudioTheme::BORDER_CARD
+                };
 
                 if let Some(&lowest_y) = branch.paths_y.last() {
-                    // Vertical drop wire at split_x
+                    // Vertical drop wire at split_x (powered by upstream branch.power_in)
                     frame.stroke(
-                        &Path::line(Point::new(branch.split_x, branch.start_y), Point::new(branch.split_x, lowest_y)),
-                        b_stroke,
+                        &Path::line(
+                            Point::new(branch.split_x, branch.start_y),
+                            Point::new(branch.split_x, lowest_y),
+                        ),
+                        Stroke::default().with_color(split_color).with_width(2.0),
                     );
-                    // Vertical rise wire at merge_x
+                    // Vertical rise wire at merge_x (powered if any branch path is energized)
                     frame.stroke(
-                        &Path::line(Point::new(branch.merge_x, branch.start_y), Point::new(branch.merge_x, lowest_y)),
-                        b_stroke,
+                        &Path::line(
+                            Point::new(branch.merge_x, branch.start_y),
+                            Point::new(branch.merge_x, lowest_y),
+                        ),
+                        Stroke::default().with_color(merge_color).with_width(2.0),
                     );
-                    // Horizontal feeder wires for each path (stopped at contact edges so cables never cross through contacts)
+                    // Horizontal feeder wires for each path (segmented power flow along each leg)
                     for &py in &branch.paths_y {
-                        draw_horizontal_wire_outside_elements(
+                        draw_segmented_horizontal_wire(
                             &mut frame,
                             branch.split_x,
                             branch.merge_x,
                             py,
-                            b_stroke,
+                            branch.power_in,
+                            2.0,
                             &rung_layout.elements,
+                            &rung_layout.branches,
                         );
                     }
                 }
             }
 
-            // Draw contacts & inline FBs in the foreground with an opaque base fill
+            // Draw contacts, comparisons, math blocks, & inline FBs in the foreground with an opaque base fill
             for elem in &rung_layout.elements {
                 let is_selected = self.selected == Some(&elem.key)
                     || self.selected_elements.contains(&elem.key)
@@ -922,38 +955,113 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                 match &elem.key {
                     LdElementKey::Contact { index, branch_path, .. } => {
                         let contact_elem = Self::lookup_element(&rung.elements, branch_path, *index);
-                        if let Some(LdElement::Contact { symbol, kind }) = contact_elem {
-                            frame.fill_text(Text {
-                                content: symbol.clone(),
-                                position: Point::new(elem.bounds.x + 6.0, elem.bounds.y + 6.0),
-                                color: StudioTheme::ACCENT_CYAN,
-                                size: 10.5.into(),
-                                ..Default::default()
-                            });
-                            let glyph_str = match kind {
-                                ContactKind::NormallyOpen => "--| |--",
-                                ContactKind::NormallyClosed => "--|/|--",
-                                ContactKind::RisingEdge => "--|P|--",
-                                ContactKind::FallingEdge => "--|N|--",
-                            };
-                            frame.fill_text(Text {
-                                content: glyph_str.to_string(),
-                                position: Point::new(elem.bounds.x + 12.0, elem.bounds.y + 24.0),
-                                color: if elem.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_MUTED },
-                                size: 12.0.into(),
-                                font: iced::Font::MONOSPACE,
-                                ..Default::default()
-                            });
+                        match contact_elem {
+                            Some(LdElement::Contact { symbol, kind }) => {
+                                frame.fill_text(Text {
+                                    content: symbol.clone(),
+                                    position: Point::new(elem.bounds.x + 6.0, elem.bounds.y + 6.0),
+                                    color: StudioTheme::ACCENT_CYAN,
+                                    size: 10.5.into(),
+                                    ..Default::default()
+                                });
+                                let glyph_str = match kind {
+                                    ContactKind::NormallyOpen => "--| |--",
+                                    ContactKind::NormallyClosed => "--|/|--",
+                                    ContactKind::RisingEdge => "--|P|--",
+                                    ContactKind::FallingEdge => "--|N|--",
+                                };
+                                frame.fill_text(Text {
+                                    content: glyph_str.to_string(),
+                                    position: Point::new(elem.bounds.x + 12.0, elem.bounds.y + 24.0),
+                                    color: if elem.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_MUTED },
+                                    size: 12.0.into(),
+                                    font: iced::Font::MONOSPACE,
+                                    ..Default::default()
+                                });
+                            }
+                            Some(LdElement::Compare { op, left, right }) => {
+                                frame.fill_text(Text {
+                                    content: format!("CMP {}", LdCompareOpWrapper(*op)),
+                                    position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 5.0),
+                                    color: StudioTheme::ACCENT_AMBER,
+                                    size: 9.5.into(),
+                                    font: iced::Font::MONOSPACE,
+                                    ..Default::default()
+                                });
+                                let left_str = format!("IN1: {}", truncate_fit(left, 16));
+                                frame.fill_text(Text {
+                                    content: left_str,
+                                    position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 20.0),
+                                    color: StudioTheme::TEXT_PRIMARY,
+                                    size: 9.5.into(),
+                                    font: iced::Font::MONOSPACE,
+                                    ..Default::default()
+                                });
+                                let right_str = format!("IN2: {}", truncate_fit(right, 16));
+                                frame.fill_text(Text {
+                                    content: right_str,
+                                    position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 36.0),
+                                    color: if elem.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_MUTED },
+                                    size: 9.5.into(),
+                                    font: iced::Font::MONOSPACE,
+                                    ..Default::default()
+                                });
+                            }
+                            Some(LdElement::MathMove { op, input1, input2, dest }) => {
+                                frame.fill_text(Text {
+                                    content: format!("{}", LdMathOpWrapper(*op)),
+                                    position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 5.0),
+                                    color: StudioTheme::ACCENT_PURPLE,
+                                    size: 9.5.into(),
+                                    font: iced::Font::MONOSPACE,
+                                    ..Default::default()
+                                });
+                                let in_expr = if *op == LdMathOp::Move {
+                                    format!("IN : {}", truncate_fit(input1, 16))
+                                } else {
+                                    let sym = match op {
+                                        LdMathOp::Add => "+",
+                                        LdMathOp::Sub => "-",
+                                        LdMathOp::Mul => "*",
+                                        LdMathOp::Div => "/",
+                                        LdMathOp::Move => "",
+                                    };
+                                    let in1_fit = truncate_fit(input1, 7);
+                                    let in2_raw = input2.as_deref().unwrap_or("0");
+                                    let in2_fit = truncate_fit(in2_raw, 7);
+                                    format!("IN : {in1_fit} {sym} {in2_fit}")
+                                };
+                                frame.fill_text(Text {
+                                    content: in_expr,
+                                    position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 20.0),
+                                    color: StudioTheme::TEXT_PRIMARY,
+                                    size: 9.5.into(),
+                                    font: iced::Font::MONOSPACE,
+                                    ..Default::default()
+                                });
+                                let out_str = format!("OUT: {}", truncate_fit(dest, 16));
+                                frame.fill_text(Text {
+                                    content: out_str,
+                                    position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 36.0),
+                                    color: if elem.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_PRIMARY },
+                                    size: 9.5.into(),
+                                    font: iced::Font::MONOSPACE,
+                                    ..Default::default()
+                                });
+                            }
+                            _ => {}
                         }
                     }
                     LdElementKey::InlineFb { index, branch_path, .. } => {
                         let fb_elem = Self::lookup_element(&rung.elements, branch_path, *index);
                         if let Some(LdElement::InlineFb { instance, .. }) = fb_elem {
+                            let fb_name = truncate_fit(instance, 14);
                             frame.fill_text(Text {
-                                content: format!("[FB: {instance}]"),
-                                position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 14.0),
+                                content: format!("[FB: {fb_name}]"),
+                                position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 18.0),
                                 color: if elem.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::ACCENT_CYAN },
-                                size: 11.0.into(),
+                                size: 10.0.into(),
+                                font: iced::Font::MONOSPACE,
                                 ..Default::default()
                             });
                         }
@@ -1064,8 +1172,11 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                         });
                         let glyph_str = match coil.kind {
                             CoilKind::Normal => "--( )--",
+                            CoilKind::Negated => "--(/)--",
                             CoilKind::Set => "--[S]--",
                             CoilKind::Reset => "--[R]--",
+                            CoilKind::RisingEdge => "--(P)--",
+                            CoilKind::FallingEdge => "--(N)--",
                         };
                         frame.fill_text(Text {
                             content: glyph_str.to_string(),
@@ -1212,15 +1323,29 @@ impl LdLayoutEngine {
             .sum()
     }
 
+    pub fn calculate_unbranched_width(elements: &[LdElement]) -> f32 {
+        elements
+            .iter()
+            .map(|e| match e {
+                LdElement::Branch { paths } => paths
+                    .iter()
+                    .map(|p| Self::calculate_unbranched_width(p))
+                    .fold(0.0_f32, f32::max),
+                LdElement::Compare { .. } | LdElement::MathMove { .. } | LdElement::InlineFb { .. } => {
+                    BLOCK_SLOT_WIDTH
+                }
+                _ => SLOT_WIDTH,
+            })
+            .sum()
+    }
+
     pub fn compute_layout(program: &LdProgram, runtime: Option<&PlcRuntime>) -> LdLayoutResult {
-        // Pass 1: compute max contact horizontal slots across all rungs
-        let max_slots = program
+        // Pass 1: compute max contact horizontal width across all rungs
+        let max_unbranched_w = program
             .rungs
             .iter()
-            .map(|r| Self::calculate_horizontal_slots(&r.elements))
-            .max()
-            .unwrap_or(1)
-            .max(2);
+            .map(|r| Self::calculate_unbranched_width(&r.elements))
+            .fold(2.0 * SLOT_WIDTH, f32::max);
 
         let rail_left_x = RAIL_LEFT_X;
         let start_x = rail_left_x + WIRE_PAD;
@@ -1228,7 +1353,7 @@ impl LdLayoutEngine {
         let mut rungs = Vec::new();
         let mut curr_y = 40.0_f32;
         let mut max_extra_branch_x = 0.0_f32;
-        let mut max_elements_end_x = start_x + max_slots as f32 * SLOT_WIDTH;
+        let mut max_elements_end_x = start_x + max_unbranched_w;
 
         for (r_idx, rung) in program.rungs.iter().enumerate() {
             let branch_depth = Self::calculate_branch_depth(&rung.elements);
@@ -1261,8 +1386,8 @@ impl LdLayoutEngine {
                 &mut placed_branches,
             );
 
-            let rung_slots = Self::calculate_horizontal_slots(&rung.elements);
-            let unbranched_end_x = start_x + rung_slots as f32 * SLOT_WIDTH;
+            let unbranched_w = Self::calculate_unbranched_width(&rung.elements);
+            let unbranched_end_x = start_x + unbranched_w;
             let extra_branch_x = (end_x - unbranched_end_x).max(0.0);
             max_extra_branch_x = max_extra_branch_x.max(extra_branch_x);
             max_elements_end_x = max_elements_end_x.max(end_x);
@@ -1285,7 +1410,7 @@ impl LdLayoutEngine {
             curr_y += rung_height;
         }
 
-        let base_right_x = (start_x + max_slots as f32 * SLOT_WIDTH + WIRE_PAD + COIL_CARD_WIDTH + WIRE_PAD).max(680.0);
+        let base_right_x = (start_x + max_unbranched_w + WIRE_PAD + COIL_CARD_WIDTH + WIRE_PAD).max(680.0);
         let rail_right_x = (base_right_x + max_extra_branch_x)
             .max(max_elements_end_x + WIRE_PAD + COIL_CARD_WIDTH + WIRE_PAD);
 
@@ -1311,6 +1436,7 @@ impl LdLayoutEngine {
                         width: COIL_CARD_WIDTH,
                         height: SLOT_HEIGHT,
                     },
+                    power_in: power_flowing,
                     energized: is_coil_on,
                 });
             }
@@ -1350,6 +1476,7 @@ impl LdLayoutEngine {
         for (e_idx, elem) in elements.iter().enumerate() {
             match elem {
                 LdElement::Contact { symbol, kind } => {
+                    let power_in = *power_flowing;
                     let contact_closed = runtime.is_some_and(|rt| {
                         let energized = is_symbol_energized(rt, symbol);
                         match kind {
@@ -1358,7 +1485,7 @@ impl LdLayoutEngine {
                             ContactKind::RisingEdge | ContactKind::FallingEdge => energized,
                         }
                     });
-                    let is_active = *power_flowing && contact_closed;
+                    let is_active = power_in && contact_closed;
                     *power_flowing = is_active;
 
                     let bounds = Rectangle {
@@ -1374,20 +1501,69 @@ impl LdLayoutEngine {
                             index: e_idx,
                         },
                         bounds,
+                        power_in,
                         energized: is_active,
                     });
                     curr_x += SLOT_WIDTH;
                 }
-                LdElement::InlineFb { instance, .. } => {
-                    let fb_q = runtime.is_some_and(|rt| rt.tags.get_fb(instance).map(|fb| fb.q).unwrap_or(false));
-                    let is_active = *power_flowing && fb_q;
+                LdElement::Compare { op, left, right } => {
+                    let power_in = *power_flowing;
+                    let cmp_ok = runtime.is_some_and(|rt| eval_ld_compare(rt, *op, left, right));
+                    let is_active = power_in && cmp_ok;
                     *power_flowing = is_active;
 
                     let bounds = Rectangle {
                         x: curr_x,
-                        y: base_y - SLOT_HEIGHT / 2.0,
-                        width: SLOT_WIDTH - 8.0,
-                        height: SLOT_HEIGHT,
+                        y: base_y - BLOCK_SLOT_HEIGHT / 2.0,
+                        width: BLOCK_SLOT_WIDTH - 8.0,
+                        height: BLOCK_SLOT_HEIGHT,
+                    };
+                    placed_elements.push(LdPlacedElement {
+                        key: LdElementKey::Contact {
+                            rung: rung_idx,
+                            branch_path: current_path.to_vec(),
+                            index: e_idx,
+                        },
+                        bounds,
+                        power_in,
+                        energized: is_active,
+                    });
+                    curr_x += BLOCK_SLOT_WIDTH;
+                }
+                LdElement::MathMove { .. } => {
+                    let power_in = *power_flowing;
+                    let is_active = power_in && runtime.is_some();
+                    *power_flowing = is_active;
+
+                    let bounds = Rectangle {
+                        x: curr_x,
+                        y: base_y - BLOCK_SLOT_HEIGHT / 2.0,
+                        width: BLOCK_SLOT_WIDTH - 8.0,
+                        height: BLOCK_SLOT_HEIGHT,
+                    };
+                    placed_elements.push(LdPlacedElement {
+                        key: LdElementKey::Contact {
+                            rung: rung_idx,
+                            branch_path: current_path.to_vec(),
+                            index: e_idx,
+                        },
+                        bounds,
+                        power_in,
+                        energized: is_active,
+                    });
+                    curr_x += BLOCK_SLOT_WIDTH;
+                }
+                LdElement::InlineFb { instance, .. } => {
+                    let power_in = *power_flowing;
+                    let fb_q = runtime.is_some_and(|rt| rt.tags.get_fb(instance).map(|fb| fb.q).unwrap_or(false));
+                    let is_active = power_in && fb_q;
+                    *power_flowing = is_active;
+
+                    let bounds = Rectangle {
+                        x: curr_x,
+                        y: base_y - BLOCK_SLOT_HEIGHT / 2.0,
+                        width: BLOCK_SLOT_WIDTH - 8.0,
+                        height: BLOCK_SLOT_HEIGHT,
                     };
                     placed_elements.push(LdPlacedElement {
                         key: LdElementKey::InlineFb {
@@ -1396,9 +1572,10 @@ impl LdLayoutEngine {
                             index: e_idx,
                         },
                         bounds,
+                        power_in,
                         energized: is_active,
                     });
-                    curr_x += SLOT_WIDTH;
+                    curr_x += BLOCK_SLOT_WIDTH;
                 }
                 LdElement::Branch { paths } => {
                     let split_x = curr_x;
@@ -1450,6 +1627,7 @@ impl LdLayoutEngine {
                         merge_x,
                         start_y: base_y,
                         paths_y,
+                        power_in: initial_power,
                         energized: *power_flowing,
                     });
 
@@ -1459,6 +1637,29 @@ impl LdLayoutEngine {
         }
 
         curr_x
+    }
+}
+
+fn eval_ld_operand(rt: &PlcRuntime, operand: &str) -> Option<IecValue> {
+    let trimmed = operand.trim();
+    rt.read_value(trimmed)
+        .ok()
+        .or_else(|| IecValue::parse_literal(trimmed, None).ok())
+}
+
+fn eval_ld_compare(rt: &PlcRuntime, op: LdCompareOp, left: &str, right: &str) -> bool {
+    let (Some(lv), Some(rv)) = (eval_ld_operand(rt, left), eval_ld_operand(rt, right)) else {
+        return false;
+    };
+    let lf = lv.as_real().ok().map(|v| v as f64);
+    let rf = rv.as_real().ok().map(|v| v as f64);
+    match op {
+        LdCompareOp::Eq => lf.zip(rf).map(|(a, b)| (a - b).abs() < 1e-9).unwrap_or(lv == rv),
+        LdCompareOp::Ne => lf.zip(rf).map(|(a, b)| (a - b).abs() >= 1e-9).unwrap_or(lv != rv),
+        LdCompareOp::Gt => lf.zip(rf).is_some_and(|(a, b)| a > b),
+        LdCompareOp::Ge => lf.zip(rf).is_some_and(|(a, b)| a >= b),
+        LdCompareOp::Lt => lf.zip(rf).is_some_and(|(a, b)| a < b),
+        LdCompareOp::Le => lf.zip(rf).is_some_and(|(a, b)| a <= b),
     }
 }
 
@@ -1499,6 +1700,49 @@ pub fn compute_wire_segments_outside_elements(
         segments.push((curr_x, x2));
     }
     segments
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_segmented_horizontal_wire(
+    frame: &mut Frame,
+    x_start: f32,
+    x_end: f32,
+    y: f32,
+    initial_energized: bool,
+    width: f32,
+    elements: &[LdPlacedElement],
+    branches: &[LdPlacedBranch],
+) {
+    for (seg_x1, seg_x2) in compute_wire_segments_outside_elements(x_start, x_end, y, elements) {
+        let mut latest_x = -1.0_f32;
+        let mut seg_energized = initial_energized;
+
+        for e in elements {
+            if y >= e.bounds.y && y <= e.bounds.y + e.bounds.height {
+                let right = e.bounds.x + e.bounds.width;
+                if right <= seg_x1 + 1.0 && right >= latest_x {
+                    latest_x = right;
+                    seg_energized = e.energized;
+                }
+            }
+        }
+        for b in branches {
+            if (y - b.start_y).abs() <= 4.0 && b.merge_x <= seg_x1 + 1.0 && b.merge_x >= latest_x {
+                latest_x = b.merge_x;
+                seg_energized = b.energized;
+            }
+        }
+
+        let color = if seg_energized {
+            StudioTheme::ACCENT_EMERALD
+        } else {
+            StudioTheme::BORDER_CARD
+        };
+        frame.stroke(
+            &Path::line(Point::new(seg_x1, y), Point::new(seg_x2, y)),
+            Stroke::default().with_color(color).with_width(width),
+        );
+    }
 }
 
 fn draw_horizontal_wire_outside_elements(
@@ -1545,16 +1789,70 @@ impl std::fmt::Display for LdCoilKindWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.0 {
             CoilKind::Normal => write!(f, "( )"),
+            CoilKind::Negated => write!(f, "(/)"),
             CoilKind::Set => write!(f, "[S]"),
             CoilKind::Reset => write!(f, "[R]"),
+            CoilKind::RisingEdge => write!(f, "(P)"),
+            CoilKind::FallingEdge => write!(f, "(N)"),
         }
     }
 }
 
-pub const ALL_COIL_KINDS: [LdCoilKindWrapper; 3] = [
+pub const ALL_COIL_KINDS: [LdCoilKindWrapper; 6] = [
     LdCoilKindWrapper(CoilKind::Normal),
+    LdCoilKindWrapper(CoilKind::Negated),
     LdCoilKindWrapper(CoilKind::Set),
     LdCoilKindWrapper(CoilKind::Reset),
+    LdCoilKindWrapper(CoilKind::RisingEdge),
+    LdCoilKindWrapper(CoilKind::FallingEdge),
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LdCompareOpWrapper(pub LdCompareOp);
+
+impl std::fmt::Display for LdCompareOpWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            LdCompareOp::Eq => write!(f, "EQ (==)"),
+            LdCompareOp::Ne => write!(f, "NE (<>)"),
+            LdCompareOp::Gt => write!(f, "GT (>)"),
+            LdCompareOp::Ge => write!(f, "GE (>=)"),
+            LdCompareOp::Lt => write!(f, "LT (<)"),
+            LdCompareOp::Le => write!(f, "LE (<=)"),
+        }
+    }
+}
+
+pub const ALL_COMPARE_OPS: [LdCompareOpWrapper; 6] = [
+    LdCompareOpWrapper(LdCompareOp::Eq),
+    LdCompareOpWrapper(LdCompareOp::Ne),
+    LdCompareOpWrapper(LdCompareOp::Gt),
+    LdCompareOpWrapper(LdCompareOp::Ge),
+    LdCompareOpWrapper(LdCompareOp::Lt),
+    LdCompareOpWrapper(LdCompareOp::Le),
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LdMathOpWrapper(pub LdMathOp);
+
+impl std::fmt::Display for LdMathOpWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            LdMathOp::Move => write!(f, "MOVE"),
+            LdMathOp::Add => write!(f, "ADD (+)"),
+            LdMathOp::Sub => write!(f, "SUB (-)"),
+            LdMathOp::Mul => write!(f, "MUL (*)"),
+            LdMathOp::Div => write!(f, "DIV (/)"),
+        }
+    }
+}
+
+pub const ALL_MATH_OPS: [LdMathOpWrapper; 5] = [
+    LdMathOpWrapper(LdMathOp::Move),
+    LdMathOpWrapper(LdMathOp::Add),
+    LdMathOpWrapper(LdMathOp::Sub),
+    LdMathOpWrapper(LdMathOp::Mul),
+    LdMathOpWrapper(LdMathOp::Div),
 ];
 
 fn is_symbol_energized(rt: &PlcRuntime, symbol: &str) -> bool {
@@ -1713,6 +2011,16 @@ pub fn render_ld_editor<'a>(
             .style(StudioTheme::secondary_button)
             .padding([4, 8]);
 
+        let add_cmp_btn = button(text("+ CMP").size(11))
+            .on_press(Message::LdAddCompare(pou_name.clone(), selected_rung))
+            .style(StudioTheme::secondary_button)
+            .padding([4, 8]);
+
+        let add_math_btn = button(text("+ MATH").size(11))
+            .on_press(Message::LdAddMathMove(pou_name.clone(), selected_rung))
+            .style(StudioTheme::secondary_button)
+            .padding([4, 8]);
+
         let add_branch_btn = button(text("+ Branch").size(11))
             .on_press(Message::LdAddParallelBranch(
                 pou_name.clone(),
@@ -1735,6 +2043,8 @@ pub fn render_ld_editor<'a>(
             add_nc_btn,
             add_p_btn,
             add_n_btn,
+            add_cmp_btn,
+            add_math_btn,
             add_coil_btn,
             add_branch_btn,
             clear_btn,
@@ -1835,6 +2145,222 @@ pub fn render_ld_editor<'a>(
                         text("Contact:").size(12).color(StudioTheme::ACCENT_CYAN),
                         tag_input,
                         kind_picker,
+                        del_btn,
+                        iced::widget::Space::with_width(Length::Fill),
+                        deselect_btn,
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .padding([6, 12])
+                .style(StudioTheme::card_style)
+                .width(Length::Fill)
+                .into()
+            } else if let Some(LdElement::Compare { op, left, right }) = contact_data {
+                let cur_op = *op;
+                let l_str = left.clone();
+                let r_str = right.clone();
+
+                let p_op = p_name.clone();
+                let b_op = b_path.clone();
+                let l_op = l_str.clone();
+                let r_op = r_str.clone();
+                let op_picker = pick_list(
+                    &ALL_COMPARE_OPS[..],
+                    Some(LdCompareOpWrapper(cur_op)),
+                    move |w| {
+                        Message::LdCompareChanged(
+                            p_op.clone(),
+                            r_i,
+                            b_op.clone(),
+                            idx,
+                            w.0,
+                            l_op.clone(),
+                            r_op.clone(),
+                        )
+                    },
+                )
+                .text_size(11.0)
+                .padding([3, 7]);
+
+                let p_left = p_name.clone();
+                let b_left = b_path.clone();
+                let r_left = r_str;
+                let left_input = text_input("Left operand...", left)
+                    .on_input(move |s| {
+                        Message::LdCompareChanged(
+                            p_left.clone(),
+                            r_i,
+                            b_left.clone(),
+                            idx,
+                            cur_op,
+                            s,
+                            r_left.clone(),
+                        )
+                    })
+                    .width(Length::Fixed(130.0))
+                    .padding([3, 7])
+                    .style(StudioTheme::styled_input);
+
+                let p_right = p_name;
+                let b_right = b_path;
+                let l_right = l_str;
+                let right_input = text_input("Right operand...", right)
+                    .on_input(move |s| {
+                        Message::LdCompareChanged(
+                            p_right.clone(),
+                            r_i,
+                            b_right.clone(),
+                            idx,
+                            cur_op,
+                            l_right.clone(),
+                            s,
+                        )
+                    })
+                    .width(Length::Fixed(130.0))
+                    .padding([3, 7])
+                    .style(StudioTheme::styled_input);
+
+                let p_for_del = pou_name.clone();
+                let del_btn = button(text("Delete (Del)").size(11))
+                    .on_press(Message::LdRequestDeleteSelected(p_for_del))
+                    .style(StudioTheme::danger_button)
+                    .padding([3, 8]);
+
+                let deselect_btn = button(text("Close [x]").size(11))
+                    .on_press(Message::LdSelectElement(pou_name, None))
+                    .style(StudioTheme::ghost_button)
+                    .padding([3, 8]);
+
+                container(
+                    row![
+                        text("Compare:").size(12).color(StudioTheme::ACCENT_AMBER),
+                        left_input,
+                        op_picker,
+                        right_input,
+                        del_btn,
+                        iced::widget::Space::with_width(Length::Fill),
+                        deselect_btn,
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .padding([6, 12])
+                .style(StudioTheme::card_style)
+                .width(Length::Fill)
+                .into()
+            } else if let Some(LdElement::MathMove { op, input1, input2, dest }) = contact_data {
+                let cur_op = *op;
+                let in1_str = input1.clone();
+                let in2_str = input2.clone().unwrap_or_else(|| "0".to_string());
+                let dst_str = dest.clone();
+
+                let p_op = p_name.clone();
+                let b_op = b_path.clone();
+                let i1_op = in1_str.clone();
+                let i2_op = in2_str.clone();
+                let d_op = dst_str.clone();
+                let op_picker = pick_list(
+                    &ALL_MATH_OPS[..],
+                    Some(LdMathOpWrapper(cur_op)),
+                    move |w| {
+                        Message::LdMathMoveChanged(
+                            p_op.clone(),
+                            r_i,
+                            b_op.clone(),
+                            idx,
+                            w.0,
+                            i1_op.clone(),
+                            i2_op.clone(),
+                            d_op.clone(),
+                        )
+                    },
+                )
+                .text_size(11.0)
+                .padding([3, 7]);
+
+                let p_i1 = p_name.clone();
+                let b_i1 = b_path.clone();
+                let i2_i1 = in2_str.clone();
+                let d_i1 = dst_str.clone();
+                let in1_input = text_input("IN1...", input1)
+                    .on_input(move |s| {
+                        Message::LdMathMoveChanged(
+                            p_i1.clone(),
+                            r_i,
+                            b_i1.clone(),
+                            idx,
+                            cur_op,
+                            s,
+                            i2_i1.clone(),
+                            d_i1.clone(),
+                        )
+                    })
+                    .width(Length::Fixed(110.0))
+                    .padding([3, 7])
+                    .style(StudioTheme::styled_input);
+
+                let p_i2 = p_name.clone();
+                let b_i2 = b_path.clone();
+                let i1_i2 = in1_str.clone();
+                let d_i2 = dst_str;
+                let in2_input = text_input("IN2...", &in2_str)
+                    .on_input(move |s| {
+                        Message::LdMathMoveChanged(
+                            p_i2.clone(),
+                            r_i,
+                            b_i2.clone(),
+                            idx,
+                            cur_op,
+                            i1_i2.clone(),
+                            s,
+                            d_i2.clone(),
+                        )
+                    })
+                    .width(Length::Fixed(110.0))
+                    .padding([3, 7])
+                    .style(StudioTheme::styled_input);
+
+                let p_dst = p_name;
+                let b_dst = b_path;
+                let i1_dst = in1_str;
+                let i2_dst = in2_str.clone();
+                let dst_input = text_input("OUT tag...", dest)
+                    .on_input(move |s| {
+                        Message::LdMathMoveChanged(
+                            p_dst.clone(),
+                            r_i,
+                            b_dst.clone(),
+                            idx,
+                            cur_op,
+                            i1_dst.clone(),
+                            i2_dst.clone(),
+                            s,
+                        )
+                    })
+                    .width(Length::Fixed(120.0))
+                    .padding([3, 7])
+                    .style(StudioTheme::styled_input);
+
+                let p_for_del = pou_name.clone();
+                let del_btn = button(text("Delete (Del)").size(11))
+                    .on_press(Message::LdRequestDeleteSelected(p_for_del))
+                    .style(StudioTheme::danger_button)
+                    .padding([3, 8]);
+
+                let deselect_btn = button(text("Close [x]").size(11))
+                    .on_press(Message::LdSelectElement(pou_name, None))
+                    .style(StudioTheme::ghost_button)
+                    .padding([3, 8]);
+
+                container(
+                    row![
+                        text("Math/Move:").size(12).color(StudioTheme::ACCENT_PURPLE),
+                        op_picker,
+                        in1_input,
+                        in2_input,
+                        text("->").size(12).color(StudioTheme::TEXT_MUTED),
+                        dst_input,
                         del_btn,
                         iced::widget::Space::with_width(Length::Fill),
                         deselect_btn,
@@ -3091,5 +3617,109 @@ pub mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
+    }
+
+    #[test]
+    fn test_ld_compare_and_math_blocks_dimensions_and_rendering() {
+        let program = LdProgram {
+            name: "test_cmp_math".to_string(),
+            comment: "Test Compare & Math elements layout and rendering".to_string(),
+            rungs: vec![LdRung {
+                id: "R0".to_string(),
+                comment: "Rung with Contact, CMP, and ADD".to_string(),
+                elements: vec![
+                    LdElement::Contact {
+                        symbol: "Start_PB".to_string(),
+                        kind: ContactKind::NormallyOpen,
+                    },
+                    LdElement::Compare {
+                        op: LdCompareOp::Ge,
+                        left: "Sensor_Temperature_Zone1".to_string(),
+                        right: "SetPoint_Temp_High".to_string(),
+                    },
+                    LdElement::MathMove {
+                        op: LdMathOp::Add,
+                        input1: "Counter_Primary_Batch".to_string(),
+                        input2: Some("Step_Increment_Val".to_string()),
+                        dest: "Counter_Primary_Batch".to_string(),
+                    },
+                ],
+                coils: vec![LdCoil {
+                    symbol: "Alarm_OverTemp".to_string(),
+                    kind: CoilKind::Normal,
+                }],
+            }],
+        };
+
+        // 1. Verify layout geometry
+        let layout = LdLayoutEngine::build(&program, None);
+        assert_eq!(layout.rungs.len(), 1);
+        let r0 = &layout.rungs[0];
+        assert_eq!(r0.elements.len(), 3);
+
+        // Contact standard slot
+        assert_eq!(r0.elements[0].bounds.width, SLOT_WIDTH - 8.0);
+        assert_eq!(r0.elements[0].bounds.height, SLOT_HEIGHT);
+
+        // Compare expanded block
+        assert_eq!(r0.elements[1].bounds.width, BLOCK_SLOT_WIDTH - 8.0);
+        assert_eq!(r0.elements[1].bounds.height, BLOCK_SLOT_HEIGHT);
+
+        // Math expanded block
+        assert_eq!(r0.elements[2].bounds.width, BLOCK_SLOT_WIDTH - 8.0);
+        assert_eq!(r0.elements[2].bounds.height, BLOCK_SLOT_HEIGHT);
+
+        // Order and non-overlapping bounds
+        assert!(r0.elements[0].bounds.x + r0.elements[0].bounds.width <= r0.elements[1].bounds.x);
+        assert!(r0.elements[1].bounds.x + r0.elements[1].bounds.width <= r0.elements[2].bounds.x);
+        assert!(r0.elements[2].bounds.x + r0.elements[2].bounds.width <= r0.coils[0].bounds.x);
+
+        // 2. Hit-testing inside CMP and ADD boxes
+        let cmp_center = Point::new(
+            r0.elements[1].bounds.x + r0.elements[1].bounds.width / 2.0,
+            r0.elements[1].bounds.y + r0.elements[1].bounds.height / 2.0,
+        );
+        assert_eq!(
+            layout.hit_test(cmp_center),
+            Some(LdElementKey::Contact {
+                rung: 0,
+                branch_path: vec![],
+                index: 1,
+            })
+        );
+
+        let math_center = Point::new(
+            r0.elements[2].bounds.x + r0.elements[2].bounds.width / 2.0,
+            r0.elements[2].bounds.y + r0.elements[2].bounds.height / 2.0,
+        );
+        assert_eq!(
+            layout.hit_test(math_center),
+            Some(LdElementKey::Contact {
+                rung: 0,
+                branch_path: vec![],
+                index: 2,
+            })
+        );
+
+        // 3. Render canvas without panic
+        let selected_contact = LdElementKey::Contact {
+            rung: 0,
+            branch_path: vec![],
+            index: 1,
+        };
+        let _elem = render_ld_editor(
+            &program,
+            None,
+            Some(&selected_contact),
+            &[],
+            UiLanguage::En,
+            Vector::default(),
+            1.0,
+        );
+
+        // 4. Test truncate_fit helper
+        assert_eq!(truncate_fit("Short", 10), "Short");
+        assert_eq!(truncate_fit("ExactLength", 11), "ExactLength");
+        assert_eq!(truncate_fit("TooLongStringHere", 10), "TooLongS..");
     }
 }
