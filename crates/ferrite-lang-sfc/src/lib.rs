@@ -905,6 +905,10 @@ impl SfcProgram {
         let mut step_map: HashMap<String, usize> = HashMap::new();
         for (idx, step) in self.steps.iter().enumerate() {
             step_map.insert(step.id.clone(), idx);
+            step_map.insert(ferrite_core::normalize_sfc_step_prefix(&step.id), idx);
+            if !step.name.is_empty() {
+                step_map.insert(step.name.clone(), idx);
+            }
         }
 
         let mut compiled_steps = Vec::with_capacity(self.steps.len());
@@ -979,11 +983,7 @@ impl SfcProgram {
                 });
             }
 
-            let short_prefix = if step.id.starts_with('X') || step.id.starts_with('x') {
-                step.id.clone()
-            } else {
-                format!("X{}", step.id)
-            };
+            let short_prefix = ferrite_core::normalize_sfc_step_prefix(&step.id);
             let state_sym = if self.name.is_empty() {
                 format!("{short_prefix}.state")
             } else {

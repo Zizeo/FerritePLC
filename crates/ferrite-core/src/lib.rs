@@ -15,7 +15,7 @@ pub use context::{ExecutablePou, LanguageKind, PouId, ScanContext};
 pub use error::{CoreError, RuntimeError};
 pub use fb::{FbInstance, StandardFbKind};
 pub use process_image::{DEFAULT_MEMORY_AREA_BYTES, MemoryMap, ProcessImage};
-pub use tag_table::{FbId, TagEntry, TagId, TagTable};
+pub use tag_table::{FbId, TagEntry, TagId, TagTable, normalize_sfc_step_prefix};
 pub use types::{IecType, IecValue, parse_iec_time_literal};
 
 #[cfg(test)]
@@ -181,6 +181,45 @@ mod tests {
         table.reset_fbs();
         assert_eq!(table.get_fb("Timer_1").map(|f| f.et_ms), Some(0));
         assert_eq!(table.get_fb("Timer_1").map(|f| f.q), Some(false));
+        Ok(())
+    }
+
+    #[test]
+    fn test_sfc_variable_naming_and_normalization() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(normalize_sfc_step_prefix("0"), "X0");
+        assert_eq!(normalize_sfc_step_prefix("12"), "X12");
+        assert_eq!(normalize_sfc_step_prefix("X0"), "X0");
+        assert_eq!(normalize_sfc_step_prefix("x5"), "X5");
+        assert_eq!(normalize_sfc_step_prefix("S3"), "X3");
+        assert_eq!(normalize_sfc_step_prefix("s99"), "X99");
+
+        let mut tags = TagTable::new();
+        let (s_id, t_id) = tags.register_sfc_step_full("batch_seq", "0", "Step_Idle", true)?;
+        let (s1_id, t1_id) = tags.register_sfc_step_full("batch_seq", "1", "Step_Fill", false)?;
+
+        // Primary tag names MUST strictly be POU_name.XN.state and POU_name.XN.t
+        assert_eq!(tags.tags()[s_id.0].name, "batch_seq.X0.state");
+        assert_eq!(tags.tags()[t_id.0].name, "batch_seq.X0.t");
+        assert_eq!(tags.tags()[s1_id.0].name, "batch_seq.X1.state");
+        assert_eq!(tags.tags()[t1_id.0].name, "batch_seq.X1.t");
+
+        // Lookup by primary symbol
+        assert_eq!(tags.tag_id("batch_seq.X0.state"), Some(s_id));
+        assert_eq!(tags.tag_id("batch_seq.X0.t"), Some(t_id));
+
+        // Lookup by aliases
+        assert_eq!(tags.tag_id("X0.state"), Some(s_id));
+        assert_eq!(tags.tag_id("0.state"), Some(s_id));
+        assert_eq!(tags.tag_id("batch_seq.0.state"), Some(s_id));
+        assert_eq!(tags.tag_id("Step_Idle.state"), Some(s_id));
+        assert_eq!(tags.tag_id("batch_seq.Step_Idle.state"), Some(s_id));
+
+        assert_eq!(tags.tag_id("X1.state"), Some(s1_id));
+        assert_eq!(tags.tag_id("1.state"), Some(s1_id));
+        assert_eq!(tags.tag_id("batch_seq.1.state"), Some(s1_id));
+        assert_eq!(tags.tag_id("Step_Fill.state"), Some(s1_id));
+        assert_eq!(tags.tag_id("batch_seq.Step_Fill.state"), Some(s1_id));
+
         Ok(())
     }
 }

@@ -76,6 +76,19 @@ pub struct TagTable {
     fb_index: HashMap<String, FbId>,
 }
 
+/// Normalizes an SFC step identifier into canonical `X<N>` form (e.g. `"0"` -> `"X0"`, `"x1"` -> `"X1"`, `"S2"` -> `"X2"`).
+pub fn normalize_sfc_step_prefix(step_id: &str) -> String {
+    let trimmed = step_id.trim();
+    let clean_num = trimmed.trim_start_matches(['X', 'x', 'S', 's']);
+    if !clean_num.is_empty() && clean_num.chars().all(|c| c.is_ascii_digit()) {
+        format!("X{clean_num}")
+    } else if let Some(stripped) = trimmed.strip_prefix(['X', 'x']) {
+        format!("X{stripped}")
+    } else {
+        format!("X{trimmed}")
+    }
+}
+
 impl TagTable {
     pub fn new() -> Self {
         Self::default()
@@ -105,6 +118,8 @@ impl TagTable {
     /// Registers Grafcet introspection symbols for a step in `pou_name`, binding both short (`X<i>.state`,
     /// `<step_name>.state`) and POU-qualified (`<pou_name>.X<i>.state`, `<pou_name>.<step_name>.state`)
     /// aliases to the same underlying `TagId`.
+    ///
+    /// When `pou_name` is provided, the primary tag name is strictly `<pou_name>.X<i>.state` (or `.t`).
     pub fn register_sfc_step_full(
         &mut self,
         pou_name: &str,
@@ -112,33 +127,29 @@ impl TagTable {
         step_name: &str,
         is_initial: bool,
     ) -> Result<(TagId, TagId), CoreError> {
-        let prefix = if step_id.starts_with('X') || step_id.starts_with('x') {
-            step_id.to_string()
-        } else {
-            format!("X{step_id}")
-        };
-        let short_state_sym = format!("{prefix}.state");
-        let short_time_sym = format!("{prefix}.t");
+        let x_id = normalize_sfc_step_prefix(step_id);
+        let short_state_sym = format!("{x_id}.state");
+        let short_time_sym = format!("{x_id}.t");
 
-        let (primary_state_sym, primary_time_sym) =
-            if !pou_name.is_empty() && self.tag_index.contains_key(&short_state_sym) {
-                (
-                    format!("{pou_name}.{short_state_sym}"),
-                    format!("{pou_name}.{short_time_sym}"),
-                )
-            } else {
-                (short_state_sym.clone(), short_time_sym.clone())
-            };
+        let pou_prefix = pou_name.trim();
+        let (primary_state_sym, primary_time_sym) = if !pou_prefix.is_empty() {
+            (
+                format!("{pou_prefix}.{x_id}.state"),
+                format!("{pou_prefix}.{x_id}.t"),
+            )
+        } else {
+            (short_state_sym.clone(), short_time_sym.clone())
+        };
 
         let mut state_entry = TagEntry::new(
             &primary_state_sym,
             IecType::Bool,
             None,
             IecValue::Bool(is_initial),
-            if pou_name.is_empty() {
-                format!("Grafcet step {step_id} active state")
+            if pou_prefix.is_empty() {
+                format!("Grafcet step {x_id} active state")
             } else {
-                format!("Grafcet {pou_name} step {step_id} active state")
+                format!("Grafcet {pou_prefix} step {x_id} active state")
             },
         );
         state_entry.read_only_outside_sfc = true;
@@ -149,10 +160,10 @@ impl TagTable {
             IecType::Time,
             None,
             IecValue::Time(0),
-            if pou_name.is_empty() {
-                format!("Grafcet step {step_id} elapsed active time")
+            if pou_prefix.is_empty() {
+                format!("Grafcet step {x_id} elapsed active time")
             } else {
-                format!("Grafcet {pou_name} step {step_id} elapsed active time")
+                format!("Grafcet {pou_prefix} step {x_id} elapsed active time")
             },
         );
         time_entry.read_only_outside_sfc = true;
@@ -166,42 +177,44 @@ impl TagTable {
             .entry(short_time_sym.clone())
             .or_insert(time_id);
 
-        if !step_id.starts_with('X') && !step_id.starts_with('x') {
+        let trimmed_id = step_id.trim();
+        if trimmed_id != x_id {
             self.tag_index
-                .entry(format!("{step_id}.state"))
+                .entry(format!("{trimmed_id}.state"))
                 .or_insert(state_id);
             self.tag_index
-                .entry(format!("{step_id}.t"))
+                .entry(format!("{trimmed_id}.t"))
                 .or_insert(time_id);
         }
 
         // Register POU-qualified aliases (`<pou>.X<i>.state`, `<pou>.<i>.state`)
-        if !pou_name.is_empty() {
+        if !pou_prefix.is_empty() {
             self.tag_index
-                .insert(format!("{pou_name}.{short_state_sym}"), state_id);
+                .insert(format!("{pou_prefix}.{short_state_sym}"), state_id);
             self.tag_index
-                .insert(format!("{pou_name}.{short_time_sym}"), time_id);
-            if !step_id.starts_with('X') && !step_id.starts_with('x') {
+                .insert(format!("{pou_prefix}.{short_time_sym}"), time_id);
+            if trimmed_id != x_id {
                 self.tag_index
-                    .insert(format!("{pou_name}.{step_id}.state"), state_id);
+                    .insert(format!("{pou_prefix}.{trimmed_id}.state"), state_id);
                 self.tag_index
-                    .insert(format!("{pou_name}.{step_id}.t"), time_id);
+                    .insert(format!("{pou_prefix}.{trimmed_id}.t"), time_id);
             }
         }
 
         // Register step-name aliases (`<step_name>.state`, `<pou>.<step_name>.state`)
-        if !step_name.is_empty() && step_name != step_id {
+        let trimmed_name = step_name.trim();
+        if !trimmed_name.is_empty() && trimmed_name != step_id && trimmed_name != x_id {
             self.tag_index
-                .entry(format!("{step_name}.state"))
+                .entry(format!("{trimmed_name}.state"))
                 .or_insert(state_id);
             self.tag_index
-                .entry(format!("{step_name}.t"))
+                .entry(format!("{trimmed_name}.t"))
                 .or_insert(time_id);
-            if !pou_name.is_empty() {
+            if !pou_prefix.is_empty() {
                 self.tag_index
-                    .insert(format!("{pou_name}.{step_name}.state"), state_id);
+                    .insert(format!("{pou_prefix}.{trimmed_name}.state"), state_id);
                 self.tag_index
-                    .insert(format!("{pou_name}.{step_name}.t"), time_id);
+                    .insert(format!("{pou_prefix}.{trimmed_name}.t"), time_id);
             }
         }
 

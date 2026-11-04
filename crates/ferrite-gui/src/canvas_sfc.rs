@@ -233,8 +233,7 @@ pub fn is_step_active_with_name(
     step_id: &str,
     step_name: &str,
 ) -> (bool, u64) {
-    let clean_id = step_id.trim().trim_start_matches(['X', 'x']);
-    let x_id = format!("X{clean_id}");
+    let x_id = ferrite_core::normalize_sfc_step_prefix(step_id);
 
     let mut state_candidates = Vec::with_capacity(6);
     let mut time_candidates = Vec::with_capacity(6);
