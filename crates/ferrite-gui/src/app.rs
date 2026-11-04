@@ -557,7 +557,7 @@ pub fn handle_key_event(event: iced::keyboard::Event) -> Option<Message> {
 
 impl FerriteStudioApp {
     pub fn new(initial_project: Project) -> Self {
-        Self::with_language(initial_project, UiLanguage::En)
+        Self::with_language(initial_project, crate::i18n::detect_os_language())
     }
 
     pub fn with_language(mut initial_project: Project, ui_lang: UiLanguage) -> Self {
@@ -5969,58 +5969,58 @@ impl FerriteStudioApp {
                 };
                 column![
                     Self::menu_dropdown_item(
-                        self.ui_lang.tr("Save Active POU", "Enregistrer POU Actif").to_string(),
+                        crate::tr!("menu.file.save_active_pou", self.ui_lang),
                         Some("Ctrl+S"),
                         false,
                         save_pou_msg,
                     ),
                     Self::menu_dropdown_item(
-                        self.ui_lang.tr("Save Project", "Enregistrer Projet").to_string(),
+                        crate::tr!("menu.file.save_project", self.ui_lang),
                         Some("Ctrl+Shift+S"),
                         false,
                         Some(Message::SaveProject),
                     ),
                     Self::menu_dropdown_item(
-                        self.ui_lang.tr("Save As...", "Enregistrer sous...").to_string(),
+                        crate::tr!("menu.file.save_as", self.ui_lang),
                         None,
                         false,
                         Some(Message::SaveProjectAsDialog),
                     ),
                     Self::menu_dropdown_item(
-                        self.ui_lang.tr("Open Folder...", "Ouvrir Dossier...").to_string(),
+                        crate::tr!("menu.file.open_folder", self.ui_lang),
                         Some("Ctrl+O"),
                         false,
                         Some(Message::OpenProjectFolderDialog),
                     ),
                     Self::menu_dropdown_item(
-                        self.ui_lang.tr("Open Manifest (.fplc)...", "Ouvrir Manifeste (.fplc)...").to_string(),
+                        crate::tr!("menu.file.open_manifest", self.ui_lang),
                         None,
                         false,
                         Some(Message::OpenProjectManifestDialog),
                     ),
                     Self::menu_dropdown_divider(),
                     Self::menu_dropdown_item(
-                        self.ui_lang.tr("Export PLCopen XML...", "Exporter PLCopen XML...").to_string(),
+                        crate::tr!("menu.file.export_xml", self.ui_lang),
                         None,
                         false,
                         Some(Message::ExportPlcopenXmlDialog),
                     ),
                     Self::menu_dropdown_item(
-                        self.ui_lang.tr("Import PLCopen XML...", "Importer PLCopen XML...").to_string(),
+                        crate::tr!("menu.file.import_xml", self.ui_lang),
                         None,
                         false,
                         Some(Message::ImportPlcopenXmlDialog),
                     ),
                     Self::menu_dropdown_divider(),
                     Self::menu_dropdown_item(
-                        self.ui_lang.tr("Global Tags & FB", "Variables Globales & FB").to_string(),
+                        crate::tr!("menu.file.global_tags", self.ui_lang),
                         None,
                         false,
                         Some(Message::SelectTab(WorkspaceTab::SymbolsAndConfig)),
                     ),
                     Self::menu_dropdown_divider(),
                     Self::menu_dropdown_item(
-                        self.ui_lang.tr("Help & Manual", "Aide & Manuel").to_string(),
+                        crate::tr!("menu.file.help", self.ui_lang),
                         Some("F1"),
                         false,
                         Some(Message::OpenHelpWindow),
@@ -6032,41 +6032,41 @@ impl FerriteStudioApp {
             ActiveMenu::Plc => column![
                 Self::menu_dropdown_item(
                     if self.sim_running {
-                        self.ui_lang.tr("Pause PLC", "Mettre en Pause").to_string()
+                        crate::tr!("menu.plc.pause", self.ui_lang)
                     } else {
-                        self.ui_lang.tr("Run PLC", "Démarrer l'API").to_string()
+                        crate::tr!("menu.plc.run", self.ui_lang)
                     },
                     Some("F5"),
                     false,
                     Some(Message::ToggleRunSim),
                 ),
                 Self::menu_dropdown_item(
-                    self.ui_lang.tr("Single Step", "Pas-à-Pas").to_string(),
+                    crate::tr!("menu.plc.step", self.ui_lang),
                     Some("F10"),
                     false,
                     Some(Message::StepSimTick),
                 ),
                 Self::menu_dropdown_item(
-                    self.ui_lang.tr("Reset (Warm)", "Réinit (Chaud)").to_string(),
+                    crate::tr!("menu.plc.reset_warm", self.ui_lang),
                     Some("F4"),
                     false,
                     Some(Message::ResetSimWarm),
                 ),
                 Self::menu_dropdown_item(
-                    self.ui_lang.tr("Reset (Cold)", "Réinit (Froid)").to_string(),
+                    crate::tr!("menu.plc.reset_cold", self.ui_lang),
                     Some("Shift+F4"),
                     false,
                     Some(Message::ResetSimCold),
                 ),
                 Self::menu_dropdown_divider(),
                 Self::menu_dropdown_item(
-                    self.ui_lang.tr("Check & Compile", "Vérifier & Compiler").to_string(),
+                    crate::tr!("menu.plc.check", self.ui_lang),
                     Some("F7"),
                     false,
                     Some(Message::CheckProject),
                 ),
                 Self::menu_dropdown_item(
-                    self.ui_lang.tr("Run Scenarios", "Exécuter Scénarios").to_string(),
+                    crate::tr!("menu.plc.scenarios", self.ui_lang),
                     None,
                     false,
                     Some(Message::RunScenarios),
@@ -6076,19 +6076,19 @@ impl FerriteStudioApp {
             .into(),
             ActiveMenu::Panels => column![
                 Self::menu_dropdown_item(
-                    self.ui_lang.tr("Toggle Explorer", "Basculer Explorateur").to_string(),
+                    crate::tr!("menu.panels.toggle_explorer", self.ui_lang),
                     None,
                     false,
                     Some(Message::ToggleLeftExplorer),
                 ),
                 Self::menu_dropdown_item(
-                    self.ui_lang.tr("Toggle I/O Rack", "Basculer Baie E/S").to_string(),
+                    crate::tr!("menu.panels.toggle_io", self.ui_lang),
                     None,
                     false,
                     Some(Message::ToggleRightIo),
                 ),
                 Self::menu_dropdown_item(
-                    self.ui_lang.tr("Toggle Bottom Dock", "Basculer Panneau Inférieur").to_string(),
+                    crate::tr!("menu.panels.toggle_dock", self.ui_lang),
                     None,
                     false,
                     Some(Message::ToggleBottomDock),
@@ -6096,9 +6096,9 @@ impl FerriteStudioApp {
                 Self::menu_dropdown_divider(),
                 Self::menu_dropdown_item(
                     if self.detach_left_explorer {
-                        self.ui_lang.tr("Dock Explorer", "Ancrer Explorateur").to_string()
+                        crate::tr!("menu.panels.dock_explorer", self.ui_lang)
                     } else {
-                        self.ui_lang.tr("Detach Explorer", "Détacher Explorateur").to_string()
+                        crate::tr!("menu.panels.detach_explorer", self.ui_lang)
                     },
                     None,
                     false,
@@ -6110,9 +6110,9 @@ impl FerriteStudioApp {
                 ),
                 Self::menu_dropdown_item(
                     if self.detach_right_io {
-                        self.ui_lang.tr("Dock I/O Rack", "Ancrer Baie E/S").to_string()
+                        crate::tr!("menu.panels.dock_io", self.ui_lang)
                     } else {
-                        self.ui_lang.tr("Detach I/O Rack", "Détacher Baie E/S").to_string()
+                        crate::tr!("menu.panels.detach_io", self.ui_lang)
                     },
                     None,
                     false,
@@ -6124,9 +6124,9 @@ impl FerriteStudioApp {
                 ),
                 Self::menu_dropdown_item(
                     if self.detach_bottom_dock {
-                        self.ui_lang.tr("Dock Bottom Dock", "Ancrer Panneau Inférieur").to_string()
+                        crate::tr!("menu.panels.dock_dock", self.ui_lang)
                     } else {
-                        self.ui_lang.tr("Detach Bottom Dock", "Détacher Panneau Inférieur").to_string()
+                        crate::tr!("menu.panels.detach_dock", self.ui_lang)
                     },
                     None,
                     false,
@@ -6138,13 +6138,13 @@ impl FerriteStudioApp {
                 ),
                 Self::menu_dropdown_divider(),
                 Self::menu_dropdown_item(
-                    self.ui_lang.tr("Function Block Library", "Bibliothèque Blocs Fonction").to_string(),
+                    crate::tr!("menu.panels.library", self.ui_lang),
                     None,
                     false,
                     Some(Message::OpenFbdLibraryWindow),
                 ),
                 Self::menu_dropdown_item(
-                    self.ui_lang.tr("Digital Twin 2D", "Jumeau Numérique 2D").to_string(),
+                    crate::tr!("menu.panels.twin", self.ui_lang),
                     None,
                     false,
                     Some(Message::OpenDigitalTwinWindow),
@@ -6154,26 +6154,32 @@ impl FerriteStudioApp {
             .into(),
             ActiveMenu::Options => column![
                 Self::menu_dropdown_item(
-                    "English".to_string(),
+                    crate::tr!("menu.options.english", self.ui_lang),
                     None,
                     self.ui_lang == UiLanguage::En,
                     Some(Message::SetLanguage(UiLanguage::En)),
                 ),
                 Self::menu_dropdown_item(
-                    "Français".to_string(),
+                    crate::tr!("menu.options.french", self.ui_lang),
                     None,
                     self.ui_lang == UiLanguage::Fr,
                     Some(Message::SetLanguage(UiLanguage::Fr)),
                 ),
+                Self::menu_dropdown_item(
+                    crate::tr!("menu.options.pseudo", self.ui_lang),
+                    None,
+                    self.ui_lang == UiLanguage::Pseudo,
+                    Some(Message::SetLanguage(UiLanguage::Pseudo)),
+                ),
                 Self::menu_dropdown_divider(),
                 Self::menu_dropdown_item(
-                    self.ui_lang.tr("Dark Theme", "Thème Sombre").to_string(),
+                    crate::tr!("menu.options.theme_dark", self.ui_lang),
                     None,
                     self.ui_theme == UiTheme::Dark,
                     Some(Message::SetTheme(UiTheme::Dark)),
                 ),
                 Self::menu_dropdown_item(
-                    self.ui_lang.tr("Light Theme", "Thème Clair").to_string(),
+                    crate::tr!("menu.options.theme_light", self.ui_lang),
                     None,
                     self.ui_theme == UiTheme::Light,
                     Some(Message::SetTheme(UiTheme::Light)),
@@ -6184,7 +6190,7 @@ impl FerriteStudioApp {
         };
 
         container(items_col)
-            .width(230)
+            .width(250)
             .padding(4)
             .style(|_| container::Style {
                 background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
@@ -6238,23 +6244,21 @@ impl FerriteStudioApp {
         if self.show_close_confirm_modal {
             let modal_content = container(
                 column![
-                    text(self.ui_lang.tr("Unsaved Changes", "Modifications non enregistrées")).size(16),
-                    text(self.ui_lang.tr(
-                        "You have unsaved changes in your project. Do you want to save before closing?",
-                        "Vous avez des modifications non enregistrées. Voulez-vous enregistrer avant de quitter ?"
-                    ))
-                    .size(13)
-                    .color(StudioTheme::TEXT_SECONDARY),
+                    text(crate::tr!("dialog.confirm_close.title", self.ui_lang)).size(16),
+                    text(crate::tr!("dialog.confirm_close.message", self.ui_lang))
+                        .size(13)
+                        .color(StudioTheme::TEXT_SECONDARY)
+                        .wrapping(iced::widget::text::Wrapping::Word),
                     row![
-                        button(text(self.ui_lang.tr("Save & Exit", "Enregistrer & Quitter")).size(12))
+                        button(text(crate::tr!("dialog.confirm_close.save_and_exit", self.ui_lang)).size(12))
                             .on_press(Message::ConfirmCloseSaveAndExit)
                             .style(StudioTheme::primary_button)
                             .padding([6, 12]),
-                        button(text(self.ui_lang.tr("Discard", "Ignorer")).size(12))
+                        button(text(crate::tr!("dialog.confirm_close.discard", self.ui_lang)).size(12))
                             .on_press(Message::ConfirmCloseDiscardAndExit)
                             .style(StudioTheme::danger_button)
                             .padding([6, 12]),
-                        button(text(self.ui_lang.tr("Cancel", "Annuler")).size(12))
+                        button(text(crate::tr!("dialog.confirm_close.cancel", self.ui_lang)).size(12))
                             .on_press(Message::ConfirmCloseCancel)
                             .style(StudioTheme::secondary_button)
                             .padding([6, 12]),
@@ -6266,7 +6270,8 @@ impl FerriteStudioApp {
             )
             .padding(20)
             .style(StudioTheme::modal_card_style)
-            .width(460);
+            .width(Length::Shrink)
+            .max_width(540);
 
             return container(
                 container(modal_content)
@@ -6295,39 +6300,39 @@ impl FerriteStudioApp {
                 .count();
             let total = elements.len();
 
+            let step_label = if step_count <= 1 {
+                crate::tr!("dialog.sfc_delete.step", self.ui_lang)
+            } else {
+                crate::tr!("dialog.sfc_delete.steps", self.ui_lang)
+            };
+            let trans_label = if trans_count <= 1 {
+                crate::tr!("dialog.sfc_delete.transition", self.ui_lang)
+            } else {
+                crate::tr!("dialog.sfc_delete.transitions", self.ui_lang)
+            };
+            let msg = crate::tr!(
+                "dialog.sfc_delete.message",
+                self.ui_lang,
+                total = total,
+                step_count = step_count,
+                step_label = step_label,
+                trans_count = trans_count,
+                trans_label = trans_label
+            );
+
             let modal_content = container(
                 column![
-                    text(self.ui_lang.tr(
-                        "Delete Selected SFC Elements",
-                        "Supprimer les éléments SFC sélectionnés"
-                    ))
-                    .size(16),
-                    text(format!(
-                        "{} {} {} ({} {}, {} {})? {}",
-                        self.ui_lang.tr(
-                            "Are you sure you want to delete",
-                            "Voulez-vous vraiment supprimer"
-                        ),
-                        total,
-                        self.ui_lang
-                            .tr("selected object(s)", "objet(s) sélectionné(s)"),
-                        step_count,
-                        self.ui_lang.tr("step(s)", "étape(s)"),
-                        trans_count,
-                        self.ui_lang.tr("transition(s)", "transition(s)"),
-                        self.ui_lang.tr(
-                            "All attached wires and links will be removed.",
-                            "Toutes les liaisons associées seront supprimées."
-                        )
-                    ))
-                    .size(13)
-                    .color(StudioTheme::TEXT_SECONDARY),
+                    text(crate::tr!("dialog.sfc_delete.title", self.ui_lang)).size(16),
+                    text(msg)
+                        .size(13)
+                        .color(StudioTheme::TEXT_SECONDARY)
+                        .wrapping(iced::widget::text::Wrapping::Word),
                     row![
-                        button(text(self.ui_lang.tr("Delete", "Supprimer")).size(12))
+                        button(text(crate::tr!("dialog.sfc_delete.delete", self.ui_lang)).size(12))
                             .on_press(Message::SfcConfirmDeleteSelected)
                             .style(StudioTheme::danger_button)
                             .padding([6, 12]),
-                        button(text(self.ui_lang.tr("Cancel", "Annuler")).size(12))
+                        button(text(crate::tr!("dialog.sfc_delete.cancel", self.ui_lang)).size(12))
                             .on_press(Message::SfcCancelDeleteSelected)
                             .style(StudioTheme::secondary_button)
                             .padding([6, 12]),
@@ -6339,7 +6344,8 @@ impl FerriteStudioApp {
             )
             .padding(20)
             .style(StudioTheme::modal_card_style)
-            .width(460);
+            .width(Length::Shrink)
+            .max_width(560);
 
             return container(
                 container(modal_content)
@@ -6359,31 +6365,22 @@ impl FerriteStudioApp {
 
         if let Some(ref pou_name) = self.confirm_clear_modal {
             let p_name = pou_name.clone();
+            let msg = crate::tr!("dialog.confirm_clear.message", self.ui_lang, name = p_name);
             let modal_content = container(
                 column![
-                    text(
-                        self.ui_lang
-                            .tr("Confirm Clear POU", "Confirmer le vidage du POU")
-                    )
-                    .size(16),
-                    text(format!(
-                        "{} '{}'?",
-                        self.ui_lang.tr(
-                            "Are you sure you want to clear all contents of",
-                            "Voulez-vous vraiment vider tout le contenu de"
-                        ),
-                        p_name
-                    ))
-                    .size(13)
-                    .color(StudioTheme::TEXT_SECONDARY),
+                    text(crate::tr!("dialog.confirm_clear.title", self.ui_lang)).size(16),
+                    text(msg)
+                        .size(13)
+                        .color(StudioTheme::TEXT_SECONDARY)
+                        .wrapping(iced::widget::text::Wrapping::Word),
                     row![
                         button(
-                            text(self.ui_lang.tr("Yes, Clear POU", "Oui, vider le POU")).size(12)
+                            text(crate::tr!("dialog.confirm_clear.confirm", self.ui_lang)).size(12)
                         )
                         .on_press(Message::ExecuteClearPou(p_name))
                         .style(StudioTheme::danger_button)
                         .padding([6, 12]),
-                        button(text(self.ui_lang.tr("Cancel", "Annuler")).size(12))
+                        button(text(crate::tr!("dialog.confirm_clear.cancel", self.ui_lang)).size(12))
                             .on_press(Message::CancelClearPou)
                             .style(StudioTheme::secondary_button)
                             .padding([6, 12]),
@@ -6395,7 +6392,8 @@ impl FerriteStudioApp {
             )
             .padding(20)
             .style(StudioTheme::modal_card_style)
-            .width(420);
+            .width(Length::Shrink)
+            .max_width(520);
 
             container(
                 container(modal_content)
@@ -6462,15 +6460,12 @@ impl FerriteStudioApp {
             .map(|rt| rt.active_forces_count())
             .unwrap_or(0);
         let forces_banner: Element<'_, Message> = if active_forces > 0 {
+            let forces_txt = crate::tr!("app.forces_active", self.ui_lang, count = active_forces);
             row![
                 container(
-                    text(format!(
-                        "[!] {} {}",
-                        active_forces,
-                        self.ui_lang.tr("FORCES ACTIVE", "FORÇAGES ACTIFS")
-                    ))
-                    .size(11)
-                    .color(StudioTheme::ACCENT_AMBER)
+                    text(format!("[!] {forces_txt}"))
+                        .size(11)
+                        .color(StudioTheme::ACCENT_AMBER)
                 )
                 .padding([3, 8])
                 .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
@@ -6518,9 +6513,9 @@ impl FerriteStudioApp {
 
         let run_btn = button(
             text(if self.sim_running {
-                self.ui_lang.tr("Pause", "Pause")
+                crate::tr!("toolbar.pause", self.ui_lang)
             } else {
-                self.ui_lang.tr("Run", "Démarrer")
+                crate::tr!("toolbar.run", self.ui_lang)
             })
             .size(12),
         )
@@ -6532,19 +6527,19 @@ impl FerriteStudioApp {
         })
         .padding([6, 12]);
 
-        let step_btn = button(text(self.ui_lang.tr("Step", "Pas")).size(12))
+        let step_btn = button(text(crate::tr!("toolbar.step", self.ui_lang)).size(12))
             .on_press(Message::StepSimTick)
             .style(StudioTheme::secondary_button)
             .padding([6, 12]);
 
         let reset_warm_btn =
-            button(text(self.ui_lang.tr("Reset (Warm)", "Réinit (Chaud)")).size(12))
+            button(text(crate::tr!("toolbar.reset_warm", self.ui_lang)).size(12))
                 .on_press(Message::ResetSimWarm)
                 .style(StudioTheme::secondary_button)
                 .padding([6, 10]);
 
         let reset_cold_btn =
-            button(text(self.ui_lang.tr("Reset (Cold)", "Réinit (Froid)")).size(12))
+            button(text(crate::tr!("toolbar.reset_cold", self.ui_lang)).size(12))
                 .on_press(Message::ResetSimCold)
                 .style(StudioTheme::ghost_button)
                 .padding([6, 10]);
@@ -6565,7 +6560,7 @@ impl FerriteStudioApp {
         .spacing(4)
         .align_y(Alignment::Center);
 
-        let check_btn = button(text(self.ui_lang.tr("Check", "Vérifier")).size(12))
+        let check_btn = button(text(crate::tr!("toolbar.check", self.ui_lang)).size(12))
             .on_press(Message::CheckProject)
             .style(StudioTheme::secondary_button)
             .padding([6, 12]);
@@ -6588,7 +6583,7 @@ impl FerriteStudioApp {
             .style(StudioTheme::ghost_button)
             .padding([6, 10]);
 
-        let scenarios_btn = button(text(self.ui_lang.tr("Scenarios", "Scénarios")).size(12))
+        let scenarios_btn = button(text(crate::tr!("toolbar.scenarios", self.ui_lang)).size(12))
             .on_press(Message::RunScenarios)
             .style(StudioTheme::secondary_button)
             .padding([6, 12]);
@@ -6604,7 +6599,7 @@ impl FerriteStudioApp {
 
         let menu_bar = row![
             mouse_area(
-                button(text(self.ui_lang.tr("File", "Fichier")).size(11))
+                button(text(crate::tr!("menu.file.title", self.ui_lang)).size(11))
                     .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::File)))
                     .style(if self.active_menu == Some(ActiveMenu::File) {
                         StudioTheme::secondary_button
@@ -6615,7 +6610,7 @@ impl FerriteStudioApp {
             )
             .on_enter(Message::MenuHover(ActiveMenu::File)),
             mouse_area(
-                button(text(self.ui_lang.tr("PLC", "API")).size(11))
+                button(text(crate::tr!("menu.plc.title", self.ui_lang)).size(11))
                     .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Plc)))
                     .style(if self.active_menu == Some(ActiveMenu::Plc) {
                         StudioTheme::secondary_button
@@ -6626,7 +6621,7 @@ impl FerriteStudioApp {
             )
             .on_enter(Message::MenuHover(ActiveMenu::Plc)),
             mouse_area(
-                button(text(self.ui_lang.tr("Panels", "Panneaux")).size(11))
+                button(text(crate::tr!("menu.panels.title", self.ui_lang)).size(11))
                     .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Panels)))
                     .style(if self.active_menu == Some(ActiveMenu::Panels) {
                         StudioTheme::secondary_button
@@ -6637,7 +6632,7 @@ impl FerriteStudioApp {
             )
             .on_enter(Message::MenuHover(ActiveMenu::Panels)),
             mouse_area(
-                button(text(self.ui_lang.tr("Options", "Options")).size(11))
+                button(text(crate::tr!("menu.options.title", self.ui_lang)).size(11))
                     .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Options)))
                     .style(if self.active_menu == Some(ActiveMenu::Options) {
                         StudioTheme::secondary_button
