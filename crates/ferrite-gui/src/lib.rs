@@ -2305,4 +2305,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
+    #[test]
+    fn test_classic_dropdown_menu_rendering() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("ferrite_gui_dropdown_render_test");
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        let win_id = iced::window::Id::unique();
+        // Render base view with no active menu
+        let _ = app.view(win_id);
+
+        // Render with File menu active
+        app.active_menu = Some(crate::app::ActiveMenu::File);
+        let _ = app.view(win_id);
+
+        // Render with Plc menu active
+        app.active_menu = Some(crate::app::ActiveMenu::Plc);
+        let _ = app.view(win_id);
+
+        // Render with Panels menu active
+        app.active_menu = Some(crate::app::ActiveMenu::Panels);
+        let _ = app.view(win_id);
+
+        // Render with Options menu active
+        app.active_menu = Some(crate::app::ActiveMenu::Options);
+        let _ = app.view(win_id);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }

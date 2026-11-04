@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use iced::border::Radius;
 use iced::widget::{
-    button, column, container, mouse_area, pick_list, row, scrollable, text, text_editor, text_input,
+    button, column, container, mouse_area, pick_list, row, scrollable, stack, text, text_editor, text_input,
 };
 use iced::{Alignment, Background, Border, Color, Element, Length, Task, Theme, Vector};
 
@@ -5901,321 +5901,302 @@ impl FerriteStudioApp {
         Self::new(proj)
     }
 
+    fn menu_dropdown_item<'a>(
+        label: String,
+        shortcut: Option<&'static str>,
+        is_active_selection: bool,
+        on_press: Option<Message>,
+    ) -> Element<'a, Message> {
+        let mut item_row = row![
+            text(label).size(12).color(if on_press.is_some() {
+                StudioTheme::TEXT_PRIMARY
+            } else {
+                StudioTheme::TEXT_MUTED
+            }),
+        ]
+        .align_y(Alignment::Center);
+
+        if is_active_selection {
+            item_row = item_row.push(
+                text(" ✓")
+                    .size(11)
+                    .color(StudioTheme::ACCENT_CYAN),
+            );
+        }
+
+        if let Some(sc) = shortcut {
+            item_row = item_row.push(iced::widget::Space::with_width(Length::Fill));
+            item_row = item_row.push(text(sc).size(10).color(StudioTheme::TEXT_MUTED));
+        } else {
+            item_row = item_row.push(iced::widget::Space::with_width(Length::Fill));
+        }
+
+        button(item_row)
+            .on_press_maybe(on_press)
+            .style(StudioTheme::ghost_button)
+            .width(Length::Fill)
+            .padding([5, 10])
+            .into()
+    }
+
+    fn menu_dropdown_divider<'a>() -> Element<'a, Message> {
+        container(iced::widget::Space::with_height(1))
+            .width(Length::Fill)
+            .padding(iced::Padding {
+                top: 2.0,
+                bottom: 2.0,
+                left: 6.0,
+                right: 6.0,
+            })
+            .style(|_| container::Style {
+                background: Some(Background::Color(StudioTheme::BORDER_CARD)),
+                ..Default::default()
+            })
+            .into()
+    }
+
     fn view_active_menu(&self) -> Element<'_, Message> {
         let Some(active) = self.active_menu else {
             return column![].into();
         };
 
-        let items: Element<'_, Message> = match active {
+        let items_col: Element<'_, Message> = match active {
             ActiveMenu::File => {
                 let save_pou_msg = if let WorkspaceTab::Pou(ref p_name) = self.active_tab {
                     Some(Message::SavePou(p_name.clone()))
                 } else {
                     None
                 };
-                row![
-                button(
-                    text(
-                        self.ui_lang
-                            .tr("Save Active POU (Ctrl+S)", "Enregistrer POU Actif (Ctrl+S)")
-                    )
-                    .size(11)
-                )
-                .on_press_maybe(save_pou_msg)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                button(
-                    text(
-                        self.ui_lang
-                            .tr("Save Project (Ctrl+Shift+S)", "Enregistrer Projet (Ctrl+Shift+S)")
-                    )
-                    .size(11)
-                )
-                .on_press(Message::SaveProject)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                button(text(self.ui_lang.tr("Save As...", "Enregistrer sous...")).size(11))
-                    .on_press(Message::SaveProjectAsDialog)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
-                button(
-                    text(
-                        self.ui_lang
-                            .tr("Open Folder (Ctrl+O)...", "Ouvrir Dossier (Ctrl+O)...")
-                    )
-                    .size(11)
-                )
-                .on_press(Message::OpenProjectFolderDialog)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                button(
-                    text(
-                        self.ui_lang
-                            .tr("Open Manifest (.fplc)...", "Ouvrir Manifeste (.fplc)...")
-                    )
-                    .size(11)
-                )
-                .on_press(Message::OpenProjectManifestDialog)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                text("|").size(11).color(StudioTheme::BORDER_CARD),
-                button(
-                    text(
-                        self.ui_lang
-                            .tr("Export PLCopen XML...", "Exporter PLCopen XML...")
-                    )
-                    .size(11)
-                )
-                .on_press(Message::ExportPlcopenXmlDialog)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                button(
-                    text(
-                        self.ui_lang
-                            .tr("Import PLCopen XML...", "Importer PLCopen XML...")
-                    )
-                    .size(11)
-                )
-                .on_press(Message::ImportPlcopenXmlDialog)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                text("|").size(11).color(StudioTheme::BORDER_CARD),
-                button(
-                    text(
-                        self.ui_lang
-                            .tr("Global Tags & FB", "Variables Globales & FB")
-                    )
-                    .size(11)
-                )
-                .on_press(Message::SelectTab(WorkspaceTab::SymbolsAndConfig))
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                text("|").size(11).color(StudioTheme::BORDER_CARD),
-                button(
-                    text(
-                        self.ui_lang
-                            .tr("Help & Manual (F1)", "Aide & Manuel (F1)")
-                    )
-                    .size(11)
-                )
-                .on_press(Message::OpenHelpWindow)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                iced::widget::Space::with_width(Length::Fill),
-                button(
-                    text(crate::icons::icon_close())
-                        .size(11)
-                        .shaping(iced::widget::text::Shaping::Advanced),
-                )
-                .on_press(Message::ToggleActiveMenu(None))
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .into()
+                column![
+                    Self::menu_dropdown_item(
+                        self.ui_lang.tr("Save Active POU", "Enregistrer POU Actif").to_string(),
+                        Some("Ctrl+S"),
+                        false,
+                        save_pou_msg,
+                    ),
+                    Self::menu_dropdown_item(
+                        self.ui_lang.tr("Save Project", "Enregistrer Projet").to_string(),
+                        Some("Ctrl+Shift+S"),
+                        false,
+                        Some(Message::SaveProject),
+                    ),
+                    Self::menu_dropdown_item(
+                        self.ui_lang.tr("Save As...", "Enregistrer sous...").to_string(),
+                        None,
+                        false,
+                        Some(Message::SaveProjectAsDialog),
+                    ),
+                    Self::menu_dropdown_item(
+                        self.ui_lang.tr("Open Folder...", "Ouvrir Dossier...").to_string(),
+                        Some("Ctrl+O"),
+                        false,
+                        Some(Message::OpenProjectFolderDialog),
+                    ),
+                    Self::menu_dropdown_item(
+                        self.ui_lang.tr("Open Manifest (.fplc)...", "Ouvrir Manifeste (.fplc)...").to_string(),
+                        None,
+                        false,
+                        Some(Message::OpenProjectManifestDialog),
+                    ),
+                    Self::menu_dropdown_divider(),
+                    Self::menu_dropdown_item(
+                        self.ui_lang.tr("Export PLCopen XML...", "Exporter PLCopen XML...").to_string(),
+                        None,
+                        false,
+                        Some(Message::ExportPlcopenXmlDialog),
+                    ),
+                    Self::menu_dropdown_item(
+                        self.ui_lang.tr("Import PLCopen XML...", "Importer PLCopen XML...").to_string(),
+                        None,
+                        false,
+                        Some(Message::ImportPlcopenXmlDialog),
+                    ),
+                    Self::menu_dropdown_divider(),
+                    Self::menu_dropdown_item(
+                        self.ui_lang.tr("Global Tags & FB", "Variables Globales & FB").to_string(),
+                        None,
+                        false,
+                        Some(Message::SelectTab(WorkspaceTab::SymbolsAndConfig)),
+                    ),
+                    Self::menu_dropdown_divider(),
+                    Self::menu_dropdown_item(
+                        self.ui_lang.tr("Help & Manual", "Aide & Manuel").to_string(),
+                        Some("F1"),
+                        false,
+                        Some(Message::OpenHelpWindow),
+                    ),
+                ]
+                .spacing(1)
+                .into()
             }
-            ActiveMenu::Plc => row![
-                button(
-                    text(if self.sim_running {
-                        self.ui_lang.tr("Pause PLC", "Mettre en Pause")
+            ActiveMenu::Plc => column![
+                Self::menu_dropdown_item(
+                    if self.sim_running {
+                        self.ui_lang.tr("Pause PLC", "Mettre en Pause").to_string()
                     } else {
-                        self.ui_lang.tr("Run PLC", "Démarrer l'API")
-                    })
-                    .size(11)
-                )
-                .on_press(Message::ToggleRunSim)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                button(text(self.ui_lang.tr("Single Step", "Pas-à-Pas")).size(11))
-                .on_press(Message::StepSimTick)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                button(text(self.ui_lang.tr("Reset (Warm)", "Réinit (Chaud)")).size(11))
-                .on_press(Message::ResetSimWarm)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                button(text(self.ui_lang.tr("Reset (Cold)", "Réinit (Froid)")).size(11))
-                .on_press(Message::ResetSimCold)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                text("|").size(11).color(StudioTheme::BORDER_CARD),
-                button(text(self.ui_lang.tr("Check & Compile", "Vérifier & Compiler")).size(11))
-                .on_press(Message::CheckProject)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                button(text(self.ui_lang.tr("Run Scenarios", "Exécuter Scénarios")).size(11))
-                .on_press(Message::RunScenarios)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                iced::widget::Space::with_width(Length::Fill),
-                button(
-                    text(crate::icons::icon_close())
-                        .size(11)
-                        .shaping(iced::widget::text::Shaping::Advanced),
-                )
-                .on_press(Message::ToggleActiveMenu(None))
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
+                        self.ui_lang.tr("Run PLC", "Démarrer l'API").to_string()
+                    },
+                    Some("F5"),
+                    false,
+                    Some(Message::ToggleRunSim),
+                ),
+                Self::menu_dropdown_item(
+                    self.ui_lang.tr("Single Step", "Pas-à-Pas").to_string(),
+                    Some("F10"),
+                    false,
+                    Some(Message::StepSimTick),
+                ),
+                Self::menu_dropdown_item(
+                    self.ui_lang.tr("Reset (Warm)", "Réinit (Chaud)").to_string(),
+                    Some("F4"),
+                    false,
+                    Some(Message::ResetSimWarm),
+                ),
+                Self::menu_dropdown_item(
+                    self.ui_lang.tr("Reset (Cold)", "Réinit (Froid)").to_string(),
+                    Some("Shift+F4"),
+                    false,
+                    Some(Message::ResetSimCold),
+                ),
+                Self::menu_dropdown_divider(),
+                Self::menu_dropdown_item(
+                    self.ui_lang.tr("Check & Compile", "Vérifier & Compiler").to_string(),
+                    Some("F7"),
+                    false,
+                    Some(Message::CheckProject),
+                ),
+                Self::menu_dropdown_item(
+                    self.ui_lang.tr("Run Scenarios", "Exécuter Scénarios").to_string(),
+                    None,
+                    false,
+                    Some(Message::RunScenarios),
+                ),
             ]
-            .spacing(6)
-            .align_y(Alignment::Center)
+            .spacing(1)
             .into(),
-            ActiveMenu::Panels => row![
-                button(text(self.ui_lang.tr("Toggle Explorer", "Basculer Explorateur")).size(11))
-                    .on_press(Message::ToggleLeftExplorer)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
-                button(text(self.ui_lang.tr("Toggle I/O Rack", "Basculer Baie E/S")).size(11))
-                    .on_press(Message::ToggleRightIo)
-                    .style(StudioTheme::ghost_button)
-                    .padding([4, 8]),
-                button(
-                    text(
-                        self.ui_lang
-                            .tr("Toggle Bottom Dock", "Basculer Panneau Inférieur")
-                    )
-                    .size(11)
-                )
-                .on_press(Message::ToggleBottomDock)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                text("|").size(11).color(StudioTheme::BORDER_CARD),
-                button(
-                    text(if self.detach_left_explorer {
-                        self.ui_lang.tr("Dock Explorer", "Ancrer Explorateur")
+            ActiveMenu::Panels => column![
+                Self::menu_dropdown_item(
+                    self.ui_lang.tr("Toggle Explorer", "Basculer Explorateur").to_string(),
+                    None,
+                    false,
+                    Some(Message::ToggleLeftExplorer),
+                ),
+                Self::menu_dropdown_item(
+                    self.ui_lang.tr("Toggle I/O Rack", "Basculer Baie E/S").to_string(),
+                    None,
+                    false,
+                    Some(Message::ToggleRightIo),
+                ),
+                Self::menu_dropdown_item(
+                    self.ui_lang.tr("Toggle Bottom Dock", "Basculer Panneau Inférieur").to_string(),
+                    None,
+                    false,
+                    Some(Message::ToggleBottomDock),
+                ),
+                Self::menu_dropdown_divider(),
+                Self::menu_dropdown_item(
+                    if self.detach_left_explorer {
+                        self.ui_lang.tr("Dock Explorer", "Ancrer Explorateur").to_string()
                     } else {
-                        self.ui_lang.tr("Detach Explorer", "Détacher Explorateur")
-                    })
-                    .size(11)
-                )
-                .on_press(if self.detach_left_explorer {
-                    Message::DockLeftExplorer
-                } else {
-                    Message::DetachLeftExplorer
-                })
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                button(
-                    text(if self.detach_right_io {
-                        self.ui_lang.tr("Dock I/O Rack", "Ancrer Baie E/S")
+                        self.ui_lang.tr("Detach Explorer", "Détacher Explorateur").to_string()
+                    },
+                    None,
+                    false,
+                    Some(if self.detach_left_explorer {
+                        Message::DockLeftExplorer
                     } else {
-                        self.ui_lang.tr("Detach I/O Rack", "Détacher Baie E/S")
-                    })
-                    .size(11)
-                )
-                .on_press(if self.detach_right_io {
-                    Message::DockRightIo
-                } else {
-                    Message::DetachRightIo
-                })
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                button(
-                    text(if self.detach_bottom_dock {
-                        self.ui_lang
-                            .tr("Dock Bottom Dock", "Ancrer Panneau Inférieur")
+                        Message::DetachLeftExplorer
+                    }),
+                ),
+                Self::menu_dropdown_item(
+                    if self.detach_right_io {
+                        self.ui_lang.tr("Dock I/O Rack", "Ancrer Baie E/S").to_string()
                     } else {
-                        self.ui_lang
-                            .tr("Detach Bottom Dock", "Détacher Panneau Inférieur")
-                    })
-                    .size(11)
-                )
-                .on_press(if self.detach_bottom_dock {
-                    Message::DockBottomDock
-                } else {
-                    Message::DetachBottomDock
-                })
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                text("|").size(11).color(StudioTheme::BORDER_CARD),
-                button(
-                    text(
-                        self.ui_lang
-                            .tr("Open Digital Twin 2D", "Ouvrir Jumeau Numérique 2D")
-                    )
-                    .size(11)
-                )
-                .on_press(Message::OpenDigitalTwinWindow)
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
-                iced::widget::Space::with_width(Length::Fill),
-                button(
-                    text(crate::icons::icon_close())
-                        .size(11)
-                        .shaping(iced::widget::text::Shaping::Advanced),
-                )
-                .on_press(Message::ToggleActiveMenu(None))
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
+                        self.ui_lang.tr("Detach I/O Rack", "Détacher Baie E/S").to_string()
+                    },
+                    None,
+                    false,
+                    Some(if self.detach_right_io {
+                        Message::DockRightIo
+                    } else {
+                        Message::DetachRightIo
+                    }),
+                ),
+                Self::menu_dropdown_item(
+                    if self.detach_bottom_dock {
+                        self.ui_lang.tr("Dock Bottom Dock", "Ancrer Panneau Inférieur").to_string()
+                    } else {
+                        self.ui_lang.tr("Detach Bottom Dock", "Détacher Panneau Inférieur").to_string()
+                    },
+                    None,
+                    false,
+                    Some(if self.detach_bottom_dock {
+                        Message::DockBottomDock
+                    } else {
+                        Message::DetachBottomDock
+                    }),
+                ),
+                Self::menu_dropdown_divider(),
+                Self::menu_dropdown_item(
+                    self.ui_lang.tr("Function Block Library", "Bibliothèque Blocs Fonction").to_string(),
+                    None,
+                    false,
+                    Some(Message::OpenFbdLibraryWindow),
+                ),
+                Self::menu_dropdown_item(
+                    self.ui_lang.tr("Digital Twin 2D", "Jumeau Numérique 2D").to_string(),
+                    None,
+                    false,
+                    Some(Message::OpenDigitalTwinWindow),
+                ),
             ]
-            .spacing(6)
-            .align_y(Alignment::Center)
+            .spacing(1)
             .into(),
-            ActiveMenu::Options => row![
-                text(self.ui_lang.tr("Language:", "Langue :"))
-                    .size(11)
-                    .color(StudioTheme::TEXT_MUTED),
-                button(text("English").size(11))
-                    .on_press(Message::SetLanguage(UiLanguage::En))
-                    .style(if self.ui_lang == UiLanguage::En {
-                        StudioTheme::primary_button
-                    } else {
-                        StudioTheme::ghost_button
-                    })
-                    .padding([3, 8]),
-                button(text("Français").size(11))
-                    .on_press(Message::SetLanguage(UiLanguage::Fr))
-                    .style(if self.ui_lang == UiLanguage::Fr {
-                        StudioTheme::primary_button
-                    } else {
-                        StudioTheme::ghost_button
-                    })
-                    .padding([3, 8]),
-                text("|").size(11).color(StudioTheme::BORDER_CARD),
-                text(self.ui_lang.tr("Theme:", "Thème :"))
-                    .size(11)
-                    .color(StudioTheme::TEXT_MUTED),
-                button(text(self.ui_lang.tr("Dark", "Sombre")).size(11))
-                    .on_press(Message::SetTheme(UiTheme::Dark))
-                    .style(if self.ui_theme == UiTheme::Dark {
-                        StudioTheme::primary_button
-                    } else {
-                        StudioTheme::ghost_button
-                    })
-                    .padding([3, 8]),
-                button(text(self.ui_lang.tr("Light", "Clair")).size(11))
-                    .on_press(Message::SetTheme(UiTheme::Light))
-                    .style(if self.ui_theme == UiTheme::Light {
-                        StudioTheme::primary_button
-                    } else {
-                        StudioTheme::ghost_button
-                    })
-                    .padding([3, 8]),
-                iced::widget::Space::with_width(Length::Fill),
-                button(
-                    text(crate::icons::icon_close())
-                        .size(11)
-                        .shaping(iced::widget::text::Shaping::Advanced),
-                )
-                .on_press(Message::ToggleActiveMenu(None))
-                .style(StudioTheme::ghost_button)
-                .padding([4, 8]),
+            ActiveMenu::Options => column![
+                Self::menu_dropdown_item(
+                    "English".to_string(),
+                    None,
+                    self.ui_lang == UiLanguage::En,
+                    Some(Message::SetLanguage(UiLanguage::En)),
+                ),
+                Self::menu_dropdown_item(
+                    "Français".to_string(),
+                    None,
+                    self.ui_lang == UiLanguage::Fr,
+                    Some(Message::SetLanguage(UiLanguage::Fr)),
+                ),
+                Self::menu_dropdown_divider(),
+                Self::menu_dropdown_item(
+                    self.ui_lang.tr("Dark Theme", "Thème Sombre").to_string(),
+                    None,
+                    self.ui_theme == UiTheme::Dark,
+                    Some(Message::SetTheme(UiTheme::Dark)),
+                ),
+                Self::menu_dropdown_item(
+                    self.ui_lang.tr("Light Theme", "Thème Clair").to_string(),
+                    None,
+                    self.ui_theme == UiTheme::Light,
+                    Some(Message::SetTheme(UiTheme::Light)),
+                ),
             ]
-            .spacing(6)
-            .align_y(Alignment::Center)
+            .spacing(1)
             .into(),
         };
 
-        container(items)
-            .padding([4, 12])
-            .width(Length::Fill)
+        container(items_col)
+            .width(230)
+            .padding(4)
             .style(|_| container::Style {
-                background: Some(Background::Color(Color::from_rgb(0.08, 0.10, 0.14))),
+                background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
                 border: Border {
                     color: StudioTheme::BORDER_CARD,
                     width: 1.0,
-                    radius: Radius::from(0.0),
+                    radius: Radius::from(6.0),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 12.0,
                 },
                 ..Default::default()
             })
@@ -6239,11 +6220,7 @@ impl FerriteStudioApp {
 
         let main_area = container(body_row).width(Length::Fill).height(Length::Fill);
 
-        let mut root_col = column![header];
-        if self.active_menu.is_some() {
-            root_col = root_col.push(self.view_active_menu());
-        }
-        root_col = root_col.push(main_area);
+        let mut root_col = column![header, main_area];
 
         if self.show_bottom_dock && !self.detach_bottom_dock {
             root_col = root_col.push(self.view_bottom_dock());
@@ -6434,6 +6411,33 @@ impl FerriteStudioApp {
                 ..Default::default()
             })
             .into()
+        } else if let Some(active) = self.active_menu {
+            let backdrop = column![
+                iced::widget::Space::with_height(34.0),
+                mouse_area(
+                    container(iced::widget::Space::with_width(Length::Fill))
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .on_press(Message::ToggleActiveMenu(None)),
+            ];
+
+            let x_offset = match active {
+                ActiveMenu::File => 88.0,
+                ActiveMenu::Plc => 134.0,
+                ActiveMenu::Panels => 180.0,
+                ActiveMenu::Options => 248.0,
+            };
+
+            let menu_card = container(self.view_active_menu())
+                .padding(iced::Padding {
+                    top: 35.0,
+                    left: x_offset,
+                    right: 0.0,
+                    bottom: 0.0,
+                });
+
+            stack![base_content, backdrop, menu_card].into()
         } else {
             base_content
         }
@@ -6598,38 +6602,50 @@ impl FerriteStudioApp {
             .padding([6, 10]);
 
         let menu_bar = row![
-            button(text(self.ui_lang.tr("File", "Fichier")).size(11))
-                .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::File)))
-                .style(if self.active_menu == Some(ActiveMenu::File) {
-                    StudioTheme::secondary_button
-                } else {
-                    StudioTheme::ghost_button
-                })
-                .padding([3, 7]),
-            button(text(self.ui_lang.tr("PLC", "API")).size(11))
-                .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Plc)))
-                .style(if self.active_menu == Some(ActiveMenu::Plc) {
-                    StudioTheme::secondary_button
-                } else {
-                    StudioTheme::ghost_button
-                })
-                .padding([3, 7]),
-            button(text(self.ui_lang.tr("Panels", "Panneaux")).size(11))
-                .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Panels)))
-                .style(if self.active_menu == Some(ActiveMenu::Panels) {
-                    StudioTheme::secondary_button
-                } else {
-                    StudioTheme::ghost_button
-                })
-                .padding([3, 7]),
-            button(text(self.ui_lang.tr("Options", "Options")).size(11))
-                .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Options)))
-                .style(if self.active_menu == Some(ActiveMenu::Options) {
-                    StudioTheme::secondary_button
-                } else {
-                    StudioTheme::ghost_button
-                })
-                .padding([3, 7]),
+            mouse_area(
+                button(text(self.ui_lang.tr("File", "Fichier")).size(11))
+                    .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::File)))
+                    .style(if self.active_menu == Some(ActiveMenu::File) {
+                        StudioTheme::secondary_button
+                    } else {
+                        StudioTheme::ghost_button
+                    })
+                    .padding([3, 7]),
+            )
+            .on_enter(Message::MenuHover(ActiveMenu::File)),
+            mouse_area(
+                button(text(self.ui_lang.tr("PLC", "API")).size(11))
+                    .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Plc)))
+                    .style(if self.active_menu == Some(ActiveMenu::Plc) {
+                        StudioTheme::secondary_button
+                    } else {
+                        StudioTheme::ghost_button
+                    })
+                    .padding([3, 7]),
+            )
+            .on_enter(Message::MenuHover(ActiveMenu::Plc)),
+            mouse_area(
+                button(text(self.ui_lang.tr("Panels", "Panneaux")).size(11))
+                    .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Panels)))
+                    .style(if self.active_menu == Some(ActiveMenu::Panels) {
+                        StudioTheme::secondary_button
+                    } else {
+                        StudioTheme::ghost_button
+                    })
+                    .padding([3, 7]),
+            )
+            .on_enter(Message::MenuHover(ActiveMenu::Panels)),
+            mouse_area(
+                button(text(self.ui_lang.tr("Options", "Options")).size(11))
+                    .on_press(Message::ToggleActiveMenu(Some(ActiveMenu::Options)))
+                    .style(if self.active_menu == Some(ActiveMenu::Options) {
+                        StudioTheme::secondary_button
+                    } else {
+                        StudioTheme::ghost_button
+                    })
+                    .padding([3, 7]),
+            )
+            .on_enter(Message::MenuHover(ActiveMenu::Options)),
         ]
         .spacing(2)
         .align_y(Alignment::Center);
