@@ -104,9 +104,9 @@ pub fn load_saved_language() -> Option<UiLanguage> {
     UserSettings::load().language
 }
 
-/// Returns the saved UI language if present, or falls back to system OS language detection.
+/// Returns the saved UI language if present, or falls back to French by default (UiLanguage::Fr).
 pub fn load_saved_language_or_os() -> UiLanguage {
-    load_saved_language().unwrap_or_else(crate::i18n::detect_os_language)
+    load_saved_language().unwrap_or(UiLanguage::Fr)
 }
 
 /// Persists the selected UI language to the user's settings.

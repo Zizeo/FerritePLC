@@ -2014,7 +2014,8 @@ mod tests {
             kind: ferrite_lang_sfc::StepKind::Initial,
             actions: Vec::new(),
             grid_pos: Some((10, 10)),
-        };
+                    ..Default::default()
+                };
         let trans = ferrite_lang_sfc::SfcTransition {
             id: "Trans_1".to_string(),
             receptivity: "Sensor_1".to_string(),
@@ -2602,9 +2603,10 @@ mod tests {
 
         let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
 
-        // 1. First app launch: set language to French
+        // 1. First app launch: defaults to French
         {
             let mut app = FerriteStudioApp::new(proj.clone());
+            assert_eq!(app.ui_lang, UiLanguage::Fr, "Default language on first launch must be French");
             let _ = app.update(Message::SetLanguage(UiLanguage::Fr));
             assert_eq!(app.ui_lang, UiLanguage::Fr);
         } // App is "closed" here

@@ -19,7 +19,7 @@ use ferrite_hal::{
 };
 use ferrite_ir::ValidationDiagnostic;
 use ferrite_lang_fbd::{FbdBlock, FbdBlockKind, FbdInputSource};
-use ferrite_lang_ld::{CoilKind, ContactKind, LdCoil, LdElement, LdRung};
+use ferrite_lang_ld::{CoilKind, ContactKind, LdCoil, LdCompareOp, LdElement, LdMathOp, LdRung};
 use ferrite_lang_sfc::{
     ActionQualifier, ConvergenceKind, DivergenceKind, SfcAction, SfcStep, SfcTransition, StepKind,
 };
@@ -300,6 +300,10 @@ pub enum Message {
     LdRungCommentChanged(String, usize, String),
     LdAddContact(String, usize),
     LdAddContactWithKind(String, usize, ContactKind),
+    LdAddCompare(String, usize),
+    LdAddMathMove(String, usize),
+    LdCompareChanged(String, usize, Vec<LdBranchPathSegment>, usize, LdCompareOp, String, String),
+    LdMathMoveChanged(String, usize, Vec<LdBranchPathSegment>, usize, LdMathOp, String, String, String),
     LdRemoveContact(String, usize, usize),
     LdContactSymbolChanged(String, usize, Vec<LdBranchPathSegment>, usize, String),
     LdContactKindChanged(String, usize, Vec<LdBranchPathSegment>, usize, ContactKind),
@@ -3413,6 +3417,90 @@ impl FerriteStudioApp {
                 self.perform_ld_add_contact(&pou_name, r_idx, sym, kind);
                 Task::none()
             }
+            Message::LdAddCompare(pou_name, r_idx) => {
+                if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(rung) = ld.rungs.get_mut(r_idx)
+                {
+                    let new_elem = LdElement::Compare {
+                        op: LdCompareOp::Ge,
+                        left: "Tank_Level".to_string(),
+                        right: "50.0".to_string(),
+                    };
+                    let idx = rung.elements.len();
+                    rung.elements.push(new_elem);
+                    let key = LdElementKey::Contact {
+                        rung: r_idx,
+                        branch_path: Vec::new(),
+                        index: idx,
+                    };
+                    self.ld_selected = Some((pou_name, key.clone()));
+                    self.ld_selected_elements = vec![key];
+                    self.track_history();
+                    self.recompile_runtime();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::LdAddMathMove(pou_name, r_idx) => {
+                if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(rung) = ld.rungs.get_mut(r_idx)
+                {
+                    let new_elem = LdElement::MathMove {
+                        op: LdMathOp::Add,
+                        input1: "Tank_Level".to_string(),
+                        input2: Some("1.0".to_string()),
+                        dest: "Tank_Level".to_string(),
+                    };
+                    let idx = rung.elements.len();
+                    rung.elements.push(new_elem);
+                    let key = LdElementKey::Contact {
+                        rung: r_idx,
+                        branch_path: Vec::new(),
+                        index: idx,
+                    };
+                    self.ld_selected = Some((pou_name, key.clone()));
+                    self.ld_selected_elements = vec![key];
+                    self.track_history();
+                    self.recompile_runtime();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::LdCompareChanged(pou_name, r_idx, branch_path, e_idx, new_op, new_left, new_right) => {
+                if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(rung) = ld.rungs.get_mut(r_idx)
+                    && let Some(LdElement::Compare { op, left, right }) =
+                        lookup_element_mut(&mut rung.elements, &branch_path, e_idx)
+                {
+                    *op = new_op;
+                    *left = new_left;
+                    *right = new_right;
+                    self.track_history();
+                    self.recompile_runtime();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::LdMathMoveChanged(pou_name, r_idx, branch_path, e_idx, new_op, new_in1, new_in2, new_dest) => {
+                if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(rung) = ld.rungs.get_mut(r_idx)
+                    && let Some(LdElement::MathMove { op, input1, input2, dest }) =
+                        lookup_element_mut(&mut rung.elements, &branch_path, e_idx)
+                {
+                    *op = new_op;
+                    *input1 = new_in1;
+                    *input2 = if new_op == LdMathOp::Move {
+                        None
+                    } else {
+                        Some(new_in2)
+                    };
+                    *dest = new_dest;
+                    self.track_history();
+                    self.recompile_runtime();
+                    self.modified = true;
+                }
+                Task::none()
+            }
             Message::LdRemoveContact(pou_name, r_idx, e_idx) => {
                 if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
                     && let Some(rung) = ld.rungs.get_mut(r_idx)
@@ -3660,7 +3748,8 @@ impl FerriteStudioApp {
                         kind: StepKind::Normal,
                         actions: Vec::new(),
                         grid_pos,
-                    });
+                    ..Default::default()
+                });
                     self.track_history();
                     self.modified = true;
                 }
@@ -3797,7 +3886,8 @@ impl FerriteStudioApp {
                                     kind: StepKind::Normal,
                                     actions: Vec::new(),
                                     grid_pos: Some(((tx - 50).max(60), ty + 80)),
-                                });
+                    ..Default::default()
+                });
                                 (Some((tx, ty + 180)), vec![inter_step_id])
                             }
                         }
@@ -4222,7 +4312,7 @@ impl FerriteStudioApp {
                             name: s2_name,
                             kind: StepKind::Normal,
                             actions: vec![],
-                            grid_pos: Some(s2_pos),
+                            grid_pos: Some(s2_pos), ..Default::default()
                         });
                         source_steps.push(s2_id);
 
@@ -4251,14 +4341,16 @@ impl FerriteStudioApp {
                             kind: StepKind::Normal,
                             actions: vec![],
                             grid_pos: Some((base_x, base_y + 40)),
-                        });
+                    ..Default::default()
+                });
                         created_steps.push(SfcStep {
                             id: s2_id.clone(),
                             name: s2_name,
                             kind: StepKind::Normal,
                             actions: vec![],
                             grid_pos: Some((base_x + 160, base_y + 40)),
-                        });
+                    ..Default::default()
+                });
                         source_steps.push(s1_id);
                         source_steps.push(s2_id);
 
@@ -4272,7 +4364,7 @@ impl FerriteStudioApp {
                         name: dest_name,
                         kind: StepKind::Normal,
                         actions: vec![],
-                        grid_pos: Some(dest_pos),
+                        grid_pos: Some(dest_pos), ..Default::default()
                     });
 
                     // For each source step, create an individual transition converging into dest_step
@@ -4648,7 +4740,7 @@ impl FerriteStudioApp {
                         name: step_name,
                         kind: StepKind::Normal,
                         actions: Vec::new(),
-                        grid_pos: pos,
+                        grid_pos: pos, ..Default::default()
                     });
                     self.track_history();
                     self.modified = true;
@@ -4849,6 +4941,44 @@ impl FerriteStudioApp {
                                             expr: "10".to_string(),
                                         },
                                     );
+                                }
+                                StandardFbKind::Ctud => {
+                                    for (p, v) in [("CU", "FALSE"), ("CD", "FALSE"), ("R", "FALSE"), ("LD", "FALSE"), ("PV", "10")] {
+                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                                    }
+                                }
+                                StandardFbKind::Blink => {
+                                    for (p, v) in [("ENABLE", "TRUE"), ("TIMELOW", "T#500ms"), ("TIMEHIGH", "T#500ms")] {
+                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                                    }
+                                }
+                                StandardFbKind::Hysteresis => {
+                                    for (p, v) in [("IN", "0.0"), ("LOW", "20.0"), ("HIGH", "80.0")] {
+                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                                    }
+                                }
+                                StandardFbKind::RampReal => {
+                                    for (p, v) in [("IN", "100.0"), ("ASC", "10.0"), ("DSC", "10.0"), ("RESET", "FALSE")] {
+                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                                    }
+                                }
+                                StandardFbKind::ScaleLin => {
+                                    for (p, v) in [("IN", "0.0"), ("IN_MIN", "0.0"), ("IN_MAX", "27648.0"), ("OUT_MIN", "0.0"), ("OUT_MAX", "100.0")] {
+                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                                    }
+                                }
+                                StandardFbKind::Sr => {
+                                    for (p, v) in [("S1", "FALSE"), ("R", "FALSE")] {
+                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                                    }
+                                }
+                                StandardFbKind::Rs => {
+                                    for (p, v) in [("S", "FALSE"), ("R1", "FALSE")] {
+                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                                    }
+                                }
+                                StandardFbKind::RTrig | StandardFbKind::FTrig => {
+                                    ins.insert("CLK".to_string(), FbdInputSource::Value { expr: "FALSE".to_string() });
                                 }
                                 _ => {
                                     ins.insert(

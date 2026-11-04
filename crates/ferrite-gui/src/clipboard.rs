@@ -98,7 +98,8 @@ mod tests {
             kind: StepKind::Initial,
             actions: Vec::new(),
             grid_pos: Some((10, 20)),
-        };
+                    ..Default::default()
+                };
         let trans = SfcTransition {
             id: "Trans_1".to_string(),
             receptivity: "TRUE".to_string(),

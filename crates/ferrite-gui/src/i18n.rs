@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum UiLanguage {
     #[default]
-    En,
     Fr,
+    En,
     De,
     Es,
     It,
@@ -65,12 +65,14 @@ impl std::fmt::Display for UiLanguage {
     }
 }
 
-/// Detects the system OS language on startup via `sys_locale`.
+/// Detects the system OS language on startup via `sys_locale`, defaulting to French.
 pub fn detect_os_language() -> UiLanguage {
     if let Some(locale) = sys_locale::get_locale() {
         let lower = locale.to_lowercase();
         if lower.starts_with("fr") {
             return UiLanguage::Fr;
+        } else if lower.starts_with("en") {
+            return UiLanguage::En;
         } else if lower.starts_with("de") {
             return UiLanguage::De;
         } else if lower.starts_with("es") {
@@ -79,7 +81,7 @@ pub fn detect_os_language() -> UiLanguage {
             return UiLanguage::It;
         }
     }
-    UiLanguage::En
+    UiLanguage::Fr
 }
 
 /// Translates a key for a specific `UiLanguage`.
