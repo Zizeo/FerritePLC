@@ -292,6 +292,7 @@ pub enum Message {
 
     // Structured Text Editor
     StEditorAction(String, text_editor::Action),
+    StJumpToLine(String, usize),
 
     // Ladder Diagram
     LdAddRung(String),
@@ -3347,6 +3348,34 @@ impl FerriteStudioApp {
                         self.track_history();
                         self.modified = true;
                     }
+                }
+                Task::none()
+            }
+            Message::StJumpToLine(name, target_line) => {
+                if let Some(content) = self.st_contents.get_mut(&name) {
+                    let total_lines = content.line_count().max(1);
+                    let target_line = target_line.min(total_lines.saturating_sub(1));
+                    let (cur_line, _) = content.cursor_position();
+                    if target_line > cur_line {
+                        for _ in 0..(target_line - cur_line) {
+                            content.perform(text_editor::Action::Move(text_editor::Motion::Down));
+                        }
+                    } else if target_line < cur_line {
+                        for _ in 0..(cur_line - target_line) {
+                            content.perform(text_editor::Action::Move(text_editor::Motion::Up));
+                        }
+                    }
+                    content.perform(text_editor::Action::Move(text_editor::Motion::Home));
+
+                    let rel_y = if total_lines > 1 {
+                        target_line as f32 / (total_lines - 1) as f32
+                    } else {
+                        0.0
+                    };
+                    return scrollable::snap_to(
+                        scrollable::Id::new("st_editor_scrollable"),
+                        scrollable::RelativeOffset { x: 0.0, y: rel_y },
+                    );
                 }
                 Task::none()
             }

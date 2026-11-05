@@ -169,6 +169,44 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn test_st_jump_to_line_updates_cursor() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_gui_st_jump_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+        let mut app = FerriteStudioApp::with_language(proj, UiLanguage::En);
+
+        let st_code = "line1 := 1;\nline2 := 2;\nline3 := 3;\nline4 := 4;\nline5 := 5;";
+        let pou_name = "test_jump_st".to_string();
+        app.st_contents.insert(
+            pou_name.clone(),
+            iced::widget::text_editor::Content::with_text(st_code),
+        );
+
+        if let Some(content) = app.st_contents.get(&pou_name) {
+            assert_eq!(content.cursor_position(), (0, 0));
+        }
+
+        let _ = app.update(Message::StJumpToLine(pou_name.clone(), 2));
+        if let Some(content) = app.st_contents.get(&pou_name) {
+            assert_eq!(content.cursor_position().0, 2);
+        }
+
+        let _ = app.update(Message::StJumpToLine(pou_name.clone(), 4));
+        if let Some(content) = app.st_contents.get(&pou_name) {
+            assert_eq!(content.cursor_position().0, 4);
+        }
+
+        let _ = app.update(Message::StJumpToLine(pou_name.clone(), 0));
+        if let Some(content) = app.st_contents.get(&pou_name) {
+            assert_eq!(content.cursor_position().0, 0);
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn test_app_window_icon_loads_successfully() {
         let icon = app_window_icon();
         assert!(

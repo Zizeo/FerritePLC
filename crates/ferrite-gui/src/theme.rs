@@ -106,6 +106,18 @@ impl StudioTheme {
         }
     }
 
+    pub fn gutter_style(_theme: &Theme) -> container::Style {
+        container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.04, 0.05, 0.08, 0.70))),
+            border: Border {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.06),
+                width: 1.0,
+                radius: Radius::default(),
+            },
+            ..Default::default()
+        }
+    }
+
     // Button Styles
     pub fn primary_button(_theme: &Theme, status: button::Status) -> button::Style {
         let bg = match status {
