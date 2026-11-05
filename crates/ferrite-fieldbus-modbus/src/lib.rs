@@ -76,6 +76,9 @@ impl MbapHeader {
             return Err(ModbusError::InvalidProtocolId(protocol_id));
         }
         let length = u16::from_be_bytes([buf[4], buf[5]]);
+        if !(2..=256).contains(&length) {
+            return Err(ModbusError::InvalidDataLength(length as usize));
+        }
         let unit_id = buf[6];
         Ok(Self {
             transaction_id,
@@ -694,6 +697,10 @@ impl ModbusTcpServer {
                         }
                     }
 
+                    if to_remove.last() == Some(&idx) {
+                        continue;
+                    }
+
                     // Process all complete frames accumulated in client.buffer
                     while client.buffer.len() >= 7 {
                         match MbapHeader::parse(&client.buffer[..7]) {
@@ -703,7 +710,13 @@ impl ModbusTcpServer {
                                 if client.buffer.len() >= frame_len {
                                     req_cnt.fetch_add(1, Ordering::Relaxed);
                                     let pdu = &client.buffer[7..frame_len];
-                                    let original_fc = client.buffer[7];
+                                    let original_fc = match pdu.first().copied() {
+                                        Some(fc) => fc,
+                                        None => {
+                                            client.buffer.remove(0);
+                                            continue;
+                                        }
+                                    };
                                     let resp = match ModbusRequest::parse(pdu) {
                                         Ok(req) => {
                                             if let Ok(mut pi) = shared_pi.write() {
@@ -771,8 +784,9 @@ impl ModbusTcpServer {
                                 }
                             }
                             Err(_) => {
-                                // Resynchronize frame stream
-                                client.buffer.remove(0);
+                                // Invalid MBAP header per Modbus TCP spec: close connection
+                                to_remove.push(idx);
+                                break;
                             }
                         }
                     }
@@ -962,6 +976,27 @@ mod tests {
         let parsed = MbapHeader::parse(&buf)?;
         assert_eq!(header, parsed);
         Ok(())
+    }
+
+    #[test]
+    fn test_mbap_header_invalid_length() {
+        let zero_len = [0, 1, 0, 0, 0, 0, 1];
+        assert!(matches!(
+            MbapHeader::parse(&zero_len),
+            Err(ModbusError::InvalidDataLength(0))
+        ));
+
+        let one_len = [0, 1, 0, 0, 0, 1, 1];
+        assert!(matches!(
+            MbapHeader::parse(&one_len),
+            Err(ModbusError::InvalidDataLength(1))
+        ));
+
+        let huge_len = [0, 1, 0, 0, 1, 1, 1]; // length = 257
+        assert!(matches!(
+            MbapHeader::parse(&huge_len),
+            Err(ModbusError::InvalidDataLength(257))
+        ));
     }
 
     #[test]
@@ -1167,6 +1202,46 @@ mod tests {
         assert_eq!(h2.transaction_id, 101);
         let mut pdu2 = vec![0u8; (h2.length as usize).saturating_sub(1)];
         stream.read_exact(&mut pdu2)?;
+
+        server.stop();
+        Ok(())
+    }
+
+    #[test]
+    fn test_modbus_tcp_malformed_header_length_does_not_panic(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let pi = Arc::new(RwLock::new(ProcessImage::default()));
+        let bind_addr: SocketAddr = "127.0.0.1:5033".parse()?;
+        let mut server = ModbusTcpServer::start(bind_addr, Arc::clone(&pi))?;
+        thread::sleep(Duration::from_millis(50));
+
+        let mut stream = TcpStream::connect(bind_addr)?;
+        stream.set_nodelay(true)?;
+
+        // Malformed frame with length = 0 (invalid per Modbus spec)
+        let malformed = [0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01];
+        stream.write_all(&malformed)?;
+        stream.flush()?;
+        thread::sleep(Duration::from_millis(30));
+
+        // Server drops corrupted connection without panicking
+        let mut check_buf = [0u8; 1];
+        let read_res = stream.read(&mut check_buf);
+        assert!(
+            read_res.is_err() || matches!(read_res, Ok(0)),
+            "Server must disconnect client with corrupted MBAP header"
+        );
+
+        // Server must continue operating healthy for other clients
+        let mut client2 = ModbusTcpClient::connect(bind_addr)?;
+        let resp = client2.send_request(
+            1,
+            &ModbusRequest::ReadCoils {
+                address: 0,
+                count: 8,
+            },
+        )?;
+        assert!(matches!(resp, ModbusResponse::ReadBits(_)));
 
         server.stop();
         Ok(())

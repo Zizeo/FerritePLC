@@ -180,7 +180,7 @@ impl PlcRuntime {
             watch_list,
             input_tag_bindings,
             alarms,
-            alarm_journal: VecDeque::new(),
+            alarm_journal: VecDeque::with_capacity(1000),
         })
     }
 
@@ -434,8 +434,9 @@ impl PlcRuntime {
             }
         }
 
+        let mut hit_breakpoint: Option<Breakpoint> = None;
+
         // Phase 2: Task & POU Execution
-        let mut executed_pous: Vec<PouId> = Vec::new();
         {
             let dt_ms = self.scan_cycle_ms;
             let scan_count = self.scan_count;
@@ -476,7 +477,16 @@ impl PlcRuntime {
                         scan_count,
                     );
                     for pou in &mut task.pous {
-                        executed_pous.push(pou.id());
+                        if hit_breakpoint.is_none() {
+                            for bp in &self.breakpoints {
+                                if let Breakpoint::Pou(id) = bp
+                                    && pou.id() == *id
+                                {
+                                    hit_breakpoint = Some(bp.clone());
+                                    break;
+                                }
+                            }
+                        }
                         pou.execute(&mut ctx)?;
                     }
                 }
@@ -503,24 +513,21 @@ impl PlcRuntime {
         // Evaluate ISA-18.2 Alarms
         self.evaluate_alarms();
 
-        let mut hit_breakpoint = None;
-        for bp in &self.breakpoints {
-            match bp {
-                Breakpoint::ScanCount(target) if *target == self.scan_count => {
-                    hit_breakpoint = Some(bp.clone());
-                    break;
-                }
-                Breakpoint::SymbolTrue(sym) => {
-                    if let Ok(IecValue::Bool(true)) = self.read_value(sym) {
+        if hit_breakpoint.is_none() {
+            for bp in &self.breakpoints {
+                match bp {
+                    Breakpoint::ScanCount(target) if *target == self.scan_count => {
                         hit_breakpoint = Some(bp.clone());
                         break;
                     }
+                    Breakpoint::SymbolTrue(sym) => {
+                        if let Ok(IecValue::Bool(true)) = self.read_value(sym) {
+                            hit_breakpoint = Some(bp.clone());
+                            break;
+                        }
+                    }
+                    _ => {}
                 }
-                Breakpoint::Pou(id) if executed_pous.contains(id) => {
-                    hit_breakpoint = Some(bp.clone());
-                    break;
-                }
-                _ => {}
             }
         }
         let breakpoint_hit = hit_breakpoint.is_some();
@@ -693,6 +700,7 @@ impl PlcRuntime {
                         },
                     );
                 }
+                break;
             }
         }
     }
