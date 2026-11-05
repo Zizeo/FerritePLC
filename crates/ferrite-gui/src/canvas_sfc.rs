@@ -453,14 +453,133 @@ impl<'a> SfcCanvasProgram<'a> {
         (gx as f32, gy as f32)
     }
 
+    pub fn step_width(&self, step: &SfcStep) -> f32 {
+        let name_len = step.name.len().max(6);
+        (name_len as f32 * 8.2 + 50.0).clamp(170.0, 320.0)
+    }
+
+    pub fn step_name_rect(&self, step: &SfcStep, state: &SfcCanvasState) -> Rectangle {
+        let (x, y) = self.step_pos(step, state);
+        let w = self.step_width(step);
+        Rectangle {
+            x: x + 8.0,
+            y: y + 28.0,
+            width: w - 16.0,
+            height: 24.0,
+        }
+    }
+
+    pub fn step_add_action_rect(&self, step: &SfcStep, state: &SfcCanvasState) -> Rectangle {
+        let (x, y) = self.step_pos(step, state);
+        let w = self.step_width(step);
+        Rectangle {
+            x: x + w - 46.0,
+            y: y + 5.0,
+            width: 40.0,
+            height: 18.0,
+        }
+    }
+
+    pub fn action_qualifier_rect(
+        &self,
+        step: &SfcStep,
+        a_idx: usize,
+        state: &SfcCanvasState,
+    ) -> Rectangle {
+        let (x, y) = self.step_pos(step, state);
+        let w = self.step_width(step);
+        let act_x = x + w + 14.0;
+        let act_y = y + 4.0 + (a_idx as f32) * 26.0;
+        Rectangle {
+            x: act_x,
+            y: act_y,
+            width: 26.0,
+            height: 22.0,
+        }
+    }
+
+    pub fn action_target_rect(
+        &self,
+        step: &SfcStep,
+        a_idx: usize,
+        state: &SfcCanvasState,
+    ) -> Rectangle {
+        let (x, y) = self.step_pos(step, state);
+        let w = self.step_width(step);
+        let act_x = x + w + 14.0;
+        let act_y = y + 4.0 + (a_idx as f32) * 26.0;
+        let act = step.actions.get(a_idx);
+        let target_len = act.map(|a| a.target.len()).unwrap_or(8).max(6);
+        let target_w = (target_len as f32 * 7.5 + 24.0).clamp(90.0, 240.0);
+        Rectangle {
+            x: act_x + 28.0,
+            y: act_y,
+            width: target_w,
+            height: 22.0,
+        }
+    }
+
+    pub fn action_duration_rect(
+        &self,
+        step: &SfcStep,
+        a_idx: usize,
+        state: &SfcCanvasState,
+    ) -> Option<Rectangle> {
+        let act = step.actions.get(a_idx)?;
+        if act.qualifier == ActionQualifier::L || act.qualifier == ActionQualifier::D {
+            let target_rect = self.action_target_rect(step, a_idx, state);
+            Some(Rectangle {
+                x: target_rect.x + target_rect.width + 4.0,
+                y: target_rect.y,
+                width: 60.0,
+                height: 22.0,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn action_delete_rect(
+        &self,
+        step: &SfcStep,
+        a_idx: usize,
+        state: &SfcCanvasState,
+    ) -> Rectangle {
+        let target_rect = self.action_target_rect(step, a_idx, state);
+        let right_x = if let Some(dur_rect) = self.action_duration_rect(step, a_idx, state) {
+            dur_rect.x + dur_rect.width + 4.0
+        } else {
+            target_rect.x + target_rect.width + 4.0
+        };
+        Rectangle {
+            x: right_x,
+            y: target_rect.y,
+            width: 20.0,
+            height: 22.0,
+        }
+    }
+
+    pub fn trans_receptivity_rect(&self, tr: &SfcTransition, state: &SfcCanvasState) -> Rectangle {
+        let (x, y) = self.trans_pos(tr, state);
+        let cy = y + TRANS_HEIGHT * 0.5;
+        let rec_len = tr.receptivity.len().max(4);
+        let w = (rec_len as f32 * 7.5 + 28.0).clamp(70.0, 320.0);
+        Rectangle {
+            x: x + TRANS_WIDTH + 8.0,
+            y: cy - 12.0,
+            width: w,
+            height: 24.0,
+        }
+    }
+
     fn step_in_port(&self, step: &SfcStep, state: &SfcCanvasState) -> Point {
         let (x, y) = self.step_pos(step, state);
-        Point::new(x + STEP_WIDTH * 0.5, y)
+        Point::new(x + self.step_width(step) * 0.5, y)
     }
 
     fn step_out_port(&self, step: &SfcStep, state: &SfcCanvasState) -> Point {
         let (x, y) = self.step_pos(step, state);
-        Point::new(x + STEP_WIDTH * 0.5, y + STEP_HEIGHT)
+        Point::new(x + self.step_width(step) * 0.5, y + STEP_HEIGHT)
     }
 
     fn trans_in_port(&self, tr: &SfcTransition, state: &SfcCanvasState) -> Point {
@@ -1820,14 +1939,16 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 COLOR_STEP_BG
             };
 
+            let s_width = self.step_width(step);
+
             frame.fill_rectangle(
                 Point::new(x, y),
-                Size::new(STEP_WIDTH, STEP_HEIGHT),
+                Size::new(s_width, STEP_HEIGHT),
                 bg_color,
             );
             frame.stroke_rectangle(
                 Point::new(x, y),
-                Size::new(STEP_WIDTH, STEP_HEIGHT),
+                Size::new(s_width, STEP_HEIGHT),
                 Stroke::default()
                     .with_color(border_color)
                     .with_width(if is_selected || has_error || step_timeout { 2.5 } else { 2.0 }),
@@ -1837,7 +1958,7 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             if has_error || step_timeout {
                 frame.stroke_rectangle(
                     Point::new(x - 2.0, y - 2.0),
-                    Size::new(STEP_WIDTH + 4.0, STEP_HEIGHT + 4.0),
+                    Size::new(s_width + 4.0, STEP_HEIGHT + 4.0),
                     Stroke::default()
                         .with_color(Color::from_rgba(1.0, 0.3, 0.3, 0.4))
                         .with_width(2.0),
@@ -1848,19 +1969,19 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             if step.kind == StepKind::Initial {
                 frame.stroke_rectangle(
                     Point::new(x + 3.0, y + 3.0),
-                    Size::new(STEP_WIDTH - 6.0, STEP_HEIGHT - 6.0),
+                    Size::new(s_width - 6.0, STEP_HEIGHT - 6.0),
                     Stroke::default().with_color(border_color).with_width(1.2),
                 );
             } else if step.kind == StepKind::Macro {
                 // IEC 60848 Macro Step: double horizontal bars at top and bottom of step box
                 frame.stroke(
-                    &Path::line(Point::new(x + 2.0, y + 4.0), Point::new(x + STEP_WIDTH - 2.0, y + 4.0)),
+                    &Path::line(Point::new(x + 2.0, y + 4.0), Point::new(x + s_width - 2.0, y + 4.0)),
                     Stroke::default().with_color(StudioTheme::ACCENT_PURPLE).with_width(1.5),
                 );
                 frame.stroke(
                     &Path::line(
                         Point::new(x + 2.0, y + STEP_HEIGHT - 4.0),
-                        Point::new(x + STEP_WIDTH - 2.0, y + STEP_HEIGHT - 4.0),
+                        Point::new(x + s_width - 2.0, y + STEP_HEIGHT - 4.0),
                     ),
                     Stroke::default().with_color(StudioTheme::ACCENT_PURPLE).with_width(1.5),
                 );
@@ -1871,7 +1992,7 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 };
                 frame.fill_text(canvas::Text {
                     content: macro_badge,
-                    position: Point::new(x + STEP_WIDTH - 68.0, y + 35.0),
+                    position: Point::new(x + s_width - 96.0, y + 6.0),
                     color: StudioTheme::ACCENT_PURPLE,
                     size: iced::Pixels(9.5),
                     font: iced::Font::MONOSPACE,
@@ -1884,9 +2005,51 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             let display_id = format!("X{num_id}");
             frame.fill_text(canvas::Text {
                 content: display_id,
-                position: Point::new(x + 10.0, y + 8.0),
+                position: Point::new(x + 10.0, y + 7.0),
                 color: Color::WHITE,
-                size: iced::Pixels(13.0),
+                size: iced::Pixels(12.5),
+                font: iced::Font::MONOSPACE,
+                ..Default::default()
+            });
+
+            // Active dot & timer
+            if active {
+                frame.fill_text(canvas::Text {
+                    content: "●".to_string(),
+                    position: Point::new(x + 48.0, y + 7.0),
+                    color: COLOR_ACTIVE_STEP,
+                    size: iced::Pixels(11.0),
+                    ..Default::default()
+                });
+                frame.fill_text(canvas::Text {
+                    content: format!("T#{}ms", elapsed_ms),
+                    position: Point::new(x + 64.0, y + 8.0),
+                    color: COLOR_ACTIVE_STEP,
+                    size: iced::Pixels(10.5),
+                    font: iced::Font::MONOSPACE,
+                    ..Default::default()
+                });
+            }
+
+            // On-canvas [+ Act] button on top right of step header
+            let add_rect = self.step_add_action_rect(step, state);
+            frame.fill_rectangle(
+                Point::new(add_rect.x, add_rect.y),
+                Size::new(add_rect.width, add_rect.height),
+                Color::from_rgba(0.2, 0.45, 0.7, 0.25),
+            );
+            frame.stroke_rectangle(
+                Point::new(add_rect.x, add_rect.y),
+                Size::new(add_rect.width, add_rect.height),
+                Stroke::default()
+                    .with_color(Color::from_rgba(0.3, 0.6, 0.9, 0.5))
+                    .with_width(1.0),
+            );
+            frame.fill_text(canvas::Text {
+                content: "+ Act".to_string(),
+                position: Point::new(add_rect.x + 5.0, add_rect.y + 2.5),
+                color: Color::from_rgb(0.7, 0.85, 1.0),
+                size: iced::Pixels(10.0),
                 font: iced::Font::MONOSPACE,
                 ..Default::default()
             });
@@ -1895,9 +2058,9 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             if has_error {
                 frame.fill_text(canvas::Text {
                     content: crate::icons::icon_warning().to_string(),
-                    position: Point::new(x + STEP_WIDTH - 24.0, y + 7.0),
+                    position: Point::new(add_rect.x - 20.0, y + 6.0),
                     color: Color::from_rgb(1.0, 0.35, 0.35),
-                    size: iced::Pixels(12.0),
+                    size: iced::Pixels(11.0),
                     shaping: iced::widget::text::Shaping::Advanced,
                     ..Default::default()
                 });
@@ -1911,114 +2074,221 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             {
                 frame.fill_text(canvas::Text {
                     content: format!("T{}", tid + 1),
-                    position: Point::new(x + STEP_WIDTH - 28.0, y + 8.0),
+                    position: Point::new(add_rect.x - 22.0, y + 7.0),
                     color: COLOR_STEP_DROP,
-                    size: iced::Pixels(11.0),
+                    size: iced::Pixels(10.5),
                     font: iced::Font::MONOSPACE,
                     ..Default::default()
                 });
             }
 
-            // Active dot & timer
-            if active {
-                frame.fill_text(canvas::Text {
-                    content: "●".to_string(),
-                    position: Point::new(x + 52.0, y + 8.0),
-                    color: COLOR_ACTIVE_STEP,
-                    size: iced::Pixels(11.0),
-                    ..Default::default()
+            // Step Name area with in-place edit support and anti-clipping
+            let name_rect = self.step_name_rect(step, state);
+            let is_editing_name = state.editing_target
+                == Some(SfcEditTarget::StepName {
+                    step_id: step.id.clone(),
                 });
-                frame.fill_text(canvas::Text {
-                    content: format!("T#{}ms", elapsed_ms),
-                    position: Point::new(x + 72.0, y + 9.0),
-                    color: COLOR_ACTIVE_STEP,
-                    size: iced::Pixels(11.0),
-                    font: iced::Font::MONOSPACE,
-                    ..Default::default()
-                });
-            }
 
-            // Step Name
+            frame.fill_rectangle(
+                Point::new(name_rect.x, name_rect.y),
+                Size::new(name_rect.width, name_rect.height),
+                if is_editing_name {
+                    Color::from_rgba(0.08, 0.18, 0.28, 0.9)
+                } else {
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.25)
+                },
+            );
+            frame.stroke_rectangle(
+                Point::new(name_rect.x, name_rect.y),
+                Size::new(name_rect.width, name_rect.height),
+                Stroke::default()
+                    .with_color(if is_editing_name {
+                        COLOR_STEP_DROP
+                    } else {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                    })
+                    .with_width(if is_editing_name { 1.5 } else { 1.0 }),
+            );
+
+            let display_name = if is_editing_name {
+                format!("{}|", state.edit_buffer)
+            } else {
+                step.name.clone()
+            };
+
             frame.fill_text(canvas::Text {
-                content: step.name.clone(),
-                position: Point::new(x + 10.0, y + 34.0),
-                color: Color::from_rgb(220.0 / 255.0, 230.0 / 255.0, 245.0 / 255.0),
-                size: iced::Pixels(12.0),
+                content: display_name,
+                position: Point::new(name_rect.x + 6.0, name_rect.y + 4.0),
+                color: if is_editing_name {
+                    Color::WHITE
+                } else {
+                    Color::from_rgb(220.0 / 255.0, 230.0 / 255.0, 245.0 / 255.0)
+                },
+                size: iced::Pixels(11.5),
                 ..Default::default()
             });
 
             // Action blocks attached on right side
             if !step.actions.is_empty() {
-                let wire_start = Point::new(x + STEP_WIDTH, y + STEP_HEIGHT * 0.5);
-                let wire_end = Point::new(x + STEP_WIDTH + 14.0, y + STEP_HEIGHT * 0.5);
+                let wire_start = Point::new(x + s_width, y + STEP_HEIGHT * 0.5);
+                let wire_end = Point::new(x + s_width + 14.0, y + STEP_HEIGHT * 0.5);
                 frame.stroke(
                     &Path::line(wire_start, wire_end),
                     Stroke::default().with_color(border_color).with_width(1.5),
                 );
 
-                let act_x = wire_end.x;
                 let start_act_y = y + 4.0;
-                let mut act_y = start_act_y;
-                for act in &step.actions {
+                let mut last_act_bottom = start_act_y;
+                for (a_idx, act) in step.actions.iter().enumerate() {
+                    let q_rect = self.action_qualifier_rect(step, a_idx, state);
+                    let t_rect = self.action_target_rect(step, a_idx, state);
+                    let dur_rect_opt = self.action_duration_rect(step, a_idx, state);
+                    let del_rect = self.action_delete_rect(step, a_idx, state);
+                    last_act_bottom = q_rect.y + q_rect.height;
+
+                    // Qualifier badge with color coding
+                    let qual_color = match act.qualifier {
+                        ActionQualifier::N => Color::from_rgb(0.18, 0.80, 0.45),
+                        ActionQualifier::S | ActionQualifier::R => Color::from_rgb(0.95, 0.65, 0.15),
+                        ActionQualifier::L | ActionQualifier::D => Color::from_rgb(0.25, 0.75, 0.95),
+                        ActionQualifier::P => StudioTheme::ACCENT_PURPLE,
+                        ActionQualifier::F | ActionQualifier::FZ => Color::from_rgb(0.95, 0.35, 0.45),
+                    };
                     let qual_str = SfcActionQualifierWrapper(act.qualifier).to_string();
+
                     frame.fill_rectangle(
-                        Point::new(act_x, act_y),
-                        Size::new(26.0, 22.0),
-                        COLOR_ACTION_BG,
+                        Point::new(q_rect.x, q_rect.y),
+                        Size::new(q_rect.width, q_rect.height),
+                        Color::from_rgba(qual_color.r, qual_color.g, qual_color.b, 0.22),
                     );
                     frame.stroke_rectangle(
-                        Point::new(act_x, act_y),
-                        Size::new(26.0, 22.0),
-                        Stroke::default()
-                            .with_color(COLOR_INACTIVE_STEP)
-                            .with_width(1.0),
+                        Point::new(q_rect.x, q_rect.y),
+                        Size::new(q_rect.width, q_rect.height),
+                        Stroke::default().with_color(qual_color).with_width(1.2),
                     );
                     frame.fill_text(canvas::Text {
                         content: qual_str,
-                        position: Point::new(act_x + 8.0, act_y + 4.0),
+                        position: Point::new(q_rect.x + 8.0, q_rect.y + 4.0),
                         color: Color::WHITE,
                         size: iced::Pixels(11.0),
                         font: iced::Font::MONOSPACE,
                         ..Default::default()
                     });
 
-                    let target_text = if let Some(ref dur) = act.duration {
-                        format!("{} ({dur})", act.target)
+                    // Target box with in-place editing
+                    let is_editing_target = state.editing_target
+                        == Some(SfcEditTarget::ActionTarget {
+                            step_id: step.id.clone(),
+                            action_idx: a_idx,
+                        });
+                    let target_display = if is_editing_target {
+                        format!("{}|", state.edit_buffer)
                     } else {
                         act.target.clone()
                     };
-                    let target_w = (target_text.len() as f32 * 7.5 + 20.0).max(110.0);
+
                     frame.fill_rectangle(
-                        Point::new(act_x + 26.0, act_y),
-                        Size::new(target_w, 22.0),
-                        COLOR_STEP_BG,
+                        Point::new(t_rect.x, t_rect.y),
+                        Size::new(t_rect.width, t_rect.height),
+                        if is_editing_target {
+                            Color::from_rgba(0.08, 0.18, 0.28, 0.95)
+                        } else {
+                            COLOR_STEP_BG
+                        },
                     );
                     frame.stroke_rectangle(
-                        Point::new(act_x + 26.0, act_y),
-                        Size::new(target_w, 22.0),
+                        Point::new(t_rect.x, t_rect.y),
+                        Size::new(t_rect.width, t_rect.height),
                         Stroke::default()
-                            .with_color(COLOR_INACTIVE_STEP)
-                            .with_width(1.0),
+                            .with_color(if is_editing_target {
+                                COLOR_STEP_DROP
+                            } else {
+                                COLOR_INACTIVE_STEP
+                            })
+                            .with_width(if is_editing_target { 1.5 } else { 1.0 }),
                     );
                     frame.fill_text(canvas::Text {
-                        content: target_text,
-                        position: Point::new(act_x + 32.0, act_y + 4.0),
-                        color: Color::from_rgb(200.0 / 255.0, 215.0 / 255.0, 230.0 / 255.0),
+                        content: target_display,
+                        position: Point::new(t_rect.x + 6.0, t_rect.y + 4.0),
+                        color: Color::from_rgb(210.0 / 255.0, 225.0 / 255.0, 240.0 / 255.0),
                         size: iced::Pixels(10.5),
                         font: iced::Font::MONOSPACE,
                         ..Default::default()
                     });
 
-                    act_y += 26.0;
+                    // Duration box (if L or D)
+                    if let Some(dur_rect) = dur_rect_opt {
+                        let is_editing_dur = state.editing_target
+                            == Some(SfcEditTarget::ActionDuration {
+                                step_id: step.id.clone(),
+                                action_idx: a_idx,
+                            });
+                        let dur_display = if is_editing_dur {
+                            format!("{}|", state.edit_buffer)
+                        } else {
+                            act.duration.clone().unwrap_or_else(|| "T#5s".to_string())
+                        };
+
+                        frame.fill_rectangle(
+                            Point::new(dur_rect.x, dur_rect.y),
+                            Size::new(dur_rect.width, dur_rect.height),
+                            if is_editing_dur {
+                                Color::from_rgba(0.08, 0.18, 0.28, 0.95)
+                            } else {
+                                COLOR_ACTION_BG
+                            },
+                        );
+                        frame.stroke_rectangle(
+                            Point::new(dur_rect.x, dur_rect.y),
+                            Size::new(dur_rect.width, dur_rect.height),
+                            Stroke::default()
+                                .with_color(if is_editing_dur {
+                                    COLOR_STEP_DROP
+                                } else {
+                                    COLOR_INACTIVE_STEP
+                                })
+                                .with_width(1.0),
+                        );
+                        frame.fill_text(canvas::Text {
+                            content: dur_display,
+                            position: Point::new(dur_rect.x + 4.0, dur_rect.y + 4.0),
+                            color: Color::from_rgb(0.7, 0.85, 1.0),
+                            size: iced::Pixels(10.0),
+                            font: iced::Font::MONOSPACE,
+                            ..Default::default()
+                        });
+                    }
+
+                    // Delete [×] button
+                    frame.fill_rectangle(
+                        Point::new(del_rect.x, del_rect.y),
+                        Size::new(del_rect.width, del_rect.height),
+                        Color::from_rgba(1.0, 0.3, 0.3, 0.08),
+                    );
+                    frame.stroke_rectangle(
+                        Point::new(del_rect.x, del_rect.y),
+                        Size::new(del_rect.width, del_rect.height),
+                        Stroke::default()
+                            .with_color(Color::from_rgba(1.0, 0.3, 0.3, 0.25))
+                            .with_width(1.0),
+                    );
+                    frame.fill_text(canvas::Text {
+                        content: "×".to_string(),
+                        position: Point::new(del_rect.x + 5.0, del_rect.y + 3.0),
+                        color: Color::from_rgb(1.0, 0.45, 0.45),
+                        size: iced::Pixels(12.0),
+                        font: iced::Font::MONOSPACE,
+                        ..Default::default()
+                    });
                 }
 
                 if step.actions.len() > 1 {
                     let first_act_y = start_act_y + 11.0;
-                    let last_act_y = act_y - 26.0 + 11.0;
+                    let last_act_y = last_act_bottom - 11.0;
                     frame.stroke(
                         &Path::line(
-                            Point::new(act_x, first_act_y.min(wire_end.y)),
-                            Point::new(act_x, last_act_y.max(wire_end.y)),
+                            Point::new(wire_end.x, first_act_y.min(wire_end.y)),
+                            Point::new(wire_end.x, last_act_y.max(wire_end.y)),
                         ),
                         Stroke::default().with_color(border_color).with_width(1.5),
                     );
@@ -2161,15 +2431,47 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     .with_width(if is_selected || has_error { 4.0 } else { 3.2 }),
             );
 
-            // Receptivity text
-            let rec_text = if tr.receptivity.is_empty() {
-                "TRUE"
+            // Receptivity text & pill with in-place edit support
+            let rec_rect = self.trans_receptivity_rect(tr, state);
+            let is_editing_rec = state.editing_target
+                == Some(SfcEditTarget::TransitionReceptivity {
+                    trans_id: tr.id.clone(),
+                });
+
+            frame.fill_rectangle(
+                Point::new(rec_rect.x, rec_rect.y),
+                Size::new(rec_rect.width, rec_rect.height),
+                if is_editing_rec {
+                    Color::from_rgba(0.08, 0.18, 0.28, 0.95)
+                } else {
+                    COLOR_STEP_BG
+                },
+            );
+            frame.stroke_rectangle(
+                Point::new(rec_rect.x, rec_rect.y),
+                Size::new(rec_rect.width, rec_rect.height),
+                Stroke::default()
+                    .with_color(if is_editing_rec {
+                        COLOR_STEP_DROP
+                    } else if has_error {
+                        Color::from_rgb(1.0, 0.4, 0.4)
+                    } else {
+                        Color::from_rgba(1.0, 210.0 / 255.0, 120.0 / 255.0, 0.35)
+                    })
+                    .with_width(if is_editing_rec { 1.5 } else { 1.0 }),
+            );
+
+            let rec_text = if is_editing_rec {
+                format!("[ {}| ]", state.edit_buffer)
+            } else if tr.receptivity.is_empty() {
+                "[ TRUE ]".to_string()
             } else {
-                &tr.receptivity
+                format!("[ {} ]", tr.receptivity)
             };
+
             frame.fill_text(canvas::Text {
-                content: format!("[ {} ]", rec_text),
-                position: Point::new(x + TRANS_WIDTH + 6.0, cy - 6.0),
+                content: rec_text,
+                position: Point::new(rec_rect.x + 6.0, rec_rect.y + 4.5),
                 color: if has_error {
                     Color::from_rgb(1.0, 0.4, 0.4)
                 } else {
@@ -4172,5 +4474,79 @@ mod tests {
         assert!(state.editing_target.is_none());
         assert!(state.edit_buffer.is_empty());
         assert_eq!(state.cursor_pos, 0);
+    }
+
+    #[test]
+    fn test_sfc_dynamic_dimensions() {
+        use ferrite_lang_sfc::{SfcAction, SfcProgram, SfcStep, SfcTransition};
+
+        let short_step = SfcStep {
+            id: "1".to_string(),
+            name: "S1".to_string(),
+            kind: ferrite_lang_sfc::StepKind::Normal,
+            actions: Vec::new(),
+            grid_pos: Some((100, 100)),
+            ..Default::default()
+        };
+
+        let long_step = SfcStep {
+            id: "2".to_string(),
+            name: "Conveyor_Sorting_Sequence_Active".to_string(),
+            kind: ferrite_lang_sfc::StepKind::Normal,
+            actions: vec![SfcAction {
+                qualifier: ferrite_lang_sfc::ActionQualifier::N,
+                target: "Conveyor_Motor_Start".to_string(),
+                duration: None,
+            }],
+            grid_pos: Some((100, 250)),
+            ..Default::default()
+        };
+
+        let prog = SfcProgram {
+            name: "test_dim".to_string(),
+            comment: String::new(),
+            steps: vec![short_step.clone(), long_step.clone()],
+            transitions: vec![SfcTransition {
+                id: "1".to_string(),
+                from_steps: vec!["1".to_string()],
+                to_steps: vec!["2".to_string()],
+                receptivity: "Sensor_1 AND NOT EStop".to_string(),
+                grid_pos: Some((100, 180)),
+                ..Default::default()
+            }],
+        };
+
+        let canvas_prog = SfcCanvasProgram {
+            pou_name: "test_dim",
+            program: &prog,
+            runtime: None,
+            selected: None,
+            selected_elements: &[],
+            validation_report: None,
+        };
+
+        let state = SfcCanvasState::default();
+
+        // 1. Verify dynamic step width expands for long names
+        let w_short = canvas_prog.step_width(&short_step);
+        let w_long = canvas_prog.step_width(&long_step);
+        assert!(w_short >= 170.0, "Short step must have minimum width 170");
+        assert!(w_long > w_short, "Long step must expand wider than short step");
+        assert!(w_long <= 320.0, "Step width must cap at 320");
+
+        // 2. Verify [+ Act] button rect is inside step bounds
+        let (sx, _) = canvas_prog.step_pos(&short_step, &state);
+        let add_btn_rect = canvas_prog.step_add_action_rect(&short_step, &state);
+        assert!(add_btn_rect.x >= sx);
+        assert!(add_btn_rect.x + add_btn_rect.width <= sx + w_short);
+
+        // 3. Verify step name rect is inside step bounds
+        let name_rect = canvas_prog.step_name_rect(&short_step, &state);
+        assert!(name_rect.x >= sx);
+        assert!(name_rect.x + name_rect.width <= sx + w_short);
+
+        // 4. Verify transition receptivity badge width scales to expression
+        let tr_rect = canvas_prog.trans_receptivity_rect(&prog.transitions[0], &state);
+        assert!(tr_rect.width >= 100.0, "Long receptivity must have wide badge");
     }
 }
