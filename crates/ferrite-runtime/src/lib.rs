@@ -516,11 +516,9 @@ impl PlcRuntime {
                         break;
                     }
                 }
-                Breakpoint::Pou(id) => {
-                    if executed_pous.contains(id) {
-                        hit_breakpoint = Some(bp.clone());
-                        break;
-                    }
+                Breakpoint::Pou(id) if executed_pous.contains(id) => {
+                    hit_breakpoint = Some(bp.clone());
+                    break;
                 }
                 _ => {}
             }

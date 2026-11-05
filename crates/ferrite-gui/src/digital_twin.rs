@@ -981,8 +981,8 @@ pub fn render_digital_twin_window<'a>(app: &'a FerriteStudioApp) -> Element<'a, 
             .padding(8)
             .style(StudioTheme::card_style);
 
-            let clamped_x = menu_pos.x.clamp(8.0, 820.0);
-            let clamped_y = menu_pos.y.clamp(8.0, 520.0);
+            let clamped_x = menu_pos.0.clamp(8.0, 820.0);
+            let clamped_y = menu_pos.1.clamp(8.0, 520.0);
             let positioned_menu = column![
                 Space::with_height(Length::Fixed(clamped_y)),
                 row![Space::with_width(Length::Fixed(clamped_x)), menu_card],

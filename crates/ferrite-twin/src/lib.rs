@@ -1,21 +1,16 @@
-pub mod draw;
 pub mod model;
-pub mod theme;
 pub mod workspace;
 
-pub use draw::{draw_canvas_element, draw_selection_overlay};
 pub use model::{
     AccessMode, ActiveResize, ActuatorKind, BlinkConfig, ButtonActionMode, CanvasElement,
     ColorEditTarget, ElementKind, ResizeHandle, ShapeType, SharedIoHandle, SharedIoSnapshot,
     SharedIoState, TwinMode, VariableBinding, hex_to_rgb, hsv_to_rgb, rgb_to_hex, rgb_to_hsv,
 };
-pub use theme::TwinTheme;
 pub use workspace::DigitalTwinWorkspace;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui::{Color32, pos2};
     use ferrite_core::types::{IecType, IecValue};
     use std::sync::{Arc, RwLock};
 
@@ -64,47 +59,32 @@ mod tests {
             z_index: 0,
             element_type: ElementKind::Tank,
             binding: None,
-            base_color: Color32::GRAY.to_array(),
+            base_color: [128, 128, 128, 255],
             button_mode: ButtonActionMode::default(),
         };
 
         // Top-Left corner is at (100.0, 100.0)
         assert_eq!(
-            elem.hit_test_handle(pos2(100.0, 100.0), 8.0),
+            elem.hit_test_handle((100.0, 100.0), 8.0),
             Some(ResizeHandle::TopLeft)
         );
         // Top-Right corner is at (300.0, 100.0)
         assert_eq!(
-            elem.hit_test_handle(pos2(300.0, 100.0), 8.0),
+            elem.hit_test_handle((300.0, 100.0), 8.0),
             Some(ResizeHandle::TopRight)
         );
         // Bottom-Left corner is at (100.0, 250.0)
         assert_eq!(
-            elem.hit_test_handle(pos2(100.0, 250.0), 8.0),
+            elem.hit_test_handle((100.0, 250.0), 8.0),
             Some(ResizeHandle::BottomLeft)
         );
         // Bottom-Right corner is at (300.0, 250.0)
         assert_eq!(
-            elem.hit_test_handle(pos2(300.0, 250.0), 8.0),
+            elem.hit_test_handle((300.0, 250.0), 8.0),
             Some(ResizeHandle::BottomRight)
         );
         // Center of element should NOT hit any corner handle
-        assert_eq!(elem.hit_test_handle(pos2(200.0, 175.0), 8.0), None);
-
-        // Verify cursor mappings
-        assert_eq!(ResizeHandle::TopLeft.cursor(), egui::CursorIcon::ResizeNwSe);
-        assert_eq!(
-            ResizeHandle::BottomRight.cursor(),
-            egui::CursorIcon::ResizeNwSe
-        );
-        assert_eq!(
-            ResizeHandle::TopRight.cursor(),
-            egui::CursorIcon::ResizeNeSw
-        );
-        assert_eq!(
-            ResizeHandle::BottomLeft.cursor(),
-            egui::CursorIcon::ResizeNeSw
-        );
+        assert_eq!(elem.hit_test_handle((200.0, 175.0), 8.0), None);
     }
 
     #[test]

@@ -5384,7 +5384,7 @@ impl FerriteStudioApp {
                                 self.digital_twin_workspace.inspector_open_for = Some(id);
                             }
                             self.digital_twin_workspace.context_menu =
-                                Some(((mx, my).into(), id));
+                                Some(((mx, my), id));
                             self.digital_twin_workspace.sync_color_picker_from_selected();
                             return Task::none();
                         }
@@ -5431,7 +5431,7 @@ impl FerriteStudioApp {
                                 handle,
                                 start_pos: elem.position,
                                 start_size: elem.size,
-                                start_mouse: (mx, my).into(),
+                                start_mouse: (mx, my),
                             });
                             return Task::none();
                         }
@@ -5449,7 +5449,7 @@ impl FerriteStudioApp {
                             self.digital_twin_workspace.inspector_open_for = Some(id);
                         }
                         self.digital_twin_workspace.drag_target_id = Some(id);
-                        self.digital_twin_workspace.drag_start_mouse = Some((mx, my).into());
+                        self.digital_twin_workspace.drag_start_mouse = Some((mx, my));
                         self.digital_twin_workspace.drag_start_elem_pos = pos;
                         self.digital_twin_workspace.sync_color_picker_from_selected();
                         return Task::none();
@@ -5491,8 +5491,8 @@ impl FerriteStudioApp {
                         .iter_mut()
                         .find(|e| e.id == resize.elem_id)
                     {
-                        let dx = mx - resize.start_mouse.x;
-                        let dy = my - resize.start_mouse.y;
+                        let dx = mx - resize.start_mouse.0;
+                        let dy = my - resize.start_mouse.1;
                         let rad = -elem.rotation.to_radians();
                         let ldx = dx * rad.cos() - dy * rad.sin();
                         let ldy = dx * rad.sin() + dy * rad.cos();
@@ -5557,8 +5557,8 @@ impl FerriteStudioApp {
                         .iter_mut()
                         .find(|e| e.id == drag_id)
                     {
-                        let mut nx = (start_pos.0 + (mx - start_mouse.x)).max(0.0);
-                        let mut ny = (start_pos.1 + (my - start_mouse.y)).max(0.0);
+                        let mut nx = (start_pos.0 + (mx - start_mouse.0)).max(0.0);
+                        let mut ny = (start_pos.1 + (my - start_mouse.1)).max(0.0);
                         if snap {
                             nx = (nx / grid_size).round() * grid_size;
                             ny = (ny / grid_size).round() * grid_size;
