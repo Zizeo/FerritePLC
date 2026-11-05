@@ -20,7 +20,7 @@ pub mod trend_plotter;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 
-pub use app::{FerriteStudioApp, Message, UiTheme, WorkspaceTab};
+pub use app::{BreakpointMode, FerriteStudioApp, Message, UiTheme, WorkspaceTab};
 pub type StudioApp = FerriteStudioApp;
 
 use ferrite_project::{MANIFEST_FILE_NAME, Project, ProjectError};
@@ -2672,6 +2672,63 @@ mod tests {
         }
 
         crate::settings::set_custom_settings_path(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_breakpoint_mode_and_input_parsing() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("ferrite_gui_bp_test");
+        if temp_dir.exists() {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        }
+        let proj = Project::scaffold(&temp_dir, "bp_test")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        // Default mode is ScanCount
+        assert_eq!(app.bp_mode, crate::app::BreakpointMode::ScanCount);
+
+        // Test empty/whitespace input
+        app.bp_input_val = "   ".to_string();
+        assert!(app.parse_breakpoint_input().is_none());
+
+        // Test ScanCount: valid number
+        app.bp_input_val = " 42 ".to_string();
+        assert_eq!(
+            app.parse_breakpoint_input(),
+            Some(ferrite_runtime::Breakpoint::ScanCount(42))
+        );
+
+        // Test ScanCount: invalid number
+        app.bp_input_val = "abc".to_string();
+        assert!(app.parse_breakpoint_input().is_none());
+
+        // Test SymbolTrue
+        app.bp_mode = crate::app::BreakpointMode::SymbolTrue;
+        app.bp_input_val = " EStop_Active ".to_string();
+        assert_eq!(
+            app.parse_breakpoint_input(),
+            Some(ferrite_runtime::Breakpoint::SymbolTrue("EStop_Active".to_string()))
+        );
+
+        // Test Pou
+        app.bp_mode = crate::app::BreakpointMode::Pou;
+        app.bp_input_val = " main_safety ".to_string();
+        assert_eq!(
+            app.parse_breakpoint_input(),
+            Some(ferrite_runtime::Breakpoint::Pou(ferrite_core::PouId("main_safety".to_string())))
+        );
+
+        // Test AddBreakpoint clears bp_input_val
+        let bp = app.parse_breakpoint_input().unwrap();
+        let _ = app.update(Message::AddBreakpoint(bp));
+        assert!(app.bp_input_val.is_empty(), "bp_input_val must be cleared after adding breakpoint");
+        assert_eq!(app.runtime.as_ref().unwrap().breakpoints.len(), 1);
+
+        // Test ClearAllBreakpoints
+        let _ = app.update(Message::ClearAllBreakpoints);
+        assert_eq!(app.runtime.as_ref().unwrap().breakpoints.len(), 0);
+
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }

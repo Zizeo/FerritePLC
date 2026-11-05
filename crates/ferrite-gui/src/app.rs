@@ -136,6 +136,15 @@ impl UiTheme {
     }
 }
 
+/// Mode / type of commissioning breakpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BreakpointMode {
+    #[default]
+    ScanCount,
+    SymbolTrue,
+    Pou,
+}
+
 /// Strongly typed Elm Architecture interaction messages.
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -205,7 +214,8 @@ pub enum Message {
     UnforceAllTags,
     AddBreakpoint(ferrite_runtime::Breakpoint),
     RemoveBreakpoint(usize),
-    SetBpTypeScan(bool),
+    ClearAllBreakpoints,
+    SetBpMode(BreakpointMode),
     SetBpInputVal(String),
     SetForceAnalogInput(String),
     ForceNumericTag(String, String),
@@ -438,7 +448,7 @@ pub struct FerriteStudioApp {
     pub active_tab: WorkspaceTab,
     pub sim_running: bool,
     pub sim_speed: SimSpeed,
-    pub bp_type_scan: bool,
+    pub bp_mode: BreakpointMode,
     pub bp_input_val: String,
     pub force_analog_input: String,
     pub modified: bool,
@@ -654,7 +664,7 @@ impl FerriteStudioApp {
             active_tab: first_pou,
             sim_running: false,
             sim_speed: SimSpeed::Realtime1x,
-            bp_type_scan: true,
+            bp_mode: BreakpointMode::ScanCount,
             bp_input_val: String::new(),
             force_analog_input: String::new(),
             modified: false,
@@ -732,6 +742,26 @@ impl FerriteStudioApp {
             ld_selected_elements: Vec::new(),
             ld_canvas_pan: HashMap::new(),
             ld_canvas_zoom: HashMap::new(),
+        }
+    }
+
+    /// Parses the currently input breakpoint string according to the active `bp_mode`.
+    pub fn parse_breakpoint_input(&self) -> Option<ferrite_runtime::Breakpoint> {
+        let val = self.bp_input_val.trim();
+        if val.is_empty() {
+            return None;
+        }
+        match self.bp_mode {
+            BreakpointMode::ScanCount => val
+                .parse::<u64>()
+                .ok()
+                .map(ferrite_runtime::Breakpoint::ScanCount),
+            BreakpointMode::SymbolTrue => {
+                Some(ferrite_runtime::Breakpoint::SymbolTrue(val.to_string()))
+            }
+            BreakpointMode::Pou => Some(ferrite_runtime::Breakpoint::Pou(
+                ferrite_core::PouId(val.to_string()),
+            )),
         }
     }
 
@@ -2199,6 +2229,7 @@ impl FerriteStudioApp {
             Message::AddBreakpoint(bp) => {
                 if let Some(rt) = &mut self.runtime {
                     rt.breakpoints.push(bp);
+                    self.bp_input_val.clear();
                     self.status_banner = self
                         .ui_lang
                         .tr("Breakpoint added.", "Point d'arrêt ajouté.")
@@ -2218,8 +2249,21 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
-            Message::SetBpTypeScan(b) => {
-                self.bp_type_scan = b;
+            Message::ClearAllBreakpoints => {
+                if let Some(rt) = &mut self.runtime {
+                    rt.breakpoints.clear();
+                    self.status_banner = self
+                        .ui_lang
+                        .tr(
+                            "All breakpoints cleared.",
+                            "Tous les points d'arrêt ont été effacés.",
+                        )
+                        .to_string();
+                }
+                Task::none()
+            }
+            Message::SetBpMode(mode) => {
+                self.bp_mode = mode;
                 Task::none()
             }
             Message::SetBpInputVal(v) => {
@@ -7835,18 +7879,26 @@ impl FerriteStudioApp {
 
                 let bp_add_form = row![
                     button(
-                        text(if self.bp_type_scan {
-                            self.ui_lang.tr("Scan #", "N° Cycle")
-                        } else {
-                            self.ui_lang.tr("Symbol", "Symbole")
+                        text(match self.bp_mode {
+                            BreakpointMode::ScanCount => self.ui_lang.tr("Scan #", "N° Cycle"),
+                            BreakpointMode::SymbolTrue => self.ui_lang.tr("Symbol", "Symbole"),
+                            BreakpointMode::Pou => "POU",
                         })
-                        .size(10)
+                        .size(10),
                     )
-                    .on_press(Message::SetBpTypeScan(!self.bp_type_scan))
+                    .on_press(Message::SetBpMode(match self.bp_mode {
+                        BreakpointMode::ScanCount => BreakpointMode::SymbolTrue,
+                        BreakpointMode::SymbolTrue => BreakpointMode::Pou,
+                        BreakpointMode::Pou => BreakpointMode::ScanCount,
+                    }))
                     .style(StudioTheme::secondary_button)
                     .padding([6, 12]),
                     text_input(
-                        if self.bp_type_scan { "100" } else { "EStop_OK" },
+                        match self.bp_mode {
+                            BreakpointMode::ScanCount => "100",
+                            BreakpointMode::SymbolTrue => "EStop_OK",
+                            BreakpointMode::Pou => "main_safety",
+                        },
                         &self.bp_input_val,
                     )
                     .on_input(Message::SetBpInputVal)
@@ -7854,22 +7906,7 @@ impl FerriteStudioApp {
                     .padding([4, 6])
                     .style(StudioTheme::styled_input),
                     button(text(self.ui_lang.tr("+ Add", "+ Ajouter")).size(10.5))
-                        .on_press_maybe({
-                            let val = self.bp_input_val.trim();
-                            if val.is_empty() {
-                                None
-                            } else if self.bp_type_scan {
-                                val.parse::<u64>().ok().map(|n| {
-                                    Message::AddBreakpoint(ferrite_runtime::Breakpoint::ScanCount(
-                                        n,
-                                    ))
-                                })
-                            } else {
-                                Some(Message::AddBreakpoint(
-                                    ferrite_runtime::Breakpoint::SymbolTrue(val.to_string()),
-                                ))
-                            }
-                        })
+                        .on_press_maybe(self.parse_breakpoint_input().map(Message::AddBreakpoint))
                         .style(StudioTheme::primary_button)
                         .padding([6, 12]),
                 ]
