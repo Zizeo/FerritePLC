@@ -2720,14 +2720,14 @@ mod tests {
         );
 
         // Test AddBreakpoint clears bp_input_val
-        let bp = app.parse_breakpoint_input().unwrap();
+        let bp = app.parse_breakpoint_input().ok_or("expected valid bp")?;
         let _ = app.update(Message::AddBreakpoint(bp));
         assert!(app.bp_input_val.is_empty(), "bp_input_val must be cleared after adding breakpoint");
-        assert_eq!(app.runtime.as_ref().unwrap().breakpoints.len(), 1);
+        assert_eq!(app.runtime.as_ref().map(|rt| rt.breakpoints.len()), Some(1));
 
         // Test ClearAllBreakpoints
         let _ = app.update(Message::ClearAllBreakpoints);
-        assert_eq!(app.runtime.as_ref().unwrap().breakpoints.len(), 0);
+        assert_eq!(app.runtime.as_ref().map(|rt| rt.breakpoints.len()), Some(0));
 
         // Test UI view rendering in both EN and FR with empty and populated breakpoints
         let win_id = iced::window::Id::unique();
@@ -2736,7 +2736,7 @@ mod tests {
 
         let _ = app.update(Message::SetBpMode(crate::app::BreakpointMode::SymbolTrue));
         let _ = app.update(Message::SetBpInputVal("Sensor_1".to_string()));
-        let bp = app.parse_breakpoint_input().unwrap();
+        let bp = app.parse_breakpoint_input().ok_or("expected valid bp")?;
         let _ = app.update(Message::AddBreakpoint(bp));
         let _ = app.view(win_id);
 
