@@ -640,109 +640,158 @@ impl ModbusTcpServer {
         let exc_cnt = Arc::clone(&exceptions_count);
         let act_cnt = Arc::clone(&active_clients);
 
+        struct ConnectedClient {
+            stream: TcpStream,
+            buffer: Vec<u8>,
+        }
+
         let worker_handle = thread::spawn(move || {
-            let mut client_streams: Vec<TcpStream> = Vec::new();
+            let mut clients: Vec<ConnectedClient> = Vec::new();
             let mut read_buf = [0u8; 1024];
 
             while r_flag.load(Ordering::Relaxed) {
+                let mut had_activity = false;
+
                 // Non-blocking accept of new connections
                 match listener.accept() {
                     Ok((stream, _)) => {
                         let _ = stream.set_nonblocking(true);
                         let _ = stream.set_nodelay(true);
-                        client_streams.push(stream);
+                        clients.push(ConnectedClient {
+                            stream,
+                            buffer: Vec::with_capacity(512),
+                        });
                         act_cnt.fetch_add(1, Ordering::Relaxed);
+                        had_activity = true;
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                     Err(_) => {}
                 }
 
                 let mut to_remove = Vec::new();
-                for (idx, stream) in client_streams.iter_mut().enumerate() {
-                    match stream.read(&mut read_buf) {
-                        Ok(0) => {
-                            // Client disconnected
-                            to_remove.push(idx);
-                        }
-                        Ok(n) => {
-                            if n >= 7 {
-                                req_cnt.fetch_add(1, Ordering::Relaxed);
-                                if let Ok(header) = MbapHeader::parse(&read_buf[..7]) {
-                                    let pdu_len = (header.length as usize).saturating_sub(1);
-                                    let pdu_end = 7 + pdu_len;
-                                    if n >= pdu_end {
-                                        let pdu = &read_buf[7..pdu_end];
-                                        let resp = match ModbusRequest::parse(pdu) {
-                                            Ok(req) => {
-                                                if let Ok(mut pi) = shared_pi.write() {
-                                                    match ModbusProcessImageHandler::handle_request(
-                                                        &mut pi, &req,
-                                                    ) {
-                                                        Ok(r) => r,
-                                                        Err(exc) => {
-                                                            exc_cnt.fetch_add(1, Ordering::Relaxed);
-                                                            ModbusResponse::Exception {
-                                                                function: req.function_code(),
-                                                                code: exc,
-                                                            }
-                                                        }
-                                                    }
-                                                } else {
-                                                    ModbusResponse::Exception {
-                                                        function: req.function_code(),
-                                                        code: ModbusException::ServerDeviceFailure,
-                                                    }
-                                                }
-                                            }
-                                            Err(ModbusError::IllegalFunction(fc)) => {
-                                                exc_cnt.fetch_add(1, Ordering::Relaxed);
-                                                ModbusResponse::Exception {
-                                                    function: fc,
-                                                    code: ModbusException::IllegalFunction,
-                                                }
-                                            }
-                                            Err(_) => {
-                                                exc_cnt.fetch_add(1, Ordering::Relaxed);
-                                                ModbusResponse::Exception {
-                                                    function: read_buf.get(7).copied().unwrap_or(0),
-                                                    code: ModbusException::IllegalDataValue,
-                                                }
-                                            }
-                                        };
-
-                                        let mut resp_pdu = Vec::with_capacity(256);
-                                        resp.encode_pdu(read_buf[7], &mut resp_pdu);
-
-                                        let resp_header = MbapHeader {
-                                            transaction_id: header.transaction_id,
-                                            protocol_id: 0,
-                                            length: (resp_pdu.len() + 1) as u16,
-                                            unit_id: header.unit_id,
-                                        };
-
-                                        let mut out_frame = Vec::with_capacity(7 + resp_pdu.len());
-                                        resp_header.write_bytes(&mut out_frame);
-                                        out_frame.extend_from_slice(&resp_pdu);
-
-                                        let _ = stream.write_all(&out_frame);
-                                        let _ = stream.flush();
-                                    }
+                for (idx, client) in clients.iter_mut().enumerate() {
+                    loop {
+                        match client.stream.read(&mut read_buf) {
+                            Ok(0) => {
+                                // Client disconnected
+                                to_remove.push(idx);
+                                break;
+                            }
+                            Ok(n) => {
+                                had_activity = true;
+                                client.buffer.extend_from_slice(&read_buf[..n]);
+                                if n < read_buf.len() {
+                                    break;
                                 }
                             }
+                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                break;
+                            }
+                            Err(_) => {
+                                to_remove.push(idx);
+                                break;
+                            }
                         }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                        Err(_) => {
-                            to_remove.push(idx);
+                    }
+
+                    // Process all complete frames accumulated in client.buffer
+                    while client.buffer.len() >= 7 {
+                        match MbapHeader::parse(&client.buffer[..7]) {
+                            Ok(header) => {
+                                let pdu_len = (header.length as usize).saturating_sub(1);
+                                let frame_len = 7 + pdu_len;
+                                if client.buffer.len() >= frame_len {
+                                    req_cnt.fetch_add(1, Ordering::Relaxed);
+                                    let pdu = &client.buffer[7..frame_len];
+                                    let original_fc = client.buffer[7];
+                                    let resp = match ModbusRequest::parse(pdu) {
+                                        Ok(req) => {
+                                            if let Ok(mut pi) = shared_pi.write() {
+                                                match ModbusProcessImageHandler::handle_request(
+                                                    &mut pi, &req,
+                                                ) {
+                                                    Ok(r) => r,
+                                                    Err(exc) => {
+                                                        exc_cnt.fetch_add(1, Ordering::Relaxed);
+                                                        ModbusResponse::Exception {
+                                                            function: req.function_code(),
+                                                            code: exc,
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                ModbusResponse::Exception {
+                                                    function: req.function_code(),
+                                                    code: ModbusException::ServerDeviceFailure,
+                                                }
+                                            }
+                                        }
+                                        Err(ModbusError::IllegalFunction(fc)) => {
+                                            exc_cnt.fetch_add(1, Ordering::Relaxed);
+                                            ModbusResponse::Exception {
+                                                function: fc,
+                                                code: ModbusException::IllegalFunction,
+                                            }
+                                        }
+                                        Err(_) => {
+                                            exc_cnt.fetch_add(1, Ordering::Relaxed);
+                                            ModbusResponse::Exception {
+                                                function: original_fc,
+                                                code: ModbusException::IllegalDataValue,
+                                            }
+                                        }
+                                    };
+
+                                    let mut resp_pdu = Vec::with_capacity(256);
+                                    resp.encode_pdu(original_fc, &mut resp_pdu);
+
+                                    let resp_header = MbapHeader {
+                                        transaction_id: header.transaction_id,
+                                        protocol_id: 0,
+                                        length: (resp_pdu.len() + 1) as u16,
+                                        unit_id: header.unit_id,
+                                    };
+
+                                    let mut out_frame = Vec::with_capacity(7 + resp_pdu.len());
+                                    resp_header.write_bytes(&mut out_frame);
+                                    out_frame.extend_from_slice(&resp_pdu);
+
+                                    if client.stream.write_all(&out_frame).is_err()
+                                        || client.stream.flush().is_err()
+                                    {
+                                        to_remove.push(idx);
+                                        break;
+                                    }
+
+                                    client.buffer.drain(..frame_len);
+                                    had_activity = true;
+                                } else {
+                                    // Incomplete frame, wait for remaining bytes
+                                    break;
+                                }
+                            }
+                            Err(_) => {
+                                // Resynchronize frame stream
+                                client.buffer.remove(0);
+                            }
                         }
+                    }
+
+                    if client.buffer.len() > 65536 {
+                        client.buffer.clear();
                     }
                 }
 
+                to_remove.sort_unstable();
+                to_remove.dedup();
                 for &idx in to_remove.iter().rev() {
-                    client_streams.swap_remove(idx);
+                    clients.swap_remove(idx);
                     act_cnt.fetch_sub(1, Ordering::Relaxed);
                 }
 
-                thread::sleep(Duration::from_millis(5));
+                if !had_activity {
+                    thread::sleep(Duration::from_millis(5));
+                }
             }
         });
 
@@ -1040,6 +1089,85 @@ mod tests {
 
         let telem = server.telemetry();
         assert!(telem.requests_total >= 2);
+        server.stop();
+        Ok(())
+    }
+
+    #[test]
+    fn test_modbus_tcp_fragmented_frame() -> Result<(), Box<dyn std::error::Error>> {
+        let pi = Arc::new(RwLock::new(ProcessImage::default()));
+        let bind_addr: SocketAddr = "127.0.0.1:5031".parse()?;
+        let mut server = ModbusTcpServer::start(bind_addr, Arc::clone(&pi))?;
+        thread::sleep(Duration::from_millis(50));
+
+        let mut stream = TcpStream::connect(bind_addr)?;
+        stream.set_nodelay(true)?;
+        stream.set_read_timeout(Some(Duration::from_millis(500)))?;
+
+        // Prepare frame: ReadCoils { address: 0, count: 8 }
+        // MBAP: [0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01] (7 bytes)
+        // PDU:  [0x01, 0x00, 0x00, 0x00, 0x08] (5 bytes)
+        let frame = vec![0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x01, 0x00, 0x00, 0x00, 0x08];
+
+        // Send first 4 bytes (fragment 1)
+        stream.write_all(&frame[..4])?;
+        stream.flush()?;
+        thread::sleep(Duration::from_millis(25));
+
+        // Send remaining 8 bytes (fragment 2)
+        stream.write_all(&frame[4..])?;
+        stream.flush()?;
+
+        // Expect response: MBAP (7 bytes) + PDU (0x01, 0x01, 0x00)
+        let mut resp_header = [0u8; 7];
+        stream.read_exact(&mut resp_header)?;
+        let header = MbapHeader::parse(&resp_header)?;
+        assert_eq!(header.transaction_id, 1);
+
+        server.stop();
+        Ok(())
+    }
+
+    #[test]
+    fn test_modbus_tcp_pipelined_requests() -> Result<(), Box<dyn std::error::Error>> {
+        let pi = Arc::new(RwLock::new(ProcessImage::default()));
+        let bind_addr: SocketAddr = "127.0.0.1:5032".parse()?;
+        let mut server = ModbusTcpServer::start(bind_addr, Arc::clone(&pi))?;
+        thread::sleep(Duration::from_millis(50));
+
+        let mut stream = TcpStream::connect(bind_addr)?;
+        stream.set_nodelay(true)?;
+        stream.set_read_timeout(Some(Duration::from_millis(500)))?;
+
+        // Frame 1: trans_id = 100, ReadCoils count 8
+        let frame1 = vec![0x00, 100, 0x00, 0x00, 0x00, 0x06, 0x01, 0x01, 0x00, 0x00, 0x00, 0x08];
+        // Frame 2: trans_id = 101, ReadCoils count 8
+        let frame2 = vec![0x00, 101, 0x00, 0x00, 0x00, 0x06, 0x01, 0x01, 0x00, 0x00, 0x00, 0x08];
+
+        let mut combined = Vec::new();
+        combined.extend_from_slice(&frame1);
+        combined.extend_from_slice(&frame2);
+
+        // Send both in a single TCP write
+        stream.write_all(&combined)?;
+        stream.flush()?;
+
+        // Response 1
+        let mut resp1_header = [0u8; 7];
+        stream.read_exact(&mut resp1_header)?;
+        let h1 = MbapHeader::parse(&resp1_header)?;
+        assert_eq!(h1.transaction_id, 100);
+        let mut pdu1 = vec![0u8; (h1.length as usize).saturating_sub(1)];
+        stream.read_exact(&mut pdu1)?;
+
+        // Response 2
+        let mut resp2_header = [0u8; 7];
+        stream.read_exact(&mut resp2_header)?;
+        let h2 = MbapHeader::parse(&resp2_header)?;
+        assert_eq!(h2.transaction_id, 101);
+        let mut pdu2 = vec![0u8; (h2.length as usize).saturating_sub(1)];
+        stream.read_exact(&mut pdu2)?;
+
         server.stop();
         Ok(())
     }
