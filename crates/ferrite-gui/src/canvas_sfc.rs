@@ -952,22 +952,21 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                             return (event::Status::Captured, None);
                         }
 
-                        if let Some(dur_rect) = self.action_duration_rect(step, a_idx, state) {
-                            if cursor_pos.x >= dur_rect.x
-                                && cursor_pos.x <= dur_rect.x + dur_rect.width
-                                && cursor_pos.y >= dur_rect.y
-                                && cursor_pos.y <= dur_rect.y + dur_rect.height
-                            {
-                                let _ = self.commit_current_edit(state);
-                                state.start_edit(
-                                    SfcEditTarget::ActionDuration {
-                                        step_id: step.id.clone(),
-                                        action_idx: a_idx,
-                                    },
-                                    act.duration.as_deref().unwrap_or("T#5s"),
-                                );
-                                return (event::Status::Captured, None);
-                            }
+                        if let Some(dur_rect) = self.action_duration_rect(step, a_idx, state)
+                            && cursor_pos.x >= dur_rect.x
+                            && cursor_pos.x <= dur_rect.x + dur_rect.width
+                            && cursor_pos.y >= dur_rect.y
+                            && cursor_pos.y <= dur_rect.y + dur_rect.height
+                        {
+                            let _ = self.commit_current_edit(state);
+                            state.start_edit(
+                                SfcEditTarget::ActionDuration {
+                                    step_id: step.id.clone(),
+                                    action_idx: a_idx,
+                                },
+                                act.duration.as_deref().unwrap_or("T#5s"),
+                            );
+                            return (event::Status::Captured, None);
                         }
                     }
                 }
@@ -2899,6 +2898,7 @@ fn sfc_subtle_button(_theme: &Theme, status: button::Status) -> button::Style {
 }
 
 /// Renders the quick-editor context bar when a Step is selected
+#[allow(dead_code)]
 fn render_step_inspector<'a>(
     pou_name: &'a str,
     program: &'a SfcProgram,
@@ -3025,6 +3025,7 @@ fn render_step_inspector<'a>(
 }
 
 /// Renders the quick-editor context bar when a Transition is selected
+#[allow(dead_code)]
 fn render_transition_inspector<'a>(
     pou_name: &'a str,
     program: &'a SfcProgram,
@@ -3108,7 +3109,7 @@ fn render_transition_inspector<'a>(
 pub fn render_sfc_editor<'a>(
     program: &'a SfcProgram,
     runtime: Option<&'a PlcRuntime>,
-    lang: UiLanguage,
+    _lang: UiLanguage,
     selected: Option<&'a SfcElementKey>,
     selected_elements: &'a [SfcElementKey],
 ) -> Element<'a, Message> {
@@ -3118,17 +3119,6 @@ pub fn render_sfc_editor<'a>(
     let validation_report = validate_sfc_topology(program);
     let tree_count = validation_report.trees.len();
     let _error_count = validation_report.errors.len();
-
-    // Check if an element is selected and render its inspector
-    let inspector_elem: Option<Element<'a, Message>> = match selected {
-        Some(SfcElementKey::Step(step_id)) => {
-            render_step_inspector(pou_name, program, step_id, lang)
-        }
-        Some(SfcElementKey::Transition(trans_id)) => {
-            render_transition_inspector(pou_name, program, trans_id, lang)
-        }
-        None => None,
-    };
 
     // Toolbar buttons: always visible at the top, scrollable horizontally so never squished
     let add_step_btn = button(text("+ Step").size(11.5))
@@ -3243,7 +3233,7 @@ pub fn render_sfc_editor<'a>(
     ))
     .width(Length::Fill);
 
-    let tip = text("Tip: Click 'Auto-Sort Layout' to auto-align all branches. Drag elements (snaps to 20px). Drag wires (● to ●). Right-click any port to disconnect. Box drag to multi-select.")
+    let tip = text("Tip: Direct in-place editing on canvas (click names/actions/transitions to edit). Double-click or click [+ Act] on steps. Drag wires (● to ●). Right-click any port to disconnect.")
         .size(10.5)
         .color(StudioTheme::TEXT_MUTED);
 
@@ -3258,7 +3248,7 @@ pub fn render_sfc_editor<'a>(
     ]
     .spacing(4);
 
-    // Bottom Bar: Inspector or multi-selection actions pop at the bottom
+    // Bottom Bar: Multi-selection bulk actions pop at the bottom when multiple elements are selected
     let bottom_bar: Option<Element<'a, Message>> = if selected_elements.len() > 1 {
         let count_label = text(format!("{} items selected", selected_elements.len()))
             .size(12)
@@ -3331,54 +3321,6 @@ pub fn render_sfc_editor<'a>(
                     0.2, 0.4, 0.6, 0.15,
                 )))
                 .into(),
-        )
-    } else if let Some(insp) = inspector_elem {
-        let deselect_btn = button(
-            text(crate::icons::icon_close())
-                .size(11)
-                .shaping(iced::widget::text::Shaping::Advanced),
-        )
-        .on_press(Message::SfcSelectElement(pou_name.to_string(), None))
-        .style(StudioTheme::ghost_button)
-        .padding([4, 8]);
-
-        let scrollable_insp = scrollable(container(insp).padding(Padding {
-            top: 2.0,
-            right: 8.0,
-            bottom: 8.0,
-            left: 2.0,
-        }))
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new()
-                .width(5)
-                .scroller_width(5)
-                .margin(1),
-        ));
-
-        Some(
-            container(
-                row![
-                    container(scrollable_insp)
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .align_y(Alignment::Center),
-                    deselect_btn
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            )
-            .width(Length::Fill)
-            .height(Length::Fixed(56.0))
-            .padding(Padding {
-                top: 4.0,
-                right: 8.0,
-                bottom: 4.0,
-                left: 8.0,
-            })
-            .style(StudioTheme::subtle_badge_style(Color::from_rgba(
-                0.2, 0.4, 0.6, 0.15,
-            )))
-            .into(),
         )
     } else {
         None
@@ -5028,7 +4970,7 @@ mod tests {
         // 5. Click Action Duration, type, cancel with Escape
         let dur_rect = canvas_prog
             .action_duration_rect(&step, 1, &state)
-            .unwrap_or(Rectangle::default());
+            .unwrap_or_default();
         let dur_click = Point::new(dur_rect.x + 2.0, dur_rect.y + 2.0);
         let _ = canvas_prog.update(
             &mut state,
