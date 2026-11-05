@@ -435,6 +435,7 @@ impl PlcRuntime {
         }
 
         // Phase 2: Task & POU Execution
+        let mut executed_pous: Vec<PouId> = Vec::new();
         {
             let dt_ms = self.scan_cycle_ms;
             let scan_count = self.scan_count;
@@ -475,6 +476,7 @@ impl PlcRuntime {
                         scan_count,
                     );
                     for pou in &mut task.pous {
+                        executed_pous.push(pou.id());
                         pou.execute(&mut ctx)?;
                     }
                 }
@@ -514,14 +516,11 @@ impl PlcRuntime {
                         break;
                     }
                 }
-                Breakpoint::Pou(id)
-                    if self
-                        .tasks
-                        .iter()
-                        .any(|t| t.pous.iter().any(|p| p.id() == *id)) =>
-                {
-                    hit_breakpoint = Some(bp.clone());
-                    break;
+                Breakpoint::Pou(id) => {
+                    if executed_pous.contains(id) {
+                        hit_breakpoint = Some(bp.clone());
+                        break;
+                    }
                 }
                 _ => {}
             }
@@ -1052,6 +1051,70 @@ mod tests {
         assert_eq!(runtime.read_value("Fill_Timer.Q")?, IecValue::Bool(false));
         // Retained tag Batch_Count at %MW12 must be preserved as 42
         assert_eq!(runtime.read_value("Batch_Count")?, IecValue::Int(42));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    struct TestPou(PouId);
+    impl ExecutablePou for TestPou {
+        fn id(&self) -> PouId {
+            self.0.clone()
+        }
+        fn kind(&self) -> ferrite_core::LanguageKind {
+            ferrite_core::LanguageKind::St
+        }
+        fn execute(&mut self, _ctx: &mut ScanContext) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_pou_breakpoint_only_triggers_when_executed() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_plc_bp_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        let project = Project::scaffold(&temp_dir, "bp_plant")?;
+        let mut runtime = PlcRuntime::from_project(&project)?;
+        runtime.scan_cycle_ms = 10;
+
+        let target_pou = PouId("test_periodic_pou".to_string());
+        runtime.tasks.push(ScheduledTask {
+            name: "PeriodicTask".to_string(),
+            kind: TaskKind::Cyclic,
+            priority: 99,
+            interval_ms: 100,
+            trigger_symbol: None,
+            pous: vec![Box::new(TestPou(target_pou.clone()))],
+            elapsed_ms: 0,
+            last_trigger_state: false,
+            execution_count: 0,
+        });
+
+        runtime.breakpoints.push(Breakpoint::Pou(target_pou.clone()));
+
+        // Step scan with default dt_ms (10ms).
+        // On first scan, elapsed_ms = 10 < 100ms, so PeriodicTask does NOT run.
+        let tel = runtime.step_scan()?;
+        assert!(
+            !tel.breakpoint_hit,
+            "Breakpoint on POU must NOT hit when task did not execute"
+        );
+
+        // Advance 8 more times (total 90ms)
+        for _ in 0..8 {
+            let tel = runtime.step_scan()?;
+            assert!(!tel.breakpoint_hit);
+        }
+
+        // 10th scan reaches 100ms -> task executes -> breakpoint must hit!
+        let tel = runtime.step_scan()?;
+        assert!(
+            tel.breakpoint_hit,
+            "Breakpoint on POU must hit when task executes"
+        );
+        assert_eq!(tel.hit_breakpoint, Some(Breakpoint::Pou(target_pou)));
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
