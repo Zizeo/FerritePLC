@@ -1019,14 +1019,26 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                             && cursor_pos.y <= q_rect.y + q_rect.height
                         {
                             let _ = self.commit_current_edit(state);
-                            let dd_width = 150.0;
+                            let dd_width = 160.0;
                             let dd_height = 8.0 * 22.0 + 4.0;
+                            let dd_y = if q_rect.y + q_rect.height + 2.0 + dd_height > bounds.height
+                                && q_rect.y >= dd_height + 4.0
+                            {
+                                q_rect.y - dd_height - 2.0
+                            } else {
+                                q_rect.y + q_rect.height + 2.0
+                            };
+                            let dd_x = if q_rect.x + dd_width > bounds.width {
+                                (bounds.width - dd_width - 4.0).max(0.0)
+                            } else {
+                                q_rect.x
+                            };
                             state.qualifier_dropdown = Some(SfcQualifierDropdown {
                                 step_id: step.id.clone(),
                                 action_idx: a_idx,
                                 rect: Rectangle {
-                                    x: q_rect.x,
-                                    y: q_rect.y + q_rect.height + 2.0,
+                                    x: dd_x,
+                                    y: dd_y,
                                     width: dd_width,
                                     height: dd_height,
                                 },
@@ -1515,6 +1527,12 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 }
 
                 if matches!(state.drag, DragState::None) {
+                    if let Some(ref dd) = state.qualifier_dropdown
+                        && dd.rect.contains(cursor_pos)
+                    {
+                        state.hover_port = None;
+                        return (event::Status::Captured, None);
+                    }
                     // Check hover on any port
                     state.hover_port = None;
                     for step in &self.program.steps {
@@ -1787,7 +1805,7 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
-        _cursor: mouse::Cursor,
+        cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let width = bounds.width;
@@ -2967,26 +2985,30 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             );
         }
 
-        // 8. Open Qualifier Dropdown Floating Menu
+        let base_geom = frame.into_geometry();
+
+        // 8. Open Qualifier Dropdown Floating Menu (in a dedicated overlay Geometry layer rendered in front of everything)
         if let Some(ref dd) = state.qualifier_dropdown {
-            // Drop shadow
-            frame.fill_rectangle(
-                Point::new(dd.rect.x + 2.0, dd.rect.y + 2.0),
-                Size::new(dd.rect.width, dd.rect.height),
-                Color::from_rgba(0.0, 0.0, 0.0, 0.50),
+            let mut overlay_frame = Frame::new(renderer, bounds.size());
+
+            // Dark diffuse outer drop shadow
+            overlay_frame.fill_rectangle(
+                Point::new(dd.rect.x - 3.0, dd.rect.y - 2.0),
+                Size::new(dd.rect.width + 6.0, dd.rect.height + 6.0),
+                Color::from_rgba(0.0, 0.0, 0.0, 0.70),
             );
-            // Dropdown container background & border
-            frame.fill_rectangle(
+            // Dropdown container background: 100% solid and fully opaque
+            overlay_frame.fill_rectangle(
                 Point::new(dd.rect.x, dd.rect.y),
                 Size::new(dd.rect.width, dd.rect.height),
-                Color::from_rgba(0.09, 0.12, 0.18, 0.98),
+                Color::from_rgb(18.0 / 255.0, 24.0 / 255.0, 36.0 / 255.0),
             );
-            frame.stroke_rectangle(
+            overlay_frame.stroke_rectangle(
                 Point::new(dd.rect.x, dd.rect.y),
                 Size::new(dd.rect.width, dd.rect.height),
                 Stroke::default()
-                    .with_color(Color::from_rgba(0.35, 0.50, 0.70, 0.85))
-                    .with_width(1.2),
+                    .with_color(COLOR_STEP_DROP)
+                    .with_width(1.5),
             );
 
             // Current qualifier for this action
@@ -2998,35 +3020,56 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 .and_then(|s| s.actions.get(dd.action_idx))
                 .map(|a| a.qualifier);
 
+            let hovered_idx = cursor.position_in(bounds).and_then(|pos| {
+                if dd.rect.contains(pos) {
+                    let rel_y = pos.y - (dd.rect.y + 2.0);
+                    let idx = (rel_y / 22.0) as usize;
+                    if idx < SFC_QUALIFIER_ITEMS.len() {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            });
+
             for (idx, (qual, code, desc)) in SFC_QUALIFIER_ITEMS.iter().enumerate() {
                 let row_y = dd.rect.y + 2.0 + (idx as f32) * 22.0;
                 let is_current = current_q == Some(*qual);
+                let is_hovered = hovered_idx == Some(idx);
 
-                if is_current {
-                    frame.fill_rectangle(
-                        Point::new(dd.rect.x + 2.0, row_y),
-                        Size::new(dd.rect.width - 4.0, 22.0),
-                        Color::from_rgba(0.20, 0.40, 0.65, 0.35),
-                    );
-                }
+                // Row background: solid, fully opaque
+                let row_bg = if is_hovered {
+                    Color::from_rgb(38.0 / 255.0, 56.0 / 255.0, 84.0 / 255.0)
+                } else if is_current {
+                    Color::from_rgb(26.0 / 255.0, 44.0 / 255.0, 68.0 / 255.0)
+                } else {
+                    Color::from_rgb(20.0 / 255.0, 26.0 / 255.0, 38.0 / 255.0)
+                };
+                overlay_frame.fill_rectangle(
+                    Point::new(dd.rect.x + 2.0, row_y),
+                    Size::new(dd.rect.width - 4.0, 21.0),
+                    row_bg,
+                );
 
                 let q_col = qualifier_badge_color(*qual);
                 // Badge
-                frame.fill_rectangle(
-                    Point::new(dd.rect.x + 4.0, row_y + 2.5),
+                overlay_frame.fill_rectangle(
+                    Point::new(dd.rect.x + 6.0, row_y + 2.0),
                     Size::new(20.0, 17.0),
                     Color::from_rgba(q_col.r, q_col.g, q_col.b, 0.25),
                 );
-                frame.stroke_rectangle(
-                    Point::new(dd.rect.x + 4.0, row_y + 2.5),
+                overlay_frame.stroke_rectangle(
+                    Point::new(dd.rect.x + 6.0, row_y + 2.0),
                     Size::new(20.0, 17.0),
                     Stroke::default().with_color(q_col).with_width(1.0),
                 );
-                frame.fill_text(canvas::Text {
+                overlay_frame.fill_text(canvas::Text {
                     content: (*code).to_string(),
                     position: Point::new(
-                        dd.rect.x + if code.len() == 1 { 9.0 } else { 5.5 },
-                        row_y + 4.0,
+                        dd.rect.x + if code.len() == 1 { 11.0 } else { 7.5 },
+                        row_y + 3.5,
                     ),
                     color: Color::WHITE,
                     size: iced::Pixels(10.0),
@@ -3035,10 +3078,10 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 });
 
                 // Description
-                frame.fill_text(canvas::Text {
+                overlay_frame.fill_text(canvas::Text {
                     content: (*desc).to_string(),
-                    position: Point::new(dd.rect.x + 28.0, row_y + 4.5),
-                    color: if is_current {
+                    position: Point::new(dd.rect.x + 32.0, row_y + 4.0),
+                    color: if is_current || is_hovered {
                         COLOR_STEP_DROP
                     } else {
                         Color::from_rgb(0.85, 0.90, 0.95)
@@ -3047,9 +3090,30 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     ..Default::default()
                 });
             }
-        }
 
-        vec![frame.into_geometry()]
+            vec![base_geom, overlay_frame.into_geometry()]
+        } else {
+            vec![base_geom]
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &Self::State,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        if let Some(pos) = cursor.position_in(bounds) {
+            if let Some(ref dd) = state.qualifier_dropdown
+                && dd.rect.contains(pos)
+            {
+                return mouse::Interaction::Pointer;
+            }
+            if state.hover_port.is_some() {
+                return mouse::Interaction::Crosshair;
+            }
+        }
+        mouse::Interaction::default()
     }
 }
 
@@ -5047,7 +5111,7 @@ mod tests {
                 rect: Rectangle {
                     x: q_rect.x,
                     y: q_rect.y + q_rect.height + 2.0,
-                    width: 150.0,
+                    width: 160.0,
                     height: 8.0 * 22.0 + 4.0,
                 }
             })
