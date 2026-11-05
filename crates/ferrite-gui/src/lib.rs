@@ -2729,6 +2729,20 @@ mod tests {
         let _ = app.update(Message::ClearAllBreakpoints);
         assert_eq!(app.runtime.as_ref().unwrap().breakpoints.len(), 0);
 
+        // Test UI view rendering in both EN and FR with empty and populated breakpoints
+        let win_id = iced::window::Id::unique();
+        app.bottom_dock_tab = crate::app::BottomDockTab::Diagnostics;
+        let _ = app.view(win_id);
+
+        let _ = app.update(Message::SetBpMode(crate::app::BreakpointMode::SymbolTrue));
+        let _ = app.update(Message::SetBpInputVal("Sensor_1".to_string()));
+        let bp = app.parse_breakpoint_input().unwrap();
+        let _ = app.update(Message::AddBreakpoint(bp));
+        let _ = app.view(win_id);
+
+        let _ = app.update(Message::SetLanguage(crate::UiLanguage::Fr));
+        let _ = app.view(win_id);
+
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }

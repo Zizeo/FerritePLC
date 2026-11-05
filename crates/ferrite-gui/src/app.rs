@@ -7828,13 +7828,47 @@ impl FerriteStudioApp {
 
                 // Breakpoints subsection
                 let mut bp_items = column![].spacing(4);
-                let bp_header = text(self.ui_lang.tr(
-                    "Commissioning Breakpoints",
-                    "Points d'Arrêt de Mise en Service",
-                ))
-                .size(11.5)
-                .color(StudioTheme::TEXT_PRIMARY);
-                bp_items = bp_items.push(bp_header);
+                let bp_count = self
+                    .runtime
+                    .as_ref()
+                    .map(|rt| rt.breakpoints.len())
+                    .unwrap_or(0);
+
+                let count_badge = container(
+                    text(format!("{bp_count}"))
+                        .size(10)
+                        .color(if bp_count > 0 {
+                            StudioTheme::ACCENT_CYAN
+                        } else {
+                            StudioTheme::TEXT_MUTED
+                        }),
+                )
+                .padding([1, 5])
+                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                    0.220, 0.741, 0.973, 0.15,
+                )));
+
+                let mut header_row: iced::widget::Row<'_, Message> = row![
+                    text(self.ui_lang.tr(
+                        "Commissioning Breakpoints",
+                        "Points d'Arrêt de Mise en Service",
+                    ))
+                    .size(11.5)
+                    .color(StudioTheme::TEXT_PRIMARY),
+                    count_badge,
+                    iced::widget::Space::with_width(Length::Fill),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center);
+
+                if bp_count > 0 {
+                    header_row = header_row.push(
+                        button(text(self.ui_lang.tr("Clear All", "Tout Effacer")).size(10))
+                            .on_press(Message::ClearAllBreakpoints)
+                            .style(StudioTheme::danger_button)
+                            .padding([2, 6]),
+                    );
+                }
 
                 if let Some(ref rt) = self.runtime {
                     if rt.breakpoints.is_empty() {
@@ -7877,55 +7911,107 @@ impl FerriteStudioApp {
                     }
                 }
 
-                let bp_add_form = row![
-                    button(
-                        text(match self.bp_mode {
-                            BreakpointMode::ScanCount => self.ui_lang.tr("Scan #", "N° Cycle"),
-                            BreakpointMode::SymbolTrue => self.ui_lang.tr("Symbol", "Symbole"),
-                            BreakpointMode::Pou => "POU",
+                let mode_selector = row![
+                    text(self.ui_lang.tr("Type:", "Type :"))
+                        .size(11)
+                        .color(StudioTheme::TEXT_SECONDARY),
+                    button(text(self.ui_lang.tr("Scan #", "N° Cycle")).size(10))
+                        .on_press(Message::SetBpMode(BreakpointMode::ScanCount))
+                        .style(if self.bp_mode == BreakpointMode::ScanCount {
+                            StudioTheme::primary_button
+                        } else {
+                            StudioTheme::secondary_button
                         })
-                        .size(10),
-                    )
-                    .on_press(Message::SetBpMode(match self.bp_mode {
-                        BreakpointMode::ScanCount => BreakpointMode::SymbolTrue,
-                        BreakpointMode::SymbolTrue => BreakpointMode::Pou,
-                        BreakpointMode::Pou => BreakpointMode::ScanCount,
-                    }))
-                    .style(StudioTheme::secondary_button)
-                    .padding([6, 12]),
-                    text_input(
-                        match self.bp_mode {
-                            BreakpointMode::ScanCount => "100",
-                            BreakpointMode::SymbolTrue => "EStop_OK",
-                            BreakpointMode::Pou => "main_safety",
-                        },
-                        &self.bp_input_val,
-                    )
-                    .on_input(Message::SetBpInputVal)
-                    .width(Length::Fill)
-                    .padding([4, 6])
-                    .style(StudioTheme::styled_input),
-                    button(text(self.ui_lang.tr("+ Add", "+ Ajouter")).size(10.5))
-                        .on_press_maybe(self.parse_breakpoint_input().map(Message::AddBreakpoint))
-                        .style(StudioTheme::primary_button)
-                        .padding([6, 12]),
+                        .padding([2, 8]),
+                    button(text(self.ui_lang.tr("Symbol == TRUE", "Symbole == VRAI")).size(10))
+                        .on_press(Message::SetBpMode(BreakpointMode::SymbolTrue))
+                        .style(if self.bp_mode == BreakpointMode::SymbolTrue {
+                            StudioTheme::primary_button
+                        } else {
+                            StudioTheme::secondary_button
+                        })
+                        .padding([2, 8]),
+                    button(text(self.ui_lang.tr("POU Exec", "Exéc POU")).size(10))
+                        .on_press(Message::SetBpMode(BreakpointMode::Pou))
+                        .style(if self.bp_mode == BreakpointMode::Pou {
+                            StudioTheme::primary_button
+                        } else {
+                            StudioTheme::secondary_button
+                        })
+                        .padding([2, 8]),
                 ]
-                .spacing(8)
+                .spacing(6)
                 .align_y(Alignment::Center);
 
-                row![
+                let input_label_str = match self.bp_mode {
+                    BreakpointMode::ScanCount => self.ui_lang.tr("Cycle #:", "N° Cycle :"),
+                    BreakpointMode::SymbolTrue => self.ui_lang.tr("Tag:", "Symbole :"),
+                    BreakpointMode::Pou => self.ui_lang.tr("POU:", "POU :"),
+                };
+                let input_placeholder_str = match self.bp_mode {
+                    BreakpointMode::ScanCount => {
+                        self.ui_lang.tr("e.g. 500 (Scan count)", "ex. 500 (N° cycle)")
+                    }
+                    BreakpointMode::SymbolTrue => {
+                        self.ui_lang.tr("e.g. EStop_OK (Boolean tag)", "ex. EStop_OK (Tag booléen)")
+                    }
+                    BreakpointMode::Pou => {
+                        self.ui_lang.tr("e.g. main_safety (POU ID)", "ex. main_safety (ID POU)")
+                    }
+                };
+
+                let can_add = self.parse_breakpoint_input();
+                let is_valid = can_add.is_some();
+                let bp_input = text_input(input_placeholder_str, &self.bp_input_val)
+                    .size(12)
+                    .on_input(Message::SetBpInputVal)
+                    .width(Length::Fill)
+                    .padding([4, 8])
+                    .style(StudioTheme::styled_input);
+
+                let add_btn = button(text(self.ui_lang.tr("+ Add", "+ Ajouter")).size(10.5))
+                    .on_press_maybe(can_add.map(Message::AddBreakpoint))
+                    .style(if is_valid {
+                        StudioTheme::primary_button
+                    } else {
+                        StudioTheme::secondary_button
+                    })
+                    .padding([4, 10]);
+
+                let bp_add_form = row![
+                    text(input_label_str)
+                        .size(11)
+                        .color(StudioTheme::TEXT_SECONDARY),
+                    bp_input,
+                    add_btn,
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center);
+
+                let bp_card = container(
+                    column![
+                        header_row,
+                        scrollable(bp_items).height(52),
+                        mode_selector,
+                        bp_add_form,
+                    ]
+                    .spacing(6),
+                )
+                .padding([8, 12])
+                .width(Length::FillPortion(1))
+                .height(160)
+                .style(StudioTheme::card_style);
+
+                let main_row: iced::widget::Row<'_, Message> = row![
                     scrollable(diag_list)
                         .width(Length::FillPortion(1))
-                        .height(120),
+                        .height(160),
                     iced::widget::Space::with_width(12),
-                    container(column![scrollable(bp_items).height(80), bp_add_form,].spacing(6))
-                        .padding(8)
-                        .width(Length::FillPortion(1))
-                        .height(120)
-                        .style(StudioTheme::card_style),
+                    bp_card,
                 ]
-                .spacing(8)
-                .into()
+                .spacing(8);
+
+                Element::from(main_row)
             }
             BottomDockTab::TrendPlotter => {
                 let toolbar = row![
