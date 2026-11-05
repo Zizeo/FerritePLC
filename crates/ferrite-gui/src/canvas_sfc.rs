@@ -254,6 +254,20 @@ pub const ALL_ACTION_QUALIFIERS: [SfcActionQualifierWrapper; 8] = [
     SfcActionQualifierWrapper(ActionQualifier::FZ),
 ];
 
+/// Cycles to the next action qualifier in sequence.
+pub fn next_action_qualifier(current: ActionQualifier) -> ActionQualifier {
+    match current {
+        ActionQualifier::N => ActionQualifier::S,
+        ActionQualifier::S => ActionQualifier::R,
+        ActionQualifier::R => ActionQualifier::L,
+        ActionQualifier::L => ActionQualifier::D,
+        ActionQualifier::D => ActionQualifier::P,
+        ActionQualifier::P => ActionQualifier::F,
+        ActionQualifier::F => ActionQualifier::FZ,
+        ActionQualifier::FZ => ActionQualifier::N,
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SfcConvergenceWrapper(pub ConvergenceKind);
@@ -572,6 +586,48 @@ impl<'a> SfcCanvasProgram<'a> {
         }
     }
 
+    pub fn commit_current_edit(&self, state: &mut SfcCanvasState) -> Option<Message> {
+        let target = state.editing_target.take()?;
+        let buffer = std::mem::take(&mut state.edit_buffer);
+        state.cursor_pos = 0;
+        let p_name = self.pou_name.to_string();
+
+        match target {
+            SfcEditTarget::StepName { step_id } => {
+                let s_idx = self.program.steps.iter().position(|s| s.id == step_id)?;
+                Some(Message::SfcStepNameChanged(p_name, s_idx, buffer))
+            }
+            SfcEditTarget::ActionTarget {
+                step_id,
+                action_idx,
+            } => {
+                let s_idx = self.program.steps.iter().position(|s| s.id == step_id)?;
+                Some(Message::SfcActionTargetChanged(
+                    p_name, s_idx, action_idx, buffer,
+                ))
+            }
+            SfcEditTarget::ActionDuration {
+                step_id,
+                action_idx,
+            } => {
+                let s_idx = self.program.steps.iter().position(|s| s.id == step_id)?;
+                Some(Message::SfcActionDurationChanged(
+                    p_name, s_idx, action_idx, buffer,
+                ))
+            }
+            SfcEditTarget::TransitionReceptivity { trans_id } => {
+                let t_idx = self
+                    .program
+                    .transitions
+                    .iter()
+                    .position(|t| t.id == trans_id)?;
+                Some(Message::SfcTransitionReceptivityChanged(
+                    p_name, t_idx, buffer,
+                ))
+            }
+        }
+    }
+
     fn step_in_port(&self, step: &SfcStep, state: &SfcCanvasState) -> Point {
         let (x, y) = self.step_pos(step, state);
         Point::new(x + self.step_width(step) * 0.5, y)
@@ -693,6 +749,68 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> (event::Status, Option<Message>) {
+        if let canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, text, .. }) = event {
+            if state.editing_target.is_some() {
+                return match key {
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
+                        let msg = self.commit_current_edit(state);
+                        (event::Status::Captured, msg)
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                        state.cancel_edit();
+                        (event::Status::Captured, None)
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
+                        state.backspace();
+                        (event::Status::Captured, None)
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
+                        state.delete_forward();
+                        (event::Status::Captured, None)
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft) => {
+                        state.move_cursor_left();
+                        (event::Status::Captured, None)
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight) => {
+                        state.move_cursor_right();
+                        (event::Status::Captured, None)
+                    }
+                    _ => {
+                        if let Some(txt) = text {
+                            for c in txt.chars() {
+                                if !c.is_control() {
+                                    state.insert_char(c);
+                                }
+                            }
+                            (event::Status::Captured, None)
+                        } else if let iced::keyboard::Key::Character(s) = key {
+                            for c in s.chars() {
+                                if !c.is_control() {
+                                    state.insert_char(c);
+                                }
+                            }
+                            (event::Status::Captured, None)
+                        } else {
+                            (event::Status::Ignored, None)
+                        }
+                    }
+                };
+            } else if matches!(
+                key,
+                iced::keyboard::Key::Named(
+                    iced::keyboard::key::Named::Delete | iced::keyboard::key::Named::Backspace
+                )
+            ) {
+                return (
+                    event::Status::Captured,
+                    Some(Message::SfcRequestDeleteSelected(self.pou_name.to_string())),
+                );
+            } else {
+                return (event::Status::Ignored, None);
+            }
+        }
+
         let cursor_pos = match cursor.position_in(bounds) {
             Some(p) => p,
             None => return (event::Status::Ignored, None),
@@ -750,14 +868,176 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     }
                 }
 
-                // 2. Check if clicking inside a Step box to drag or select
+                // 2. Check if clicking [+ Act] button on any step
+                for step in self.program.steps.iter().rev() {
+                    let add_rect = self.step_add_action_rect(step, state);
+                    if cursor_pos.x >= add_rect.x
+                        && cursor_pos.x <= add_rect.x + add_rect.width
+                        && cursor_pos.y >= add_rect.y
+                        && cursor_pos.y <= add_rect.y + add_rect.height
+                    {
+                        let _ = self.commit_current_edit(state);
+                        let s_idx = self
+                            .program
+                            .steps
+                            .iter()
+                            .position(|s| s.id == step.id)
+                            .unwrap_or(0);
+                        return (
+                            event::Status::Captured,
+                            Some(Message::SfcAddAction(self.pou_name.to_string(), s_idx)),
+                        );
+                    }
+                }
+
+                // 3. Check if clicking on any action row (Delete button, Qualifier badge, Target text, Duration)
+                for step in self.program.steps.iter().rev() {
+                    let s_idx = self
+                        .program
+                        .steps
+                        .iter()
+                        .position(|s| s.id == step.id)
+                        .unwrap_or(0);
+                    for (a_idx, act) in step.actions.iter().enumerate() {
+                        let del_rect = self.action_delete_rect(step, a_idx, state);
+                        if cursor_pos.x >= del_rect.x
+                            && cursor_pos.x <= del_rect.x + del_rect.width
+                            && cursor_pos.y >= del_rect.y
+                            && cursor_pos.y <= del_rect.y + del_rect.height
+                        {
+                            let _ = self.commit_current_edit(state);
+                            return (
+                                event::Status::Captured,
+                                Some(Message::SfcRemoveAction(
+                                    self.pou_name.to_string(),
+                                    s_idx,
+                                    a_idx,
+                                )),
+                            );
+                        }
+
+                        let q_rect = self.action_qualifier_rect(step, a_idx, state);
+                        if cursor_pos.x >= q_rect.x
+                            && cursor_pos.x <= q_rect.x + q_rect.width
+                            && cursor_pos.y >= q_rect.y
+                            && cursor_pos.y <= q_rect.y + q_rect.height
+                        {
+                            let _ = self.commit_current_edit(state);
+                            let next_q = next_action_qualifier(act.qualifier);
+                            return (
+                                event::Status::Captured,
+                                Some(Message::SfcActionQualifierChanged(
+                                    self.pou_name.to_string(),
+                                    s_idx,
+                                    a_idx,
+                                    next_q,
+                                )),
+                            );
+                        }
+
+                        let t_rect = self.action_target_rect(step, a_idx, state);
+                        if cursor_pos.x >= t_rect.x
+                            && cursor_pos.x <= t_rect.x + t_rect.width
+                            && cursor_pos.y >= t_rect.y
+                            && cursor_pos.y <= t_rect.y + t_rect.height
+                        {
+                            let _ = self.commit_current_edit(state);
+                            state.start_edit(
+                                SfcEditTarget::ActionTarget {
+                                    step_id: step.id.clone(),
+                                    action_idx: a_idx,
+                                },
+                                &act.target,
+                            );
+                            return (event::Status::Captured, None);
+                        }
+
+                        if let Some(dur_rect) = self.action_duration_rect(step, a_idx, state) {
+                            if cursor_pos.x >= dur_rect.x
+                                && cursor_pos.x <= dur_rect.x + dur_rect.width
+                                && cursor_pos.y >= dur_rect.y
+                                && cursor_pos.y <= dur_rect.y + dur_rect.height
+                            {
+                                let _ = self.commit_current_edit(state);
+                                state.start_edit(
+                                    SfcEditTarget::ActionDuration {
+                                        step_id: step.id.clone(),
+                                        action_idx: a_idx,
+                                    },
+                                    act.duration.as_deref().unwrap_or("T#5s"),
+                                );
+                                return (event::Status::Captured, None);
+                            }
+                        }
+                    }
+                }
+
+                // 4. Check if clicking on Step Name area to edit inline
+                for step in self.program.steps.iter().rev() {
+                    let name_rect = self.step_name_rect(step, state);
+                    if cursor_pos.x >= name_rect.x
+                        && cursor_pos.x <= name_rect.x + name_rect.width
+                        && cursor_pos.y >= name_rect.y
+                        && cursor_pos.y <= name_rect.y + name_rect.height
+                    {
+                        let _ = self.commit_current_edit(state);
+                        state.start_edit(
+                            SfcEditTarget::StepName {
+                                step_id: step.id.clone(),
+                            },
+                            &step.name,
+                        );
+                        let key = SfcElementKey::Step(step.id.clone());
+                        state.selected = Some(key.clone());
+                        state.selected_elements = vec![key.clone()];
+                        return (
+                            event::Status::Captured,
+                            Some(Message::SfcSelectElements(
+                                self.pou_name.to_string(),
+                                vec![key],
+                            )),
+                        );
+                    }
+                }
+
+                // 5. Check if clicking on Transition Receptivity pill to edit inline
+                for tr in self.program.transitions.iter().rev() {
+                    let rec_rect = self.trans_receptivity_rect(tr, state);
+                    if cursor_pos.x >= rec_rect.x
+                        && cursor_pos.x <= rec_rect.x + rec_rect.width
+                        && cursor_pos.y >= rec_rect.y
+                        && cursor_pos.y <= rec_rect.y + rec_rect.height
+                    {
+                        let _ = self.commit_current_edit(state);
+                        state.start_edit(
+                            SfcEditTarget::TransitionReceptivity {
+                                trans_id: tr.id.clone(),
+                            },
+                            &tr.receptivity,
+                        );
+                        let key = SfcElementKey::Transition(tr.id.clone());
+                        state.selected = Some(key.clone());
+                        state.selected_elements = vec![key.clone()];
+                        return (
+                            event::Status::Captured,
+                            Some(Message::SfcSelectElements(
+                                self.pou_name.to_string(),
+                                vec![key],
+                            )),
+                        );
+                    }
+                }
+
+                // 6. Check if clicking inside a Step box to drag or select
                 for step in self.program.steps.iter().rev() {
                     let (x, y) = self.step_pos(step, state);
+                    let s_width = self.step_width(step);
                     if cursor_pos.x >= x
-                        && cursor_pos.x <= x + STEP_WIDTH
+                        && cursor_pos.x <= x + s_width
                         && cursor_pos.y >= y
                         && cursor_pos.y <= y + STEP_HEIGHT
                     {
+                        let commit_msg = self.commit_current_edit(state);
                         let key = SfcElementKey::Step(step.id.clone());
                         state.selected = Some(key.clone());
                         state.selected_elements = vec![key.clone()];
@@ -770,15 +1050,17 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         };
                         return (
                             event::Status::Captured,
-                            Some(Message::SfcSelectElements(
-                                self.pou_name.to_string(),
-                                vec![key],
-                            )),
+                            commit_msg.or_else(|| {
+                                Some(Message::SfcSelectElements(
+                                    self.pou_name.to_string(),
+                                    vec![key],
+                                ))
+                            }),
                         );
                     }
                 }
 
-                // 3. Check if clicking inside a Transition bar to drag or select
+                // 7. Check if clicking inside a Transition bar to drag or select
                 for tr in self.program.transitions.iter().rev() {
                     let (x, y) = self.trans_pos(tr, state);
                     if cursor_pos.x >= x
@@ -786,6 +1068,7 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         && cursor_pos.y >= y
                         && cursor_pos.y <= y + TRANS_HEIGHT
                     {
+                        let commit_msg = self.commit_current_edit(state);
                         let key = SfcElementKey::Transition(tr.id.clone());
                         state.selected = Some(key.clone());
                         state.selected_elements = vec![key.clone()];
@@ -798,15 +1081,18 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         };
                         return (
                             event::Status::Captured,
-                            Some(Message::SfcSelectElements(
-                                self.pou_name.to_string(),
-                                vec![key],
-                            )),
+                            commit_msg.or_else(|| {
+                                Some(Message::SfcSelectElements(
+                                    self.pou_name.to_string(),
+                                    vec![key],
+                                ))
+                            }),
                         );
                     }
                 }
 
-                // 4. Clicked on empty canvas: clear selection and start box selecting
+                // 8. Clicked on empty canvas: commit active edit, clear selection and start box selecting
+                let commit_msg = self.commit_current_edit(state);
                 state.selected = None;
                 state.selected_elements.clear();
                 state.drag = DragState::BoxSelecting {
@@ -815,10 +1101,12 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 };
                 (
                     event::Status::Captured,
-                    Some(Message::SfcSelectElements(
-                        self.pou_name.to_string(),
-                        Vec::new(),
-                    )),
+                    commit_msg.or_else(|| {
+                        Some(Message::SfcSelectElements(
+                            self.pou_name.to_string(),
+                            Vec::new(),
+                        ))
+                    }),
                 )
             }
 
@@ -1388,22 +1676,6 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         )
                     }
                     DragState::None => (event::Status::Ignored, None),
-                }
-            }
-
-            canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
-                if matches!(
-                    key,
-                    iced::keyboard::Key::Named(
-                        iced::keyboard::key::Named::Delete | iced::keyboard::key::Named::Backspace
-                    )
-                ) {
-                    (
-                        event::Status::Captured,
-                        Some(Message::SfcRequestDeleteSelected(self.pou_name.to_string())),
-                    )
-                } else {
-                    (event::Status::Ignored, None)
                 }
             }
 
@@ -3215,15 +3487,16 @@ mod tests {
         let state = SfcCanvasState::default();
         let in_p = canvas.step_in_port(&canvas.program.steps[0], &state);
         let out_p = canvas.step_out_port(&canvas.program.steps[0], &state);
+        let w = canvas.step_width(&canvas.program.steps[0]);
 
-        assert_eq!(in_p, Point::new(60.0 + STEP_WIDTH * 0.5, 40.0));
+        assert_eq!(in_p, Point::new(60.0 + w * 0.5, 40.0));
         assert_eq!(
             out_p,
-            Point::new(60.0 + STEP_WIDTH * 0.5, 40.0 + STEP_HEIGHT)
+            Point::new(60.0 + w * 0.5, 40.0 + STEP_HEIGHT)
         );
 
         // Hit testing within PORT_HIT_DIST
-        assert!(Point::new(150.0, 102.0).distance(out_p) <= PORT_HIT_DIST);
+        assert!(Point::new(60.0 + w * 0.5, 40.0 + STEP_HEIGHT + 2.0).distance(out_p) <= PORT_HIT_DIST);
     }
 
     #[test]
@@ -4548,5 +4821,303 @@ mod tests {
         // 4. Verify transition receptivity badge width scales to expression
         let tr_rect = canvas_prog.trans_receptivity_rect(&prog.transitions[0], &state);
         assert!(tr_rect.width >= 100.0, "Long receptivity must have wide badge");
+    }
+
+    #[test]
+    fn test_sfc_canvas_inline_events() {
+        use ferrite_lang_sfc::{ActionQualifier, SfcAction, SfcProgram, SfcStep, SfcTransition};
+        use iced::mouse;
+
+        let step = SfcStep {
+            id: "10".to_string(),
+            name: "Step_Old".to_string(),
+            kind: ferrite_lang_sfc::StepKind::Normal,
+            actions: vec![
+                SfcAction {
+                    qualifier: ActionQualifier::N,
+                    target: "Pump_Run".to_string(),
+                    duration: None,
+                },
+                SfcAction {
+                    qualifier: ActionQualifier::L,
+                    target: "Timer_Fan".to_string(),
+                    duration: Some("T#5s".to_string()),
+                },
+            ],
+            grid_pos: Some((100, 100)),
+            ..Default::default()
+        };
+
+        let trans = SfcTransition {
+            id: "1".to_string(),
+            from_steps: vec!["10".to_string()],
+            to_steps: vec![],
+            receptivity: "Sensor_OK".to_string(),
+            grid_pos: Some((100, 200)),
+            ..Default::default()
+        };
+
+        let prog = SfcProgram {
+            name: "test_inline".to_string(),
+            comment: String::new(),
+            steps: vec![step.clone()],
+            transitions: vec![trans.clone()],
+        };
+
+        let canvas_prog = SfcCanvasProgram {
+            pou_name: "test_inline",
+            program: &prog,
+            runtime: None,
+            selected: None,
+            selected_elements: &[],
+            validation_report: None,
+        };
+
+        let mut state = SfcCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+
+        // 1. Click [+ Act] button
+        let add_btn = canvas_prog.step_add_action_rect(&step, &state);
+        let click_pt = Point::new(add_btn.x + 5.0, add_btn.y + 5.0);
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(click_pt),
+        );
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            msg,
+            Some(Message::SfcAddAction(p, 0)) if p == "test_inline"
+        ));
+
+        // 2. Click Qualifier badge to cycle N -> S
+        let q_rect = canvas_prog.action_qualifier_rect(&step, 0, &state);
+        let q_click = Point::new(q_rect.x + 5.0, q_rect.y + 5.0);
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(q_click),
+        );
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            msg,
+            Some(Message::SfcActionQualifierChanged(
+                p,
+                0,
+                0,
+                ActionQualifier::S
+            )) if p == "test_inline"
+        ));
+
+        // 3. Click Step Name to enter edit mode, type, and press Enter to commit
+        let name_rect = canvas_prog.step_name_rect(&step, &state);
+        let name_click = Point::new(name_rect.x + 5.0, name_rect.y + 5.0);
+        let _ = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(name_click),
+        );
+        assert_eq!(
+            state.editing_target,
+            Some(SfcEditTarget::StepName {
+                step_id: "10".to_string()
+            })
+        );
+        assert_eq!(state.edit_buffer, "Step_Old");
+
+        // Type character
+        let _ = canvas_prog.update(
+            &mut state,
+            canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Character("2".into()),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::default(),
+                text: Some("2".into()),
+                modified_key: iced::keyboard::Key::Character("2".into()),
+                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Digit2),
+            }),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
+        assert_eq!(state.edit_buffer, "Step_Old2");
+
+        // Press Enter to commit
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::default(),
+                text: None,
+                modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Enter),
+            }),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            msg,
+            Some(Message::SfcStepNameChanged(
+                p,
+                0,
+                name
+            )) if p == "test_inline" && name == "Step_Old2"
+        ));
+        assert!(state.editing_target.is_none());
+
+        // 4. Click Action Target, type, commit
+        let target_rect = canvas_prog.action_target_rect(&step, 0, &state);
+        let target_click = Point::new(target_rect.x + 2.0, target_rect.y + 2.0);
+        let _ = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(target_click),
+        );
+        assert_eq!(
+            state.editing_target,
+            Some(SfcEditTarget::ActionTarget {
+                step_id: "10".to_string(),
+                action_idx: 0
+            })
+        );
+        assert_eq!(state.edit_buffer, "Pump_Run");
+
+        // Type 'e' and Enter
+        let _ = canvas_prog.update(
+            &mut state,
+            canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Character("e".into()),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::default(),
+                text: Some("e".into()),
+                modified_key: iced::keyboard::Key::Character("e".into()),
+                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::KeyE),
+            }),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::default(),
+                text: None,
+                modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Enter),
+            }),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            msg,
+            Some(Message::SfcActionTargetChanged(
+                p,
+                0,
+                0,
+                target
+            )) if p == "test_inline" && target == "Pump_Rune"
+        ));
+
+        // 5. Click Action Duration, type, cancel with Escape
+        let dur_rect = canvas_prog
+            .action_duration_rect(&step, 1, &state)
+            .unwrap_or(Rectangle::default());
+        let dur_click = Point::new(dur_rect.x + 2.0, dur_rect.y + 2.0);
+        let _ = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(dur_click),
+        );
+        assert_eq!(
+            state.editing_target,
+            Some(SfcEditTarget::ActionDuration {
+                step_id: "10".to_string(),
+                action_idx: 1
+            })
+        );
+        assert_eq!(state.edit_buffer, "T#5s");
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::default(),
+                text: None,
+                modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Escape),
+            }),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(msg.is_none());
+        assert!(state.editing_target.is_none());
+
+        // 6. Click Transition Receptivity, type, commit
+        let tr_rect = canvas_prog.trans_receptivity_rect(&trans, &state);
+        let tr_click = Point::new(tr_rect.x + 5.0, tr_rect.y + 5.0);
+        let _ = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(tr_click),
+        );
+        assert_eq!(
+            state.editing_target,
+            Some(SfcEditTarget::TransitionReceptivity {
+                trans_id: "1".to_string()
+            })
+        );
+        assert_eq!(state.edit_buffer, "Sensor_OK");
+
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::default(),
+                text: None,
+                modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Enter),
+            }),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            msg,
+            Some(Message::SfcTransitionReceptivityChanged(
+                p,
+                0,
+                rec
+            )) if p == "test_inline" && rec == "Sensor_OK"
+        ));
+
+        // 7. Click Action Delete button [×]
+        let del_rect = canvas_prog.action_delete_rect(&step, 0, &state);
+        let del_click = Point::new(del_rect.x + 2.0, del_rect.y + 2.0);
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(del_click),
+        );
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(matches!(
+            msg,
+            Some(Message::SfcRemoveAction(
+                p,
+                0,
+                0
+            )) if p == "test_inline"
+        ));
     }
 }
