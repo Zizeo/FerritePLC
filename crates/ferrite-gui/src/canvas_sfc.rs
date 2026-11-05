@@ -127,6 +127,14 @@ pub enum SfcEditTarget {
     TransitionReceptivity { trans_id: String },
 }
 
+/// Active dropdown menu state for picking an action qualifier directly on canvas.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SfcQualifierDropdown {
+    pub step_id: String,
+    pub action_idx: usize,
+    pub rect: Rectangle,
+}
+
 #[derive(Debug, Clone)]
 pub struct SfcCanvasState {
     pub drag: DragState,
@@ -137,6 +145,7 @@ pub struct SfcCanvasState {
     pub edit_buffer: String,
     pub cursor_pos: usize,
     pub last_click: Option<(std::time::Instant, Point)>,
+    pub qualifier_dropdown: Option<SfcQualifierDropdown>,
 }
 
 impl Default for SfcCanvasState {
@@ -150,18 +159,21 @@ impl Default for SfcCanvasState {
             edit_buffer: String::new(),
             cursor_pos: 0,
             last_click: None,
+            qualifier_dropdown: None,
         }
     }
 }
 
 impl SfcCanvasState {
     pub fn start_edit(&mut self, target: SfcEditTarget, initial_text: &str) {
+        self.qualifier_dropdown = None;
         self.editing_target = Some(target);
         self.edit_buffer = initial_text.to_string();
         self.cursor_pos = self.edit_buffer.len();
     }
 
     pub fn cancel_edit(&mut self) {
+        self.qualifier_dropdown = None;
         self.editing_target = None;
         self.edit_buffer.clear();
         self.cursor_pos = 0;
@@ -254,7 +266,29 @@ pub const ALL_ACTION_QUALIFIERS: [SfcActionQualifierWrapper; 8] = [
     SfcActionQualifierWrapper(ActionQualifier::FZ),
 ];
 
+pub const SFC_QUALIFIER_ITEMS: [(ActionQualifier, &str, &str); 8] = [
+    (ActionQualifier::N, "N", "N - Non-stored"),
+    (ActionQualifier::S, "S", "S - Set (Latch)"),
+    (ActionQualifier::R, "R", "R - Reset (Unlatch)"),
+    (ActionQualifier::L, "L", "L - Time Limited"),
+    (ActionQualifier::D, "D", "D - Time Delayed"),
+    (ActionQualifier::P, "P", "P - Pulse"),
+    (ActionQualifier::F, "F", "F - Force ON"),
+    (ActionQualifier::FZ, "FZ", "FZ - Force OFF"),
+];
+
+pub fn qualifier_badge_color(qual: ActionQualifier) -> Color {
+    match qual {
+        ActionQualifier::N => Color::from_rgb(0.18, 0.80, 0.45),
+        ActionQualifier::S | ActionQualifier::R => Color::from_rgb(0.95, 0.65, 0.15),
+        ActionQualifier::L | ActionQualifier::D => Color::from_rgb(0.25, 0.75, 0.95),
+        ActionQualifier::P => StudioTheme::ACCENT_PURPLE,
+        ActionQualifier::F | ActionQualifier::FZ => Color::from_rgb(0.95, 0.35, 0.45),
+    }
+}
+
 /// Cycles to the next action qualifier in sequence.
+#[allow(dead_code)]
 pub fn next_action_qualifier(current: ActionQualifier) -> ActionQualifier {
     match current {
         ActionQualifier::N => ActionQualifier::S,
@@ -507,7 +541,7 @@ impl<'a> SfcCanvasProgram<'a> {
         Rectangle {
             x: act_x,
             y: act_y,
-            width: 26.0,
+            width: 32.0,
             height: 22.0,
         }
     }
@@ -526,7 +560,7 @@ impl<'a> SfcCanvasProgram<'a> {
         let target_len = act.map(|a| a.target.len()).unwrap_or(8).max(6);
         let target_w = (target_len as f32 * 7.5 + 24.0).clamp(90.0, 240.0);
         Rectangle {
-            x: act_x + 28.0,
+            x: act_x + 34.0,
             y: act_y,
             width: target_w,
             height: 22.0,
@@ -576,13 +610,26 @@ impl<'a> SfcCanvasProgram<'a> {
     pub fn trans_receptivity_rect(&self, tr: &SfcTransition, state: &SfcCanvasState) -> Rectangle {
         let (x, y) = self.trans_pos(tr, state);
         let cy = y + TRANS_HEIGHT * 0.5;
-        let rec_len = tr.receptivity.len().max(4);
-        let w = (rec_len as f32 * 7.5 + 28.0).clamp(70.0, 320.0);
+        let is_editing = state.editing_target
+            == Some(SfcEditTarget::TransitionReceptivity {
+                trans_id: tr.id.clone(),
+            });
+        let text_len = if is_editing {
+            state.edit_buffer.chars().count() + 1
+        } else if tr.receptivity.is_empty() {
+            4 // "TRUE"
+        } else {
+            tr.receptivity.chars().count()
+        };
+        // Monospace 11px font character width is ~6.8px.
+        // Horizontal padding: 5.0px left + 5.0px right = 10.0px.
+        // Rectangle has the exact length of the text plus a small padding.
+        let w = (text_len as f32 * 6.8 + 10.0).max(18.0);
         Rectangle {
             x: x + TRANS_WIDTH + 8.0,
-            y: cy - 12.0,
+            y: cy - 10.0,
             width: w,
-            height: 24.0,
+            height: 20.0,
         }
     }
 
@@ -750,6 +797,13 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
         cursor: mouse::Cursor,
     ) -> (event::Status, Option<Message>) {
         if let canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, text, .. }) = event {
+            if state.qualifier_dropdown.is_some()
+                && matches!(key, iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape))
+            {
+                state.qualifier_dropdown = None;
+                return (event::Status::Captured, None);
+            }
+
             if state.editing_target.is_some() {
                 return match key {
                     iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
@@ -818,6 +872,48 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
 
         match event {
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                // 0. Check if an active Qualifier Dropdown Menu is open
+                if let Some(dd) = state.qualifier_dropdown.take() {
+                    if cursor_pos.x >= dd.rect.x
+                        && cursor_pos.x <= dd.rect.x + dd.rect.width
+                        && cursor_pos.y >= dd.rect.y
+                        && cursor_pos.y <= dd.rect.y + dd.rect.height
+                    {
+                        let rel_y = cursor_pos.y - (dd.rect.y + 2.0);
+                        let item_idx = (rel_y / 22.0) as usize;
+                        if item_idx < SFC_QUALIFIER_ITEMS.len() {
+                            let chosen_q = SFC_QUALIFIER_ITEMS[item_idx].0;
+                            let s_idx = self
+                                .program
+                                .steps
+                                .iter()
+                                .position(|s| s.id == dd.step_id)
+                                .unwrap_or(0);
+                            return (
+                                event::Status::Captured,
+                                Some(Message::SfcActionQualifierChanged(
+                                    self.pou_name.to_string(),
+                                    s_idx,
+                                    dd.action_idx,
+                                    chosen_q,
+                                )),
+                            );
+                        }
+                    }
+
+                    // Click was outside dropdown: if clicking the badge that opened it, just toggle closed
+                    if let Some(step) = self.program.steps.iter().find(|s| s.id == dd.step_id) {
+                        let q_rect = self.action_qualifier_rect(step, dd.action_idx, state);
+                        if cursor_pos.x >= q_rect.x
+                            && cursor_pos.x <= q_rect.x + q_rect.width
+                            && cursor_pos.y >= q_rect.y
+                            && cursor_pos.y <= q_rect.y + q_rect.height
+                        {
+                            return (event::Status::Captured, None);
+                        }
+                    }
+                }
+
                 // 1. Check if clicking ANY Port to begin dragging a wire
                 // Step Ports (both Output and Input)
                 for step in &self.program.steps {
@@ -923,16 +1019,19 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                             && cursor_pos.y <= q_rect.y + q_rect.height
                         {
                             let _ = self.commit_current_edit(state);
-                            let next_q = next_action_qualifier(act.qualifier);
-                            return (
-                                event::Status::Captured,
-                                Some(Message::SfcActionQualifierChanged(
-                                    self.pou_name.to_string(),
-                                    s_idx,
-                                    a_idx,
-                                    next_q,
-                                )),
-                            );
+                            let dd_width = 150.0;
+                            let dd_height = 8.0 * 22.0 + 4.0;
+                            state.qualifier_dropdown = Some(SfcQualifierDropdown {
+                                step_id: step.id.clone(),
+                                action_idx: a_idx,
+                                rect: Rectangle {
+                                    x: q_rect.x,
+                                    y: q_rect.y + q_rect.height + 2.0,
+                                    width: dd_width,
+                                    height: dd_height,
+                                },
+                            });
+                            return (event::Status::Captured, None);
                         }
 
                         let t_rect = self.action_target_rect(step, a_idx, state);
@@ -2417,14 +2516,8 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     let del_rect = self.action_delete_rect(step, a_idx, state);
                     last_act_bottom = q_rect.y + q_rect.height;
 
-                    // Qualifier badge with color coding
-                    let qual_color = match act.qualifier {
-                        ActionQualifier::N => Color::from_rgb(0.18, 0.80, 0.45),
-                        ActionQualifier::S | ActionQualifier::R => Color::from_rgb(0.95, 0.65, 0.15),
-                        ActionQualifier::L | ActionQualifier::D => Color::from_rgb(0.25, 0.75, 0.95),
-                        ActionQualifier::P => StudioTheme::ACCENT_PURPLE,
-                        ActionQualifier::F | ActionQualifier::FZ => Color::from_rgb(0.95, 0.35, 0.45),
-                    };
+                    // Qualifier badge with color coding and dropdown indicator
+                    let qual_color = qualifier_badge_color(act.qualifier);
                     let qual_str = SfcActionQualifierWrapper(act.qualifier).to_string();
 
                     frame.fill_rectangle(
@@ -2438,13 +2531,28 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         Stroke::default().with_color(qual_color).with_width(1.2),
                     );
                     frame.fill_text(canvas::Text {
-                        content: qual_str,
-                        position: Point::new(q_rect.x + 8.0, q_rect.y + 4.0),
+                        content: qual_str.clone(),
+                        position: Point::new(
+                            q_rect.x + if qual_str.len() == 1 { 6.0 } else { 3.5 },
+                            q_rect.y + 4.0,
+                        ),
                         color: Color::WHITE,
                         size: iced::Pixels(11.0),
                         font: iced::Font::MONOSPACE,
                         ..Default::default()
                     });
+                    // Downward indicator triangle
+                    let tri_x = q_rect.x + if qual_str.len() == 1 { 20.0 } else { 23.0 };
+                    let tri_y = q_rect.y + 9.0;
+                    frame.fill(
+                        &Path::new(|b| {
+                            b.move_to(Point::new(tri_x, tri_y));
+                            b.line_to(Point::new(tri_x + 6.0, tri_y));
+                            b.line_to(Point::new(tri_x + 3.0, tri_y + 4.0));
+                            b.close();
+                        }),
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.75),
+                    );
 
                     // Target box with in-place editing
                     let is_editing_target = state.editing_target
@@ -2733,16 +2841,16 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             );
 
             let rec_text = if is_editing_rec {
-                format!("[ {}| ]", state.edit_buffer)
+                format!("{}|", state.edit_buffer)
             } else if tr.receptivity.is_empty() {
-                "[ TRUE ]".to_string()
+                "TRUE".to_string()
             } else {
-                format!("[ {} ]", tr.receptivity)
+                tr.receptivity.clone()
             };
 
             frame.fill_text(canvas::Text {
                 content: rec_text,
-                position: Point::new(rec_rect.x + 6.0, rec_rect.y + 4.5),
+                position: Point::new(rec_rect.x + 5.0, rec_rect.y + 3.5),
                 color: if has_error {
                     Color::from_rgb(1.0, 0.4, 0.4)
                 } else {
@@ -2857,6 +2965,88 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     .with_color(COLOR_STEP_DROP)
                     .with_width(1.5),
             );
+        }
+
+        // 8. Open Qualifier Dropdown Floating Menu
+        if let Some(ref dd) = state.qualifier_dropdown {
+            // Drop shadow
+            frame.fill_rectangle(
+                Point::new(dd.rect.x + 2.0, dd.rect.y + 2.0),
+                Size::new(dd.rect.width, dd.rect.height),
+                Color::from_rgba(0.0, 0.0, 0.0, 0.50),
+            );
+            // Dropdown container background & border
+            frame.fill_rectangle(
+                Point::new(dd.rect.x, dd.rect.y),
+                Size::new(dd.rect.width, dd.rect.height),
+                Color::from_rgba(0.09, 0.12, 0.18, 0.98),
+            );
+            frame.stroke_rectangle(
+                Point::new(dd.rect.x, dd.rect.y),
+                Size::new(dd.rect.width, dd.rect.height),
+                Stroke::default()
+                    .with_color(Color::from_rgba(0.35, 0.50, 0.70, 0.85))
+                    .with_width(1.2),
+            );
+
+            // Current qualifier for this action
+            let current_q = self
+                .program
+                .steps
+                .iter()
+                .find(|s| s.id == dd.step_id)
+                .and_then(|s| s.actions.get(dd.action_idx))
+                .map(|a| a.qualifier);
+
+            for (idx, (qual, code, desc)) in SFC_QUALIFIER_ITEMS.iter().enumerate() {
+                let row_y = dd.rect.y + 2.0 + (idx as f32) * 22.0;
+                let is_current = current_q == Some(*qual);
+
+                if is_current {
+                    frame.fill_rectangle(
+                        Point::new(dd.rect.x + 2.0, row_y),
+                        Size::new(dd.rect.width - 4.0, 22.0),
+                        Color::from_rgba(0.20, 0.40, 0.65, 0.35),
+                    );
+                }
+
+                let q_col = qualifier_badge_color(*qual);
+                // Badge
+                frame.fill_rectangle(
+                    Point::new(dd.rect.x + 4.0, row_y + 2.5),
+                    Size::new(20.0, 17.0),
+                    Color::from_rgba(q_col.r, q_col.g, q_col.b, 0.25),
+                );
+                frame.stroke_rectangle(
+                    Point::new(dd.rect.x + 4.0, row_y + 2.5),
+                    Size::new(20.0, 17.0),
+                    Stroke::default().with_color(q_col).with_width(1.0),
+                );
+                frame.fill_text(canvas::Text {
+                    content: (*code).to_string(),
+                    position: Point::new(
+                        dd.rect.x + if code.len() == 1 { 9.0 } else { 5.5 },
+                        row_y + 4.0,
+                    ),
+                    color: Color::WHITE,
+                    size: iced::Pixels(10.0),
+                    font: iced::Font::MONOSPACE,
+                    ..Default::default()
+                });
+
+                // Description
+                frame.fill_text(canvas::Text {
+                    content: (*desc).to_string(),
+                    position: Point::new(dd.rect.x + 28.0, row_y + 4.5),
+                    color: if is_current {
+                        COLOR_STEP_DROP
+                    } else {
+                        Color::from_rgb(0.85, 0.90, 0.95)
+                    },
+                    size: iced::Pixels(10.5),
+                    ..Default::default()
+                });
+            }
         }
 
         vec![frame.into_geometry()]
@@ -4760,9 +4950,14 @@ mod tests {
         assert!(name_rect.x >= sx);
         assert!(name_rect.x + name_rect.width <= sx + w_short);
 
-        // 4. Verify transition receptivity badge width scales to expression
+        // 4. Verify transition receptivity badge width scales exactly to text plus small padding
         let tr_rect = canvas_prog.trans_receptivity_rect(&prog.transitions[0], &state);
         assert!(tr_rect.width >= 100.0, "Long receptivity must have wide badge");
+
+        let mut short_trans = prog.transitions[0].clone();
+        short_trans.receptivity = "1".to_string();
+        let short_tr_rect = canvas_prog.trans_receptivity_rect(&short_trans, &state);
+        assert_eq!(short_tr_rect.width, 18.0, "Single-char receptivity must be compact with small padding");
     }
 
     #[test]
@@ -4833,7 +5028,7 @@ mod tests {
             Some(Message::SfcAddAction(p, 0)) if p == "test_inline"
         ));
 
-        // 2. Click Qualifier badge to cycle N -> S
+        // 2. Click Qualifier badge to open dropdown menu, then click item 'S' to select
         let q_rect = canvas_prog.action_qualifier_rect(&step, 0, &state);
         let q_click = Point::new(q_rect.x + 5.0, q_rect.y + 5.0);
         let (status, msg) = canvas_prog.update(
@@ -4841,6 +5036,30 @@ mod tests {
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
             bounds,
             mouse::Cursor::Available(q_click),
+        );
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(msg.is_none());
+        assert_eq!(
+            state.qualifier_dropdown,
+            Some(SfcQualifierDropdown {
+                step_id: "10".to_string(),
+                action_idx: 0,
+                rect: Rectangle {
+                    x: q_rect.x,
+                    y: q_rect.y + q_rect.height + 2.0,
+                    width: 150.0,
+                    height: 8.0 * 22.0 + 4.0,
+                }
+            })
+        );
+
+        // Click 2nd item in dropdown: index 1 is ActionQualifier::S (S - Set)
+        let item_click = Point::new(q_rect.x + 20.0, q_rect.y + q_rect.height + 2.0 + 2.0 + 22.0 * 1.0 + 5.0);
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(item_click),
         );
         assert_eq!(status, iced::event::Status::Captured);
         assert!(matches!(
@@ -4852,6 +5071,32 @@ mod tests {
                 ActionQualifier::S
             )) if p == "test_inline"
         ));
+        assert!(state.qualifier_dropdown.is_none());
+
+        // Open dropdown again and press Escape to cancel
+        let _ = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(q_click),
+        );
+        assert!(state.qualifier_dropdown.is_some());
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::default(),
+                text: None,
+                modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Escape),
+            }),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
+        assert_eq!(status, iced::event::Status::Captured);
+        assert!(msg.is_none());
+        assert!(state.qualifier_dropdown.is_none());
 
         // 3. Click Step Name to enter edit mode, type, and press Enter to commit
         let name_rect = canvas_prog.step_name_rect(&step, &state);
