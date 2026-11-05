@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::time::Instant;
 
@@ -93,7 +93,7 @@ pub struct PlcRuntime {
     pub watch_list: Vec<String>,
     input_tag_bindings: Vec<(TagId, DirectAddress, IecType)>,
     pub alarms: Vec<ActiveAlarm>,
-    pub alarm_journal: Vec<AlarmEventRecord>,
+    pub alarm_journal: VecDeque<AlarmEventRecord>,
 }
 
 impl PlcRuntime {
@@ -180,7 +180,7 @@ impl PlcRuntime {
             watch_list,
             input_tag_bindings,
             alarms,
-            alarm_journal: Vec::new(),
+            alarm_journal: VecDeque::new(),
         })
     }
 
@@ -629,9 +629,19 @@ impl PlcRuntime {
     }
 
     /// Returns a reference to the alarm event journal.
-    pub fn alarm_journal(&self) -> &[AlarmEventRecord] {
+    pub fn alarm_journal(&self) -> &VecDeque<AlarmEventRecord> {
         &self.alarm_journal
     }
+}
+
+fn push_to_journal(journal: &mut VecDeque<AlarmEventRecord>, record: AlarmEventRecord) {
+    if journal.len() >= 1000 {
+        journal.pop_front();
+    }
+    journal.push_back(record);
+}
+
+impl PlcRuntime {
 
     /// Evaluates all configured ISA-18.2 alarms against current tag and memory values.
     pub fn evaluate_alarms(&mut self) {
@@ -652,16 +662,16 @@ impl PlcRuntime {
 
             let changed = alarm.evaluate(&val, time_ms);
             if changed {
-                self.alarm_journal.push(AlarmEventRecord {
-                    timestamp_ms: time_ms,
-                    alarm_id: alarm.definition.id.clone(),
-                    state: alarm.state,
-                    severity: alarm.definition.severity,
-                    message: alarm.definition.message.clone(),
-                });
-                if self.alarm_journal.len() > 1000 {
-                    self.alarm_journal.remove(0);
-                }
+                push_to_journal(
+                    &mut self.alarm_journal,
+                    AlarmEventRecord {
+                        timestamp_ms: time_ms,
+                        alarm_id: alarm.definition.id.clone(),
+                        state: alarm.state,
+                        severity: alarm.definition.severity,
+                        message: alarm.definition.message.clone(),
+                    },
+                );
             }
         }
     }
@@ -674,13 +684,16 @@ impl PlcRuntime {
                 let old_state = alarm.state;
                 alarm.acknowledge(time_ms);
                 if old_state != alarm.state {
-                    self.alarm_journal.push(AlarmEventRecord {
-                        timestamp_ms: time_ms,
-                        alarm_id: alarm.definition.id.clone(),
-                        state: alarm.state,
-                        severity: alarm.definition.severity,
-                        message: format!("ACK: {}", alarm.definition.message),
-                    });
+                    push_to_journal(
+                        &mut self.alarm_journal,
+                        AlarmEventRecord {
+                            timestamp_ms: time_ms,
+                            alarm_id: alarm.definition.id.clone(),
+                            state: alarm.state,
+                            severity: alarm.definition.severity,
+                            message: format!("ACK: {}", alarm.definition.message),
+                        },
+                    );
                 }
             }
         }
@@ -693,13 +706,16 @@ impl PlcRuntime {
             let old_state = alarm.state;
             alarm.acknowledge(time_ms);
             if old_state != alarm.state {
-                self.alarm_journal.push(AlarmEventRecord {
-                    timestamp_ms: time_ms,
-                    alarm_id: alarm.definition.id.clone(),
-                    state: alarm.state,
-                    severity: alarm.definition.severity,
-                    message: format!("ACK: {}", alarm.definition.message),
-                });
+                push_to_journal(
+                    &mut self.alarm_journal,
+                    AlarmEventRecord {
+                        timestamp_ms: time_ms,
+                        alarm_id: alarm.definition.id.clone(),
+                        state: alarm.state,
+                        severity: alarm.definition.severity,
+                        message: format!("ACK: {}", alarm.definition.message),
+                    },
+                );
             }
         }
     }
@@ -1115,6 +1131,49 @@ mod tests {
             "Breakpoint on POU must hit when task executes"
         );
         assert_eq!(tel.hit_breakpoint, Some(Breakpoint::Pou(target_pou)));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_alarm_journal_acknowledgments_bounded_capacity(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join("ferrite_plc_alm_bound_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        let project = Project::scaffold(&temp_dir, "alm_bound_plant")?;
+        let mut runtime = PlcRuntime::from_project(&project)?;
+
+        use ferrite_core::alarm::{AlarmCondition, AlarmDefinition, AlarmSeverity};
+        runtime.register_alarm_definition(AlarmDefinition {
+            id: "ALM_BOUND_TEST".to_string(),
+            tag: "Tank_Level".to_string(),
+            severity: AlarmSeverity::Warning,
+            condition: AlarmCondition::High { limit: 50.0 },
+            message: "Warning test".to_string(),
+        });
+
+        // Trigger alarm -> ActiveUnacknowledged
+        runtime.set_stimulus("Tank_Level", IecValue::Int(60))?;
+        runtime.step_scan()?;
+
+        // Acknowledge alarm, reset tag, trigger alarm again in loop
+        for _ in 0..1200 {
+            runtime.acknowledge_alarm("ALM_BOUND_TEST");
+            runtime.set_stimulus("Tank_Level", IecValue::Int(40))?;
+            runtime.step_scan()?;
+            runtime.set_stimulus("Tank_Level", IecValue::Int(60))?;
+            runtime.step_scan()?;
+        }
+
+        assert!(
+            runtime.alarm_journal().len() <= 1000,
+            "Alarm journal must not exceed 1000 records, got {}",
+            runtime.alarm_journal().len()
+        );
+        assert_eq!(runtime.alarm_journal().len(), 1000);
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
