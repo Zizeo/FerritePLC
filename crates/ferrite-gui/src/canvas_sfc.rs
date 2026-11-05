@@ -118,12 +118,25 @@ pub enum DragState {
     },
 }
 
+/// Target element field currently being edited directly on the SFC canvas.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SfcEditTarget {
+    StepName { step_id: String },
+    ActionTarget { step_id: String, action_idx: usize },
+    ActionDuration { step_id: String, action_idx: usize },
+    TransitionReceptivity { trans_id: String },
+}
+
 #[derive(Debug, Clone)]
 pub struct SfcCanvasState {
     pub drag: DragState,
     pub hover_port: Option<PortHover>,
     pub selected: Option<SfcElementKey>,
     pub selected_elements: Vec<SfcElementKey>,
+    pub editing_target: Option<SfcEditTarget>,
+    pub edit_buffer: String,
+    pub cursor_pos: usize,
+    pub last_click: Option<(std::time::Instant, Point)>,
 }
 
 impl Default for SfcCanvasState {
@@ -133,6 +146,62 @@ impl Default for SfcCanvasState {
             hover_port: None,
             selected: None,
             selected_elements: Vec::new(),
+            editing_target: None,
+            edit_buffer: String::new(),
+            cursor_pos: 0,
+            last_click: None,
+        }
+    }
+}
+
+impl SfcCanvasState {
+    pub fn start_edit(&mut self, target: SfcEditTarget, initial_text: &str) {
+        self.editing_target = Some(target);
+        self.edit_buffer = initial_text.to_string();
+        self.cursor_pos = self.edit_buffer.len();
+    }
+
+    pub fn cancel_edit(&mut self) {
+        self.editing_target = None;
+        self.edit_buffer.clear();
+        self.cursor_pos = 0;
+    }
+
+    pub fn insert_char(&mut self, c: char) {
+        if !c.is_control() {
+            if self.cursor_pos >= self.edit_buffer.len() {
+                self.edit_buffer.push(c);
+            } else {
+                self.edit_buffer.insert(self.cursor_pos, c);
+            }
+            self.cursor_pos += 1;
+        }
+    }
+
+    pub fn backspace(&mut self) {
+        if self.cursor_pos > 0 && !self.edit_buffer.is_empty() {
+            self.cursor_pos -= 1;
+            if self.cursor_pos < self.edit_buffer.len() {
+                self.edit_buffer.remove(self.cursor_pos);
+            }
+        }
+    }
+
+    pub fn delete_forward(&mut self) {
+        if self.cursor_pos < self.edit_buffer.len() {
+            self.edit_buffer.remove(self.cursor_pos);
+        }
+    }
+
+    pub fn move_cursor_left(&mut self) {
+        if self.cursor_pos > 0 {
+            self.cursor_pos -= 1;
+        }
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        if self.cursor_pos < self.edit_buffer.len() {
+            self.cursor_pos += 1;
         }
     }
 }
@@ -4053,5 +4122,55 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
+    }
+
+    #[test]
+    fn test_sfc_canvas_edit_buffer() {
+        let mut state = SfcCanvasState::default();
+        assert!(state.editing_target.is_none());
+        assert!(state.edit_buffer.is_empty());
+
+        // Start edit on a step name
+        state.start_edit(
+            SfcEditTarget::StepName {
+                step_id: "10".to_string(),
+            },
+            "Step_Init",
+        );
+        assert_eq!(
+            state.editing_target,
+            Some(SfcEditTarget::StepName {
+                step_id: "10".to_string()
+            })
+        );
+        assert_eq!(state.edit_buffer, "Step_Init");
+        assert_eq!(state.cursor_pos, 9);
+
+        // Type characters
+        state.insert_char('_');
+        state.insert_char('2');
+        assert_eq!(state.edit_buffer, "Step_Init_2");
+        assert_eq!(state.cursor_pos, 11);
+
+        // Backspace
+        state.backspace();
+        assert_eq!(state.edit_buffer, "Step_Init_");
+        assert_eq!(state.cursor_pos, 10);
+
+        // Cursor movement and middle insert
+        state.move_cursor_left();
+        state.insert_char('A');
+        assert_eq!(state.edit_buffer, "Step_InitA_");
+
+        // Delete forward
+        state.move_cursor_left();
+        state.delete_forward();
+        assert_eq!(state.edit_buffer, "Step_Init_");
+
+        // Cancel edit
+        state.cancel_edit();
+        assert!(state.editing_target.is_none());
+        assert!(state.edit_buffer.is_empty());
+        assert_eq!(state.cursor_pos, 0);
     }
 }
