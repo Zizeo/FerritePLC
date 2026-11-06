@@ -1811,6 +1811,18 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
         let width = bounds.width;
         let height = bounds.height;
 
+        let is_occluded = |r: Rectangle| -> bool {
+            state.qualifier_dropdown.as_ref().is_some_and(|dd| {
+                let dd_expanded = Rectangle {
+                    x: dd.rect.x - 2.0,
+                    y: dd.rect.y - 1.0,
+                    width: dd.rect.width + 4.0,
+                    height: dd.rect.height + 3.0,
+                };
+                dd_expanded.intersects(&r)
+            })
+        };
+
         // 1. Background
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), COLOR_CANVAS_BG);
 
@@ -2378,143 +2390,179 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 } else {
                     format!("MACRO({})", step.macro_body.len())
                 };
-                frame.fill_text(canvas::Text {
-                    content: macro_badge,
-                    position: Point::new(x + s_width - 96.0, y + 6.0),
-                    color: StudioTheme::ACCENT_PURPLE,
-                    size: iced::Pixels(9.5),
-                    font: iced::Font::MONOSPACE,
-                    ..Default::default()
-                });
+                let macro_rect = Rectangle {
+                    x: x + s_width - 96.0,
+                    y: y + 6.0,
+                    width: 60.0,
+                    height: 16.0,
+                };
+                if !is_occluded(macro_rect) {
+                    frame.fill_text(canvas::Text {
+                        content: macro_badge,
+                        position: Point::new(x + s_width - 96.0, y + 6.0),
+                        color: StudioTheme::ACCENT_PURPLE,
+                        size: iced::Pixels(9.5),
+                        font: iced::Font::MONOSPACE,
+                        ..Default::default()
+                    });
+                }
             }
 
             // Step ID text
             let num_id = step.id.trim_start_matches(['X', 'x']);
             let display_id = format!("X{num_id}");
-            frame.fill_text(canvas::Text {
-                content: display_id,
-                position: Point::new(x + 10.0, y + 7.0),
-                color: Color::WHITE,
-                size: iced::Pixels(12.5),
-                font: iced::Font::MONOSPACE,
-                ..Default::default()
-            });
-
-            // Active dot & timer
-            if active {
+            let id_rect = Rectangle {
+                x: x + 10.0,
+                y: y + 7.0,
+                width: 40.0,
+                height: 16.0,
+            };
+            if !is_occluded(id_rect) {
                 frame.fill_text(canvas::Text {
-                    content: "●".to_string(),
-                    position: Point::new(x + 48.0, y + 7.0),
-                    color: COLOR_ACTIVE_STEP,
-                    size: iced::Pixels(11.0),
-                    ..Default::default()
-                });
-                frame.fill_text(canvas::Text {
-                    content: format!("T#{}ms", elapsed_ms),
-                    position: Point::new(x + 64.0, y + 8.0),
-                    color: COLOR_ACTIVE_STEP,
-                    size: iced::Pixels(10.5),
+                    content: display_id,
+                    position: Point::new(x + 10.0, y + 7.0),
+                    color: Color::WHITE,
+                    size: iced::Pixels(12.5),
                     font: iced::Font::MONOSPACE,
                     ..Default::default()
                 });
+            }
+
+            // Active dot & timer
+            if active {
+                let active_rect = Rectangle {
+                    x: x + 48.0,
+                    y: y + 7.0,
+                    width: 70.0,
+                    height: 16.0,
+                };
+                if !is_occluded(active_rect) {
+                    frame.fill_text(canvas::Text {
+                        content: "●".to_string(),
+                        position: Point::new(x + 48.0, y + 7.0),
+                        color: COLOR_ACTIVE_STEP,
+                        size: iced::Pixels(11.0),
+                        ..Default::default()
+                    });
+                    frame.fill_text(canvas::Text {
+                        content: format!("T#{}ms", elapsed_ms),
+                        position: Point::new(x + 64.0, y + 8.0),
+                        color: COLOR_ACTIVE_STEP,
+                        size: iced::Pixels(10.5),
+                        font: iced::Font::MONOSPACE,
+                        ..Default::default()
+                    });
+                }
             }
 
             // On-canvas [+ Act] button on top right of step header
             let add_rect = self.step_add_action_rect(step, state);
-            frame.fill_rectangle(
-                Point::new(add_rect.x, add_rect.y),
-                Size::new(add_rect.width, add_rect.height),
-                Color::from_rgba(0.2, 0.45, 0.7, 0.25),
-            );
-            frame.stroke_rectangle(
-                Point::new(add_rect.x, add_rect.y),
-                Size::new(add_rect.width, add_rect.height),
-                Stroke::default()
-                    .with_color(Color::from_rgba(0.3, 0.6, 0.9, 0.5))
-                    .with_width(1.0),
-            );
-            frame.fill_text(canvas::Text {
-                content: "+ Act".to_string(),
-                position: Point::new(add_rect.x + 5.0, add_rect.y + 2.5),
-                color: Color::from_rgb(0.7, 0.85, 1.0),
-                size: iced::Pixels(10.0),
-                font: iced::Font::MONOSPACE,
-                ..Default::default()
-            });
-
-            // Tree badge or error badge
-            if has_error {
+            if !is_occluded(add_rect) {
+                frame.fill_rectangle(
+                    Point::new(add_rect.x, add_rect.y),
+                    Size::new(add_rect.width, add_rect.height),
+                    Color::from_rgba(0.2, 0.45, 0.7, 0.25),
+                );
+                frame.stroke_rectangle(
+                    Point::new(add_rect.x, add_rect.y),
+                    Size::new(add_rect.width, add_rect.height),
+                    Stroke::default()
+                        .with_color(Color::from_rgba(0.3, 0.6, 0.9, 0.5))
+                        .with_width(1.0),
+                );
                 frame.fill_text(canvas::Text {
-                    content: crate::icons::icon_warning().to_string(),
-                    position: Point::new(add_rect.x - 20.0, y + 6.0),
-                    color: Color::from_rgb(1.0, 0.35, 0.35),
-                    size: iced::Pixels(11.0),
-                    shaping: iced::widget::text::Shaping::Advanced,
-                    ..Default::default()
-                });
-            } else if let Some(tid) = tree_id
-                && self
-                    .validation_report
-                    .as_ref()
-                    .map(|r| r.trees.len())
-                    .unwrap_or(0)
-                    > 1
-            {
-                frame.fill_text(canvas::Text {
-                    content: format!("T{}", tid + 1),
-                    position: Point::new(add_rect.x - 22.0, y + 7.0),
-                    color: COLOR_STEP_DROP,
-                    size: iced::Pixels(10.5),
+                    content: "+ Act".to_string(),
+                    position: Point::new(add_rect.x + 5.0, add_rect.y + 2.5),
+                    color: Color::from_rgb(0.7, 0.85, 1.0),
+                    size: iced::Pixels(10.0),
                     font: iced::Font::MONOSPACE,
                     ..Default::default()
                 });
             }
 
+            // Tree badge or error badge
+            let badge_rect = Rectangle {
+                x: add_rect.x - 24.0,
+                y: y + 6.0,
+                width: 22.0,
+                height: 16.0,
+            };
+            if !is_occluded(badge_rect) {
+                if has_error {
+                    frame.fill_text(canvas::Text {
+                        content: crate::icons::icon_warning().to_string(),
+                        position: Point::new(add_rect.x - 20.0, y + 6.0),
+                        color: Color::from_rgb(1.0, 0.35, 0.35),
+                        size: iced::Pixels(11.0),
+                        shaping: iced::widget::text::Shaping::Advanced,
+                        ..Default::default()
+                    });
+                } else if let Some(tid) = tree_id
+                    && self
+                        .validation_report
+                        .as_ref()
+                        .map(|r| r.trees.len())
+                        .unwrap_or(0)
+                        > 1
+                {
+                    frame.fill_text(canvas::Text {
+                        content: format!("T{}", tid + 1),
+                        position: Point::new(add_rect.x - 22.0, y + 7.0),
+                        color: COLOR_STEP_DROP,
+                        size: iced::Pixels(10.5),
+                        font: iced::Font::MONOSPACE,
+                        ..Default::default()
+                    });
+                }
+            }
+
             // Step Name area with in-place edit support and anti-clipping
             let name_rect = self.step_name_rect(step, state);
-            let is_editing_name = state.editing_target
-                == Some(SfcEditTarget::StepName {
-                    step_id: step.id.clone(),
-                });
+            if !is_occluded(name_rect) {
+                let is_editing_name = state.editing_target
+                    == Some(SfcEditTarget::StepName {
+                        step_id: step.id.clone(),
+                    });
 
-            frame.fill_rectangle(
-                Point::new(name_rect.x, name_rect.y),
-                Size::new(name_rect.width, name_rect.height),
-                if is_editing_name {
-                    Color::from_rgba(0.08, 0.18, 0.28, 0.9)
-                } else {
-                    Color::from_rgba(0.0, 0.0, 0.0, 0.25)
-                },
-            );
-            frame.stroke_rectangle(
-                Point::new(name_rect.x, name_rect.y),
-                Size::new(name_rect.width, name_rect.height),
-                Stroke::default()
-                    .with_color(if is_editing_name {
-                        COLOR_STEP_DROP
+                frame.fill_rectangle(
+                    Point::new(name_rect.x, name_rect.y),
+                    Size::new(name_rect.width, name_rect.height),
+                    if is_editing_name {
+                        Color::from_rgba(0.08, 0.18, 0.28, 0.9)
                     } else {
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.08)
-                    })
-                    .with_width(if is_editing_name { 1.5 } else { 1.0 }),
-            );
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.25)
+                    },
+                );
+                frame.stroke_rectangle(
+                    Point::new(name_rect.x, name_rect.y),
+                    Size::new(name_rect.width, name_rect.height),
+                    Stroke::default()
+                        .with_color(if is_editing_name {
+                            COLOR_STEP_DROP
+                        } else {
+                            Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                        })
+                        .with_width(if is_editing_name { 1.5 } else { 1.0 }),
+                );
 
-            let display_name = if is_editing_name {
-                format!("{}|", state.edit_buffer)
-            } else {
-                step.name.clone()
-            };
-
-            frame.fill_text(canvas::Text {
-                content: display_name,
-                position: Point::new(name_rect.x + 6.0, name_rect.y + 4.0),
-                color: if is_editing_name {
-                    Color::WHITE
+                let display_name = if is_editing_name {
+                    format!("{}|", state.edit_buffer)
                 } else {
-                    Color::from_rgb(220.0 / 255.0, 230.0 / 255.0, 245.0 / 255.0)
-                },
-                size: iced::Pixels(11.5),
-                ..Default::default()
-            });
+                    step.name.clone()
+                };
+
+                frame.fill_text(canvas::Text {
+                    content: display_name,
+                    position: Point::new(name_rect.x + 6.0, name_rect.y + 4.0),
+                    color: if is_editing_name {
+                        Color::WHITE
+                    } else {
+                        Color::from_rgb(220.0 / 255.0, 230.0 / 255.0, 245.0 / 255.0)
+                    },
+                    size: iced::Pixels(11.5),
+                    ..Default::default()
+                });
+            }
 
             // Action blocks attached on right side
             if !step.actions.is_empty() {
@@ -2533,6 +2581,16 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     let dur_rect_opt = self.action_duration_rect(step, a_idx, state);
                     let del_rect = self.action_delete_rect(step, a_idx, state);
                     last_act_bottom = q_rect.y + q_rect.height;
+
+                    let row_rect = Rectangle {
+                        x: q_rect.x,
+                        y: q_rect.y,
+                        width: (del_rect.x + del_rect.width) - q_rect.x,
+                        height: q_rect.height,
+                    };
+                    if is_occluded(row_rect) {
+                        continue;
+                    }
 
                     // Qualifier badge with color coding and dropdown indicator
                     let qual_color = qualifier_badge_color(act.qualifier);
@@ -2696,27 +2754,40 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             let in_p = self.step_in_port(step, state);
             let out_p = self.step_out_port(step, state);
 
-            let is_in_hovered =
-                state.hover_port.as_ref() == Some(&PortHover::StepInput(step.id.clone(), in_p));
-            let is_out_hovered =
-                state.hover_port.as_ref() == Some(&PortHover::StepOutput(step.id.clone(), out_p));
-
-            frame.fill(
-                &Path::circle(in_p, if is_in_hovered { 6.0 } else { PORT_RADIUS }),
-                if is_in_hovered {
-                    COLOR_STEP_DROP
-                } else {
-                    border_color
-                },
-            );
-            frame.fill(
-                &Path::circle(out_p, if is_out_hovered { 6.0 } else { PORT_RADIUS }),
-                if is_out_hovered {
-                    COLOR_STEP_DROP
-                } else {
-                    border_color
-                },
-            );
+            if !is_occluded(Rectangle {
+                x: in_p.x - 6.0,
+                y: in_p.y - 6.0,
+                width: 12.0,
+                height: 12.0,
+            }) {
+                let is_in_hovered =
+                    state.hover_port.as_ref() == Some(&PortHover::StepInput(step.id.clone(), in_p));
+                frame.fill(
+                    &Path::circle(in_p, if is_in_hovered { 6.0 } else { PORT_RADIUS }),
+                    if is_in_hovered {
+                        COLOR_STEP_DROP
+                    } else {
+                        border_color
+                    },
+                );
+            }
+            if !is_occluded(Rectangle {
+                x: out_p.x - 6.0,
+                y: out_p.y - 6.0,
+                width: 12.0,
+                height: 12.0,
+            }) {
+                let is_out_hovered =
+                    state.hover_port.as_ref() == Some(&PortHover::StepOutput(step.id.clone(), out_p));
+                frame.fill(
+                    &Path::circle(out_p, if is_out_hovered { 6.0 } else { PORT_RADIUS }),
+                    if is_out_hovered {
+                        COLOR_STEP_DROP
+                    } else {
+                        border_color
+                    },
+                );
+            }
         }
 
         // 5. Render Transitions
@@ -2807,134 +2878,165 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
 
             let cy = y + TRANS_HEIGHT * 0.5;
 
-            // Error halo around transition crossbar
-            if has_error {
+            let bar_rect = Rectangle {
+                x: x - 4.0,
+                y: cy - 4.0,
+                width: TRANS_WIDTH + 8.0,
+                height: 8.0,
+            };
+            if !is_occluded(bar_rect) {
+                // Error halo around transition crossbar
+                if has_error {
+                    frame.stroke(
+                        &Path::line(
+                            Point::new(x - 3.0, cy),
+                            Point::new(x + TRANS_WIDTH + 3.0, cy),
+                        ),
+                        Stroke::default()
+                            .with_color(Color::from_rgba(1.0, 0.3, 0.3, 0.4))
+                            .with_width(6.0),
+                    );
+                }
+
+                // Authentic IEC 60848 transition crossbar
                 frame.stroke(
-                    &Path::line(
-                        Point::new(x - 3.0, cy),
-                        Point::new(x + TRANS_WIDTH + 3.0, cy),
-                    ),
+                    &Path::line(Point::new(x, cy), Point::new(x + TRANS_WIDTH, cy)),
                     Stroke::default()
-                        .with_color(Color::from_rgba(1.0, 0.3, 0.3, 0.4))
-                        .with_width(6.0),
+                        .with_color(color)
+                        .with_width(if is_selected || has_error { 4.0 } else { 3.2 }),
                 );
             }
 
-            // Authentic IEC 60848 transition crossbar
-            frame.stroke(
-                &Path::line(Point::new(x, cy), Point::new(x + TRANS_WIDTH, cy)),
-                Stroke::default()
-                    .with_color(color)
-                    .with_width(if is_selected || has_error { 4.0 } else { 3.2 }),
-            );
-
             // Receptivity text & pill with in-place edit support
             let rec_rect = self.trans_receptivity_rect(tr, state);
-            let is_editing_rec = state.editing_target
-                == Some(SfcEditTarget::TransitionReceptivity {
-                    trans_id: tr.id.clone(),
-                });
+            if !is_occluded(rec_rect) {
+                let is_editing_rec = state.editing_target
+                    == Some(SfcEditTarget::TransitionReceptivity {
+                        trans_id: tr.id.clone(),
+                    });
 
-            frame.fill_rectangle(
-                Point::new(rec_rect.x, rec_rect.y),
-                Size::new(rec_rect.width, rec_rect.height),
-                if is_editing_rec {
-                    Color::from_rgba(0.08, 0.18, 0.28, 0.95)
+                frame.fill_rectangle(
+                    Point::new(rec_rect.x, rec_rect.y),
+                    Size::new(rec_rect.width, rec_rect.height),
+                    if is_editing_rec {
+                        Color::from_rgba(0.08, 0.18, 0.28, 0.95)
+                    } else {
+                        COLOR_STEP_BG
+                    },
+                );
+                frame.stroke_rectangle(
+                    Point::new(rec_rect.x, rec_rect.y),
+                    Size::new(rec_rect.width, rec_rect.height),
+                    Stroke::default()
+                        .with_color(if is_editing_rec {
+                            COLOR_STEP_DROP
+                        } else if has_error {
+                            Color::from_rgb(1.0, 0.4, 0.4)
+                        } else {
+                            Color::from_rgba(1.0, 210.0 / 255.0, 120.0 / 255.0, 0.35)
+                        })
+                        .with_width(if is_editing_rec { 1.5 } else { 1.0 }),
+                );
+
+                let rec_text = if is_editing_rec {
+                    format!("{}|", state.edit_buffer)
+                } else if tr.receptivity.is_empty() {
+                    "TRUE".to_string()
                 } else {
-                    COLOR_STEP_BG
-                },
-            );
-            frame.stroke_rectangle(
-                Point::new(rec_rect.x, rec_rect.y),
-                Size::new(rec_rect.width, rec_rect.height),
-                Stroke::default()
-                    .with_color(if is_editing_rec {
-                        COLOR_STEP_DROP
-                    } else if has_error {
+                    tr.receptivity.clone()
+                };
+
+                frame.fill_text(canvas::Text {
+                    content: rec_text,
+                    position: Point::new(rec_rect.x + 5.0, rec_rect.y + 3.5),
+                    color: if has_error {
                         Color::from_rgb(1.0, 0.4, 0.4)
                     } else {
-                        Color::from_rgba(1.0, 210.0 / 255.0, 120.0 / 255.0, 0.35)
-                    })
-                    .with_width(if is_editing_rec { 1.5 } else { 1.0 }),
-            );
-
-            let rec_text = if is_editing_rec {
-                format!("{}|", state.edit_buffer)
-            } else if tr.receptivity.is_empty() {
-                "TRUE".to_string()
-            } else {
-                tr.receptivity.clone()
-            };
-
-            frame.fill_text(canvas::Text {
-                content: rec_text,
-                position: Point::new(rec_rect.x + 5.0, rec_rect.y + 3.5),
-                color: if has_error {
-                    Color::from_rgb(1.0, 0.4, 0.4)
-                } else {
-                    Color::from_rgb(1.0, 210.0 / 255.0, 120.0 / 255.0)
-                },
-                size: iced::Pixels(11.5),
-                font: iced::Font::MONOSPACE,
-                ..Default::default()
-            });
+                        Color::from_rgb(1.0, 210.0 / 255.0, 120.0 / 255.0)
+                    },
+                    size: iced::Pixels(11.5),
+                    font: iced::Font::MONOSPACE,
+                    ..Default::default()
+                });
+            }
 
             // Transition ID and tree or error badge
-            let tid_str = if has_error {
-                format!("{} {}", tr.id, crate::icons::icon_warning())
-            } else if let Some(tid) = tree_id
-                && self
-                    .validation_report
-                    .as_ref()
-                    .map(|r| r.trees.len())
-                    .unwrap_or(0)
-                    > 1
-            {
-                format!("{} T{}", tr.id, tid + 1)
-            } else {
-                tr.id.clone()
+            let tid_rect = Rectangle {
+                x: x - 65.0,
+                y: cy - 10.0,
+                width: 60.0,
+                height: 18.0,
             };
-
-            frame.fill_text(canvas::Text {
-                content: tid_str,
-                position: Point::new(x - 8.0, cy - 6.0),
-                color: if has_error {
-                    Color::from_rgb(1.0, 0.35, 0.35)
+            if !is_occluded(tid_rect) {
+                let tid_str = if has_error {
+                    format!("{} {}", tr.id, crate::icons::icon_warning())
+                } else if let Some(tid) = tree_id
+                    && self
+                        .validation_report
+                        .as_ref()
+                        .map(|r| r.trees.len())
+                        .unwrap_or(0)
+                        > 1
+                {
+                    format!("{} T{}", tr.id, tid + 1)
                 } else {
-                    COLOR_INACTIVE_STEP
-                },
-                size: iced::Pixels(10.5),
-                font: iced::Font::MONOSPACE,
-                horizontal_alignment: iced::alignment::Horizontal::Right,
-                shaping: iced::widget::text::Shaping::Advanced,
-                ..Default::default()
-            });
+                    tr.id.clone()
+                };
+
+                frame.fill_text(canvas::Text {
+                    content: tid_str,
+                    position: Point::new(x - 8.0, cy - 6.0),
+                    color: if has_error {
+                        Color::from_rgb(1.0, 0.35, 0.35)
+                    } else {
+                        COLOR_INACTIVE_STEP
+                    },
+                    size: iced::Pixels(10.5),
+                    font: iced::Font::MONOSPACE,
+                    horizontal_alignment: iced::alignment::Horizontal::Right,
+                    shaping: iced::widget::text::Shaping::Advanced,
+                    ..Default::default()
+                });
+            }
 
             // Input / Output Ports
             let in_p = self.trans_in_port(tr, state);
             let out_p = self.trans_out_port(tr, state);
 
-            let is_in_hovered =
-                state.hover_port.as_ref() == Some(&PortHover::TransitionInput(tr.id.clone(), in_p));
-            let is_out_hovered = state.hover_port.as_ref()
-                == Some(&PortHover::TransitionOutput(tr.id.clone(), out_p));
-
-            frame.fill(
-                &Path::circle(in_p, if is_in_hovered { 6.0 } else { PORT_RADIUS }),
-                if is_in_hovered {
-                    COLOR_STEP_DROP
-                } else {
-                    color
-                },
-            );
-            frame.fill(
-                &Path::circle(out_p, if is_out_hovered { 6.0 } else { PORT_RADIUS }),
-                if is_out_hovered {
-                    COLOR_STEP_DROP
-                } else {
-                    color
-                },
-            );
+            if !is_occluded(Rectangle {
+                x: in_p.x - 6.0,
+                y: in_p.y - 6.0,
+                width: 12.0,
+                height: 12.0,
+            }) {
+                let is_in_hovered =
+                    state.hover_port.as_ref() == Some(&PortHover::TransitionInput(tr.id.clone(), in_p));
+                frame.fill(
+                    &Path::circle(in_p, if is_in_hovered { 6.0 } else { PORT_RADIUS }),
+                    if is_in_hovered {
+                        COLOR_STEP_DROP
+                    } else {
+                        color
+                    },
+                );
+            }
+            if !is_occluded(Rectangle {
+                x: out_p.x - 6.0,
+                y: out_p.y - 6.0,
+                width: 12.0,
+                height: 12.0,
+            }) {
+                let is_out_hovered = state.hover_port.as_ref()
+                    == Some(&PortHover::TransitionOutput(tr.id.clone(), out_p));
+                frame.fill(
+                    &Path::circle(out_p, if is_out_hovered { 6.0 } else { PORT_RADIUS }),
+                    if is_out_hovered {
+                        COLOR_STEP_DROP
+                    } else {
+                        color
+                    },
+                );
+            }
         }
 
         // 6. Active Wire Dragging Elastic Rubber-Band
@@ -5116,6 +5218,31 @@ mod tests {
                 }
             })
         );
+
+        // Verify occlusion of underlying elements when dropdown is open:
+        if let Some(ref dd) = state.qualifier_dropdown {
+            let act1_q_rect = canvas_prog.action_qualifier_rect(&step, 1, &state);
+            let act1_del_rect = canvas_prog.action_delete_rect(&step, 1, &state);
+            let act1_row = Rectangle {
+                x: act1_q_rect.x,
+                y: act1_q_rect.y,
+                width: (act1_del_rect.x + act1_del_rect.width) - act1_q_rect.x,
+                height: act1_q_rect.height,
+            };
+            assert!(dd.rect.intersects(&act1_row), "Underlying action row must be occluded by dropdown menu");
+
+            // A transition positioned underneath the dropdown menu is occluded:
+            let trans_under = SfcTransition {
+                id: "2".to_string(),
+                from_steps: vec!["10".to_string()],
+                to_steps: vec![],
+                receptivity: "Sensor_OK".to_string(),
+                grid_pos: Some((240, 160)),
+                ..Default::default()
+            };
+            let trans_rec = canvas_prog.trans_receptivity_rect(&trans_under, &state);
+            assert!(dd.rect.intersects(&trans_rec), "Transition receptivity underneath dropdown menu must be occluded");
+        }
 
         // Click 2nd item in dropdown: index 1 is ActionQualifier::S (S - Set)
         let item_click = Point::new(q_rect.x + 20.0, q_rect.y + q_rect.height + 2.0 + 2.0 + 22.0 * 1.0 + 5.0);
