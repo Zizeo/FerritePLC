@@ -7,7 +7,151 @@ use ferrite_core::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const MAX_LOOP_ITERATIONS: usize = 10_000;
+pub const DEFAULT_MAX_LOOP_ITERATIONS: usize = 10_000;
+pub const MAX_LOOP_ITERATIONS: usize = DEFAULT_MAX_LOOP_ITERATIONS;
+
+static MAX_LOOP_LIMIT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(DEFAULT_MAX_LOOP_ITERATIONS);
+
+pub fn set_max_loop_iterations(limit: usize) {
+    MAX_LOOP_LIMIT.store(limit, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn max_loop_iterations() -> usize {
+    MAX_LOOP_LIMIT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StandardFunctionInfo {
+    pub name: &'static str,
+    pub min_arity: usize,
+    pub max_arity: Option<usize>,
+}
+
+pub const STANDARD_FUNCTIONS: &[StandardFunctionInfo] = &[
+    StandardFunctionInfo { name: "ABS", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "SQRT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "SIN", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "COS", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "TAN", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LN", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "EXP", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "EXPT", min_arity: 2, max_arity: Some(2) },
+    StandardFunctionInfo { name: "MIN", min_arity: 2, max_arity: None },
+    StandardFunctionInfo { name: "MAX", min_arity: 2, max_arity: None },
+    StandardFunctionInfo { name: "LIMIT", min_arity: 3, max_arity: Some(3) },
+    StandardFunctionInfo { name: "TRUNC", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "ROUND", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "CEIL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "FLOOR", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "ASIN", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "ACOS", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "ATAN", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LOG", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "SEL", min_arity: 3, max_arity: Some(3) },
+    StandardFunctionInfo { name: "MUX", min_arity: 2, max_arity: None },
+    StandardFunctionInfo { name: "SHL", min_arity: 2, max_arity: Some(2) },
+    StandardFunctionInfo { name: "SHR", min_arity: 2, max_arity: Some(2) },
+    StandardFunctionInfo { name: "ROL", min_arity: 2, max_arity: Some(2) },
+    StandardFunctionInfo { name: "ROR", min_arity: 2, max_arity: Some(2) },
+    StandardFunctionInfo { name: "INT_TO_REAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DINT_TO_REAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "BOOL_TO_REAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "TIME_TO_REAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "REAL_TO_INT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DINT_TO_INT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "BOOL_TO_INT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "REAL_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "INT_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "BOOL_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "TIME_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "INT_TO_BOOL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DINT_TO_BOOL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "REAL_TO_BOOL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LREAL_TO_REAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "REAL_TO_LREAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LREAL_TO_INT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LREAL_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LREAL_TO_LINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "INT_TO_LREAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DINT_TO_LREAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LINT_TO_LREAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LREAL_TO_BOOL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "BOOL_TO_LREAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LREAL_TO_TIME", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "TIME_TO_LREAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "INT_TO_SINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "SINT_TO_INT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DINT_TO_SINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "SINT_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LINT_TO_SINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "SINT_TO_LINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "SINT_TO_REAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "REAL_TO_SINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "INT_TO_BYTE", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "BYTE_TO_INT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DINT_TO_BYTE", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "BYTE_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "BYTE_TO_USINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "USINT_TO_BYTE", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "BOOL_TO_BYTE", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "BYTE_TO_BOOL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "INT_TO_WORD", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "WORD_TO_INT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DINT_TO_WORD", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "WORD_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "WORD_TO_UINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "UINT_TO_WORD", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DINT_TO_DWORD", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DWORD_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DWORD_TO_UDINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "UDINT_TO_DWORD", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LINT_TO_LWORD", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LWORD_TO_LINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "ULINT_TO_LWORD", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LWORD_TO_ULINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "USINT_TO_INT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "INT_TO_USINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "UINT_TO_INT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "INT_TO_UINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "UINT_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DINT_TO_UINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "UDINT_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DINT_TO_UDINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "ULINT_TO_LINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LINT_TO_ULINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "INT_TO_LINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LINT_TO_INT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DINT_TO_LINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LINT_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "INT_TO_STRING", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "STRING_TO_INT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "DINT_TO_STRING", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "STRING_TO_DINT", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "REAL_TO_STRING", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "STRING_TO_REAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LREAL_TO_STRING", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "STRING_TO_LREAL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "BOOL_TO_STRING", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "STRING_TO_BOOL", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "TIME_TO_STRING", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "STRING_TO_TIME", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "LEN", min_arity: 1, max_arity: Some(1) },
+    StandardFunctionInfo { name: "CONCAT", min_arity: 2, max_arity: None },
+    StandardFunctionInfo { name: "LEFT", min_arity: 2, max_arity: Some(2) },
+    StandardFunctionInfo { name: "RIGHT", min_arity: 2, max_arity: Some(2) },
+    StandardFunctionInfo { name: "MID", min_arity: 3, max_arity: Some(3) },
+    StandardFunctionInfo { name: "INSERT", min_arity: 3, max_arity: Some(3) },
+    StandardFunctionInfo { name: "DELETE", min_arity: 3, max_arity: Some(3) },
+    StandardFunctionInfo { name: "REPLACE", min_arity: 4, max_arity: Some(4) },
+    StandardFunctionInfo { name: "FIND", min_arity: 2, max_arity: Some(2) },
+];
+
+pub fn lookup_standard_function(name: &str) -> Option<&'static StandardFunctionInfo> {
+    STANDARD_FUNCTIONS
+        .iter()
+        .find(|info| info.name.eq_ignore_ascii_case(name))
+}
 
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum IrError {
@@ -67,6 +211,247 @@ pub enum IrBinaryOp {
     Ge,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum VarScope {
+    Local,
+    Input,
+    Output,
+    Temp,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VariableDecl {
+    pub name: String,
+    pub data_type: IecType,
+    pub scope: VarScope,
+    pub initial_value: Option<IrExpr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FunctionParam {
+    pub name: String,
+    pub data_type: IecType,
+    pub default_value: Option<IecValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserFunction {
+    pub name: String,
+    pub return_type: IecType,
+    pub inputs: Vec<FunctionParam>,
+    pub locals: Vec<FunctionParam>,
+    pub body: Vec<IrStmt>,
+}
+
+thread_local! {
+    static CALL_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl UserFunction {
+    pub fn new(
+        name: impl Into<String>,
+        return_type: IecType,
+        inputs: Vec<FunctionParam>,
+        locals: Vec<FunctionParam>,
+        body: Vec<IrStmt>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            return_type,
+            inputs,
+            locals,
+            body,
+        }
+    }
+
+    pub fn validate(&self, tags: &TagTable) -> Result<(), IrError> {
+        let mut local_types = HashMap::new();
+        for param in &self.inputs {
+            local_types.insert(param.name.clone(), param.data_type);
+        }
+        for local in &self.locals {
+            local_types.insert(local.name.clone(), local.data_type);
+        }
+        local_types.insert(self.name.clone(), self.return_type);
+
+        for stmt in &self.body {
+            stmt.validate_with_locals(tags, &local_types, &self.name, false)?;
+        }
+        Ok(())
+    }
+
+    pub fn call_with_resolver(
+        &self,
+        args: &[IecValue],
+        resolver: &dyn Fn(&str) -> Result<IecValue, RuntimeError>,
+        caller_pou: &str,
+    ) -> Result<IecValue, RuntimeError> {
+        const MAX_CALL_DEPTH: usize = 64;
+        let depth = CALL_DEPTH.with(|d| d.get());
+        if depth >= MAX_CALL_DEPTH {
+            return Err(RuntimeError::ExecutionError {
+                pou: caller_pou.to_string(),
+                message: format!(
+                    "Maximum function call depth ({MAX_CALL_DEPTH}) exceeded in '{}'",
+                    self.name
+                ),
+            });
+        }
+        CALL_DEPTH.with(|d| d.set(depth + 1));
+        let res = self.execute_internal(args, resolver, caller_pou);
+        CALL_DEPTH.with(|d| d.set(depth));
+        res
+    }
+
+    pub fn call_named_with_resolver(
+        &self,
+        args: &[(String, IecValue)],
+        resolver: &dyn Fn(&str) -> Result<IecValue, RuntimeError>,
+        caller_pou: &str,
+    ) -> Result<IecValue, RuntimeError> {
+        let mut positional = Vec::with_capacity(self.inputs.len());
+        for input in &self.inputs {
+            let mut found = None;
+            for (name, val) in args {
+                if name.eq_ignore_ascii_case(&input.name) {
+                    found = Some(val.clone());
+                    break;
+                }
+            }
+            if let Some(val) = found {
+                positional.push(val);
+            } else if let Some(def) = &input.default_value {
+                positional.push(def.clone());
+            } else {
+                positional.push(input.data_type.default_value());
+            }
+        }
+        self.call_with_resolver(&positional, resolver, caller_pou)
+    }
+
+    fn execute_internal(
+        &self,
+        args: &[IecValue],
+        resolver: &dyn Fn(&str) -> Result<IecValue, RuntimeError>,
+        caller_pou: &str,
+    ) -> Result<IecValue, RuntimeError> {
+        let mut env = HashMap::new();
+
+        for (i, param) in self.inputs.iter().enumerate() {
+            let val = if i < args.len() {
+                args[i].coerce_to(param.data_type).map_err(|e| RuntimeError::ExecutionError {
+                    pou: caller_pou.to_string(),
+                    message: format!("Argument type mismatch for '{}': {e}", param.name),
+                })?
+            } else if let Some(def) = &param.default_value {
+                def.clone()
+            } else {
+                param.data_type.default_value()
+            };
+            env.insert(param.name.clone(), val);
+        }
+
+        for local in &self.locals {
+            let val = if let Some(def) = &local.default_value {
+                def.clone()
+            } else {
+                local.data_type.default_value()
+            };
+            env.insert(local.name.clone(), val);
+        }
+
+        env.insert(self.name.clone(), self.return_type.default_value());
+
+        for stmt in &self.body {
+            let flow = stmt.execute_with_resolver_and_env(resolver, &mut env, &self.name)?;
+            if flow == StmtControl::Return {
+                break;
+            }
+        }
+
+        let ret = env
+            .get(&self.name)
+            .cloned()
+            .or_else(|| {
+                for (k, v) in &env {
+                    if k.eq_ignore_ascii_case(&self.name) {
+                        return Some(v.clone());
+                    }
+                }
+                None
+            })
+            .unwrap_or_else(|| self.return_type.default_value());
+
+        ret.coerce_to(self.return_type).map_err(|e| RuntimeError::ExecutionError {
+            pou: self.name.clone(),
+            message: format!("Function return value coercion error: {e}"),
+        })
+    }
+}
+
+static GLOBAL_USER_FUNCTIONS: std::sync::RwLock<Option<HashMap<String, UserFunction>>> =
+    std::sync::RwLock::new(None);
+
+pub fn register_user_function(func: UserFunction) {
+    if let Ok(mut lock) = GLOBAL_USER_FUNCTIONS.write() {
+        let map = lock.get_or_insert_with(HashMap::new);
+        map.insert(func.name.to_ascii_uppercase(), func);
+    }
+}
+
+pub fn get_user_function(name: &str) -> Option<UserFunction> {
+    if let Ok(lock) = GLOBAL_USER_FUNCTIONS.read()
+        && let Some(map) = lock.as_ref()
+    {
+        return map.get(&name.to_ascii_uppercase()).cloned();
+    }
+    None
+}
+
+pub fn clear_user_functions() {
+    if let Ok(mut lock) = GLOBAL_USER_FUNCTIONS.write()
+        && let Some(map) = lock.as_mut()
+    {
+        map.clear();
+    }
+}
+
+pub fn all_user_functions() -> Vec<UserFunction> {
+    if let Ok(lock) = GLOBAL_USER_FUNCTIONS.read()
+        && let Some(map) = lock.as_ref()
+    {
+        return map.values().cloned().collect();
+    }
+    Vec::new()
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct UserFunctionRegistry {
+    functions: HashMap<String, UserFunction>,
+}
+
+impl UserFunctionRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register(&mut self, func: UserFunction) {
+        self.functions.insert(func.name.to_ascii_uppercase(), func);
+    }
+
+    pub fn get(&self, name: &str) -> Option<&UserFunction> {
+        self.functions.get(&name.to_ascii_uppercase())
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.functions.contains_key(&name.to_ascii_uppercase())
+    }
+
+    pub fn clear(&mut self) {
+        self.functions.clear();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IrExpr {
     Literal(IecValue),
@@ -84,18 +469,19 @@ pub enum IrExpr {
         function_name: String,
         args: Vec<IrExpr>,
     },
+    NamedCall {
+        function_name: String,
+        args: Vec<(String, IrExpr)>,
+    },
 }
 
 impl IrExpr {
     /// Pure, read-only evaluation of an expression using an arbitrary symbol resolver closure.
-    pub fn evaluate_with_resolver<F>(
+    pub fn evaluate_with_resolver(
         &self,
-        resolver: &F,
+        resolver: &dyn Fn(&str) -> Result<IecValue, RuntimeError>,
         pou_name: &str,
-    ) -> Result<IecValue, RuntimeError>
-    where
-        F: Fn(&str) -> Result<IecValue, RuntimeError>,
-    {
+    ) -> Result<IecValue, RuntimeError> {
         match self {
             Self::Literal(v) => Ok(v.clone()),
             Self::Symbol(sym) => resolver(sym),
@@ -137,7 +523,31 @@ impl IrExpr {
                 for a in args {
                     evaluated_args.push(a.evaluate_with_resolver(resolver, pou_name)?);
                 }
-                eval_math_function(function_name, &evaluated_args, pou_name)
+                if lookup_standard_function(function_name).is_some() {
+                    eval_math_function(function_name, &evaluated_args, pou_name)
+                } else if let Some(user_fn) = get_user_function(function_name) {
+                    user_fn.call_with_resolver(&evaluated_args, resolver, pou_name)
+                } else {
+                    eval_math_function(function_name, &evaluated_args, pou_name)
+                }
+            }
+            Self::NamedCall {
+                function_name,
+                args,
+            } => {
+                let mut evaluated_named = Vec::with_capacity(args.len());
+                for (name, a) in args {
+                    let val = a.evaluate_with_resolver(resolver, pou_name)?;
+                    evaluated_named.push((name.clone(), val));
+                }
+                if let Some(user_fn) = get_user_function(function_name) {
+                    user_fn.call_named_with_resolver(&evaluated_named, resolver, pou_name)
+                } else {
+                    Err(RuntimeError::ExecutionError {
+                        pou: pou_name.to_string(),
+                        message: format!("Unknown user function '{function_name}' for named argument call"),
+                    })
+                }
             }
         }
     }
@@ -161,9 +571,8 @@ impl IrExpr {
                 if let Some(val) = env.get(sym) {
                     return Ok(val.clone());
                 }
-                let upper = sym.to_ascii_uppercase();
                 for (k, v) in env.iter() {
-                    if k.to_ascii_uppercase() == upper {
+                    if k.eq_ignore_ascii_case(sym) {
                         return Ok(v.clone());
                     }
                 }
@@ -174,53 +583,210 @@ impl IrExpr {
     }
 
     pub fn infer_type(&self, tags: &TagTable, pou_name: &str) -> Result<IecType, IrError> {
+        self.infer_type_with_locals(tags, &HashMap::new(), pou_name)
+    }
+
+    pub fn infer_type_with_locals(
+        &self,
+        tags: &TagTable,
+        locals: &HashMap<String, IecType>,
+        pou_name: &str,
+    ) -> Result<IecType, IrError> {
         match self {
             Self::Literal(v) => Ok(v.iec_type()),
-            Self::Symbol(sym) => tags.symbol_type(sym).map_err(|source| IrError::Core {
-                pou: pou_name.to_string(),
-                source,
-            }),
+            Self::Symbol(sym) => {
+                for (k, ty) in locals {
+                    if k.eq_ignore_ascii_case(sym) {
+                        return Ok(*ty);
+                    }
+                }
+                tags.symbol_type(sym).map_err(|source| IrError::Core {
+                    pou: pou_name.to_string(),
+                    source,
+                })
+            }
             Self::Call {
                 function_name,
                 args,
             } => {
-                let upper = function_name.to_ascii_uppercase();
-                match upper.as_str() {
-                    "ABS" | "MIN" | "MAX" => {
-                        if let Some(first) = args.first() {
-                            first.infer_type(tags, pou_name)
-                        } else {
+                if let Some(info) = lookup_standard_function(function_name) {
+                    if args.len() < info.min_arity {
+                        return Err(IrError::Validation {
+                            pou: pou_name.to_string(),
+                            message: format!(
+                                "Standard function '{}' expects at least {} arguments, found {}",
+                                info.name,
+                                info.min_arity,
+                                args.len()
+                            ),
+                        });
+                    }
+                    if let Some(max) = info.max_arity
+                        && args.len() > max
+                    {
+                        return Err(IrError::Validation {
+                            pou: pou_name.to_string(),
+                            message: format!(
+                                "Standard function '{}' expects at most {} arguments, found {}",
+                                info.name,
+                                max,
+                                args.len()
+                            ),
+                        });
+                    }
+                    if let Some((_src, dst)) = info.name.split_once("_TO_")
+                        && let Ok(target_ty) = dst.parse::<IecType>()
+                    {
+                        for a in args {
+                            let _ = a.infer_type_with_locals(tags, locals, pou_name)?;
+                        }
+                        return Ok(target_ty);
+                    }
+                    match info.name {
+                        "ABS" => {
+                            let ty = args[0].infer_type_with_locals(tags, locals, pou_name)?;
+                            if ty.is_numeric() {
+                                Ok(ty)
+                            } else {
+                                Err(IrError::TypeMismatch {
+                                    pou: pou_name.to_string(),
+                                    expected: IecType::Real,
+                                    actual: ty,
+                                    context: "ABS argument".to_string(),
+                                })
+                            }
+                        }
+                        "MIN" | "MAX" => {
+                            let first_ty = args[0].infer_type_with_locals(tags, locals, pou_name)?;
+                            for a in &args[1..] {
+                                let _ = a.infer_type_with_locals(tags, locals, pou_name)?;
+                            }
+                            Ok(first_ty)
+                        }
+                        "LIMIT" => {
+                            let _ = args[0].infer_type_with_locals(tags, locals, pou_name)?;
+                            let val_ty = args[1].infer_type_with_locals(tags, locals, pou_name)?;
+                            let _ = args[2].infer_type_with_locals(tags, locals, pou_name)?;
+                            Ok(val_ty)
+                        }
+                        "SEL" => {
+                            let _ = args[0].infer_type_with_locals(tags, locals, pou_name)?;
+                            let in0_ty = args[1].infer_type_with_locals(tags, locals, pou_name)?;
+                            let _ = args[2].infer_type_with_locals(tags, locals, pou_name)?;
+                            Ok(in0_ty)
+                        }
+                        "MUX" => {
+                            let _ = args[0].infer_type_with_locals(tags, locals, pou_name)?;
+                            let in0_ty = args[1].infer_type_with_locals(tags, locals, pou_name)?;
+                            for a in &args[2..] {
+                                let _ = a.infer_type_with_locals(tags, locals, pou_name)?;
+                            }
+                            Ok(in0_ty)
+                        }
+                        "SHL" | "SHR" | "ROL" | "ROR" => {
+                            let in_ty = args[0].infer_type_with_locals(tags, locals, pou_name)?;
+                            let _ = args[1].infer_type_with_locals(tags, locals, pou_name)?;
+                            Ok(in_ty)
+                        }
+                        "INT_TO_REAL" | "DINT_TO_REAL" | "BOOL_TO_REAL" | "TIME_TO_REAL"
+                        | "SQRT" | "SIN" | "COS" | "TAN" | "LN" | "EXP" | "EXPT"
+                        | "TRUNC" | "ROUND" | "CEIL" | "FLOOR" | "ASIN" | "ACOS" | "ATAN" | "LOG" => {
+                            for a in args {
+                                let _ = a.infer_type_with_locals(tags, locals, pou_name)?;
+                            }
                             Ok(IecType::Real)
                         }
-                    }
-                    "LIMIT" | "SEL" | "MUX" => {
-                        if args.len() >= 2 {
-                            args[1].infer_type(tags, pou_name)
-                        } else {
-                            Ok(IecType::Real)
+                        "REAL_TO_INT" | "DINT_TO_INT" | "BOOL_TO_INT" | "LEN" | "FIND" => {
+                            for a in args {
+                                let _ = a.infer_type_with_locals(tags, locals, pou_name)?;
+                            }
+                            Ok(IecType::Int)
                         }
-                    }
-                    "SHL" | "SHR" | "ROL" | "ROR" => {
-                        if let Some(first) = args.first() {
-                            first.infer_type(tags, pou_name)
-                        } else {
+                        "REAL_TO_DINT" | "INT_TO_DINT" | "BOOL_TO_DINT" | "TIME_TO_DINT" => {
+                            for a in args {
+                                let _ = a.infer_type_with_locals(tags, locals, pou_name)?;
+                            }
                             Ok(IecType::Dint)
                         }
+                        "INT_TO_BOOL" | "DINT_TO_BOOL" | "REAL_TO_BOOL" => {
+                            for a in args {
+                                let _ = a.infer_type_with_locals(tags, locals, pou_name)?;
+                            }
+                            Ok(IecType::Bool)
+                        }
+                        "CONCAT" | "LEFT" | "RIGHT" | "MID" | "INSERT" | "DELETE" | "REPLACE" => {
+                            for a in args {
+                                let _ = a.infer_type_with_locals(tags, locals, pou_name)?;
+                            }
+                            Ok(IecType::String)
+                        }
+                        _ => Ok(IecType::Real),
                     }
-                    "INT_TO_REAL" | "DINT_TO_REAL" | "BOOL_TO_REAL" | "TIME_TO_REAL" => {
-                        Ok(IecType::Real)
+                } else if let Some(user_fn) = get_user_function(function_name) {
+                    if args.len() != user_fn.inputs.len() {
+                        return Err(IrError::Validation {
+                            pou: pou_name.to_string(),
+                            message: format!(
+                                "Function '{}' expects {} arguments, found {}",
+                                user_fn.name,
+                                user_fn.inputs.len(),
+                                args.len()
+                            ),
+                        });
                     }
-                    "REAL_TO_INT" | "DINT_TO_INT" | "BOOL_TO_INT" | "LEN" => Ok(IecType::Int),
-                    "REAL_TO_DINT" | "INT_TO_DINT" | "BOOL_TO_DINT" | "TIME_TO_DINT" => {
-                        Ok(IecType::Dint)
+                    for (i, a) in args.iter().enumerate() {
+                        let aty = a.infer_type_with_locals(tags, locals, pou_name)?;
+                        let pty = user_fn.inputs[i].data_type;
+                        if !types_compatible(pty, aty) {
+                            return Err(IrError::TypeMismatch {
+                                pou: pou_name.to_string(),
+                                expected: pty,
+                                actual: aty,
+                                context: format!("Argument {} of function '{}'", i + 1, user_fn.name),
+                            });
+                        }
                     }
-                    "INT_TO_BOOL" | "DINT_TO_BOOL" | "REAL_TO_BOOL" => Ok(IecType::Bool),
-                    "CONCAT" | "LEFT" | "RIGHT" => Ok(IecType::String),
-                    _ => Ok(IecType::Real),
+                    Ok(user_fn.return_type)
+                } else {
+                    Err(IrError::Validation {
+                        pou: pou_name.to_string(),
+                        message: format!("Unknown standard function '{function_name}'"),
+                    })
                 }
             }
+            Self::NamedCall {
+                function_name,
+                args,
+            } => {
+                let user_fn = get_user_function(function_name).ok_or_else(|| {
+                    IrError::Validation {
+                        pou: pou_name.to_string(),
+                        message: format!("Unknown user function '{function_name}'"),
+                    }
+                })?;
+                for (name, a) in args {
+                    let aty = a.infer_type_with_locals(tags, locals, pou_name)?;
+                    let param = user_fn
+                        .inputs
+                        .iter()
+                        .find(|p| p.name.eq_ignore_ascii_case(name))
+                        .ok_or_else(|| IrError::Validation {
+                            pou: pou_name.to_string(),
+                            message: format!("Unknown parameter '{name}' in function '{}'", user_fn.name),
+                        })?;
+                    if !types_compatible(param.data_type, aty) {
+                        return Err(IrError::TypeMismatch {
+                            pou: pou_name.to_string(),
+                            expected: param.data_type,
+                            actual: aty,
+                            context: format!("Parameter '{name}' of function '{}'", user_fn.name),
+                        });
+                    }
+                }
+                Ok(user_fn.return_type)
+            }
             Self::Unary { op, expr } => {
-                let ty = expr.infer_type(tags, pou_name)?;
+                let ty = expr.infer_type_with_locals(tags, locals, pou_name)?;
                 match op {
                     IrUnaryOp::Not => {
                         if matches!(ty, IecType::Bool | IecType::Int | IecType::Dint) {
@@ -235,7 +801,7 @@ impl IrExpr {
                         }
                     }
                     IrUnaryOp::Neg => {
-                        if matches!(ty, IecType::Int | IecType::Dint | IecType::Real) {
+                        if ty.is_numeric() {
                             Ok(ty)
                         } else {
                             Err(IrError::TypeMismatch {
@@ -249,8 +815,8 @@ impl IrExpr {
                 }
             }
             Self::Binary { op, left, right } => {
-                let lt = left.infer_type(tags, pou_name)?;
-                let rt = right.infer_type(tags, pou_name)?;
+                let lt = left.infer_type_with_locals(tags, locals, pou_name)?;
+                let rt = right.infer_type_with_locals(tags, locals, pou_name)?;
                 match op {
                     IrBinaryOp::And | IrBinaryOp::Or | IrBinaryOp::Xor => {
                         if lt == IecType::Bool && rt == IecType::Bool {
@@ -276,7 +842,7 @@ impl IrExpr {
                     | IrBinaryOp::Le
                     | IrBinaryOp::Gt
                     | IrBinaryOp::Ge => {
-                        if lt == rt || (lt.is_numeric() && rt.is_numeric()) {
+                        if lt == rt || (lt.is_numeric() && rt.is_numeric()) || (lt.is_bit_string() && rt.is_bit_string()) {
                             Ok(IecType::Bool)
                         } else {
                             Err(IrError::TypeMismatch {
@@ -292,14 +858,24 @@ impl IrExpr {
                     | IrBinaryOp::Mul
                     | IrBinaryOp::Div
                     | IrBinaryOp::Mod => {
-                        if lt == IecType::Real || rt == IecType::Real {
+                        if lt == IecType::Lreal || rt == IecType::Lreal {
+                            Ok(IecType::Lreal)
+                        } else if lt == IecType::Real || rt == IecType::Real {
                             Ok(IecType::Real)
                         } else if lt == IecType::Time || rt == IecType::Time {
                             Ok(IecType::Time)
+                        } else if lt == IecType::Lint || rt == IecType::Lint {
+                            Ok(IecType::Lint)
                         } else if lt == IecType::Dint || rt == IecType::Dint {
                             Ok(IecType::Dint)
                         } else if lt == IecType::Int && rt == IecType::Int {
                             Ok(IecType::Int)
+                        } else if lt.is_numeric() && rt.is_numeric() {
+                            Ok(if lt == IecType::Dint || rt == IecType::Dint {
+                                IecType::Dint
+                            } else {
+                                IecType::Int
+                            })
                         } else {
                             Err(IrError::TypeMismatch {
                                 pou: pou_name.to_string(),
@@ -328,6 +904,11 @@ impl IrExpr {
                     a.referenced_symbols(out);
                 }
             }
+            Self::NamedCall { args, .. } => {
+                for (_, a) in args {
+                    a.referenced_symbols(out);
+                }
+            }
         }
     }
 }
@@ -337,8 +918,36 @@ fn eval_math_function(
     args: &[IecValue],
     pou_name: &str,
 ) -> Result<IecValue, RuntimeError> {
-    let name = func.to_ascii_uppercase();
-    match name.as_str() {
+    let info = lookup_standard_function(func).ok_or_else(|| RuntimeError::ExecutionError {
+        pou: pou_name.to_string(),
+        message: format!("Unknown standard function '{func}'"),
+    })?;
+    if args.len() < info.min_arity {
+        return Err(RuntimeError::ExecutionError {
+            pou: pou_name.to_string(),
+            message: format!(
+                "{} requires at least {} argument{}",
+                info.name,
+                info.min_arity,
+                if info.min_arity > 1 { "s" } else { "" }
+            ),
+        });
+    }
+    if let Some(max) = info.max_arity
+        && args.len() > max
+    {
+        return Err(RuntimeError::ExecutionError {
+            pou: pou_name.to_string(),
+            message: format!(
+                "{} requires at most {} argument{}",
+                info.name,
+                max,
+                if max > 1 { "s" } else { "" }
+            ),
+        });
+    }
+    let name = info.name;
+    match name {
         "ABS" => {
             let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
                 pou: pou_name.to_string(),
@@ -553,14 +1162,18 @@ fn eval_math_function(
             Ok(if g { args[2].clone() } else { args[1].clone() })
         }
         "MUX" => {
-            if args.len() < 2 {
+            let k_raw = args[0].as_dint()?;
+            let num_inputs = args.len() - 1;
+            if k_raw < 0 || (k_raw as usize) >= num_inputs {
                 return Err(RuntimeError::ExecutionError {
                     pou: pou_name.to_string(),
-                    message: "MUX requires at least 2 arguments (K, IN0, ...)".to_string(),
+                    message: format!(
+                        "MUX selector K={k_raw} out of range [0, {}]",
+                        num_inputs - 1
+                    ),
                 });
             }
-            let k = args[0].as_dint()?.max(0) as usize;
-            let idx = (1 + k).min(args.len() - 1);
+            let idx = 1 + (k_raw as usize);
             Ok(args[idx].clone())
         }
         "SHL" | "SHR" | "ROL" | "ROR" => {
@@ -575,7 +1188,7 @@ fn eval_math_function(
                 IecValue::Int(v) => {
                     let u = *v as u16;
                     let n16 = n & 15;
-                    let res = match name.as_str() {
+                    let res = match name {
                         "SHL" => u.wrapping_shl(n16),
                         "SHR" => u.wrapping_shr(n16),
                         "ROL" => u.rotate_left(n16),
@@ -585,7 +1198,7 @@ fn eval_math_function(
                 }
                 other => {
                     let u = other.as_dint()? as u32;
-                    let res = match name.as_str() {
+                    let res = match name {
                         "SHL" => u.wrapping_shl(n),
                         "SHR" => u.wrapping_shr(n),
                         "ROL" => u.rotate_left(n),
@@ -721,10 +1334,109 @@ fn eval_math_function(
             let res: String = chars[start..].iter().collect();
             Ok(IecValue::String(res))
         }
-        other => Err(RuntimeError::ExecutionError {
-            pou: pou_name.to_string(),
-            message: format!("Unknown standard function '{other}'"),
-        }),
+        "MID" => {
+            let s = match &args[0] {
+                IecValue::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let l = args[1].as_dint()?.max(0) as usize;
+            let p = args[2].as_dint()?;
+            let start = if p <= 0 { 0 } else { (p as usize).saturating_sub(1) };
+            let chars: Vec<char> = s.chars().collect();
+            let res: String = if start < chars.len() {
+                chars[start..].iter().take(l).collect()
+            } else {
+                String::new()
+            };
+            Ok(IecValue::String(res))
+        }
+        "INSERT" => {
+            let s1 = match &args[0] {
+                IecValue::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let s2 = match &args[1] {
+                IecValue::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let p = args[2].as_dint()?.max(0) as usize;
+            let chars: Vec<char> = s1.chars().collect();
+            let split_pos = p.min(chars.len());
+            let prefix: String = chars[..split_pos].iter().collect();
+            let suffix: String = chars[split_pos..].iter().collect();
+            Ok(IecValue::String(format!("{prefix}{s2}{suffix}")))
+        }
+        "DELETE" => {
+            let s = match &args[0] {
+                IecValue::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let l = args[1].as_dint()?.max(0) as usize;
+            let p = args[2].as_dint()?;
+            let start = if p <= 0 { 0 } else { (p as usize).saturating_sub(1) };
+            let chars: Vec<char> = s.chars().collect();
+            if start >= chars.len() {
+                return Ok(IecValue::String(s));
+            }
+            let end = (start + l).min(chars.len());
+            let prefix: String = chars[..start].iter().collect();
+            let suffix: String = chars[end..].iter().collect();
+            Ok(IecValue::String(format!("{prefix}{suffix}")))
+        }
+        "REPLACE" => {
+            let s1 = match &args[0] {
+                IecValue::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let s2 = match &args[1] {
+                IecValue::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let l = args[2].as_dint()?.max(0) as usize;
+            let p = args[3].as_dint()?;
+            let start = if p <= 0 { 0 } else { (p as usize).saturating_sub(1) };
+            let chars: Vec<char> = s1.chars().collect();
+            if start >= chars.len() {
+                return Ok(IecValue::String(format!("{s1}{s2}")));
+            }
+            let end = (start + l).min(chars.len());
+            let prefix: String = chars[..start].iter().collect();
+            let suffix: String = chars[end..].iter().collect();
+            Ok(IecValue::String(format!("{prefix}{s2}{suffix}")))
+        }
+        "FIND" => {
+            let s1 = match &args[0] {
+                IecValue::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let s2 = match &args[1] {
+                IecValue::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let pos = if let Some(byte_idx) = s1.find(&s2) {
+                let char_count = s1[..byte_idx].chars().count();
+                (char_count as i16) + 1
+            } else {
+                0
+            };
+            Ok(IecValue::Int(pos))
+        }
+        other => {
+            if let Some((_src, dst_str)) = other.split_once("_TO_")
+                && let Ok(target_type) = dst_str.parse::<IecType>()
+            {
+                let v = args.first().ok_or_else(|| RuntimeError::ExecutionError {
+                    pou: pou_name.to_string(),
+                    message: format!("{other} requires 1 argument"),
+                })?;
+                let coerced = v.coerce_to(target_type).map_err(RuntimeError::Core)?;
+                return Ok(coerced);
+            }
+            Err(RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: format!("Unknown standard function '{other}'"),
+            })
+        }
     }
 }
 
@@ -944,8 +1656,17 @@ impl IrStmt {
         pou_name: &str,
     ) -> Result<StmtControl, RuntimeError> {
         let mut env = HashMap::new();
+        Self::execute_block_with_env(stmts, ctx, &mut env, pou_name)
+    }
+
+    pub fn execute_block_with_env(
+        stmts: &[Self],
+        ctx: &mut ScanContext<'_>,
+        env: &mut HashMap<String, IecValue>,
+        pou_name: &str,
+    ) -> Result<StmtControl, RuntimeError> {
         for stmt in stmts {
-            let flow = stmt.execute_with_env(ctx, &mut env, pou_name)?;
+            let flow = stmt.execute_with_env(ctx, env, pou_name)?;
             if flow != StmtControl::None {
                 return Ok(flow);
             }
@@ -962,10 +1683,9 @@ impl IrStmt {
         match self {
             Self::Assign { target, expr } => {
                 let val = expr.evaluate_with_env(ctx, env, pou_name)?;
-                let upper = target.to_ascii_uppercase();
                 let mut matched_key = None;
                 for k in env.keys() {
-                    if k.to_ascii_uppercase() == upper {
+                    if k.eq_ignore_ascii_case(target) {
                         matched_key = Some(k.clone());
                         break;
                     }
@@ -1046,18 +1766,19 @@ impl IrStmt {
                     None => 1,
                 };
                 if step_val == 0 {
-                    return Err(RuntimeError::IterationLimitExceeded {
+                    return Err(RuntimeError::ExecutionError {
                         pou: pou_name.to_string(),
-                        max_iterations: MAX_LOOP_ITERATIONS,
+                        message: "FOR loop step cannot be zero".to_string(),
                     });
                 }
                 let mut cur = start_val;
                 let mut iters = 0usize;
+                let max_iters = max_loop_iterations();
                 while (step_val > 0 && cur <= end_val) || (step_val < 0 && cur >= end_val) {
-                    if iters >= MAX_LOOP_ITERATIONS {
+                    if iters >= max_iters {
                         return Err(RuntimeError::IterationLimitExceeded {
                             pou: pou_name.to_string(),
-                            max_iterations: MAX_LOOP_ITERATIONS,
+                            max_iterations: max_iters,
                         });
                     }
                     env.insert(var.clone(), IecValue::Dint(cur));
@@ -1083,11 +1804,12 @@ impl IrStmt {
             }
             Self::While { cond, body } => {
                 let mut iters = 0usize;
+                let max_iters = max_loop_iterations();
                 while cond.evaluate_with_env(ctx, env, pou_name)?.as_bool()? {
-                    if iters >= MAX_LOOP_ITERATIONS {
+                    if iters >= max_iters {
                         return Err(RuntimeError::IterationLimitExceeded {
                             pou: pou_name.to_string(),
-                            max_iterations: MAX_LOOP_ITERATIONS,
+                            max_iterations: max_iters,
                         });
                     }
                     let mut broke = false;
@@ -1111,11 +1833,12 @@ impl IrStmt {
             }
             Self::Repeat { body, until_cond } => {
                 let mut iters = 0usize;
+                let max_iters = max_loop_iterations();
                 loop {
-                    if iters >= MAX_LOOP_ITERATIONS {
+                    if iters >= max_iters {
                         return Err(RuntimeError::IterationLimitExceeded {
                             pou: pou_name.to_string(),
-                            max_iterations: MAX_LOOP_ITERATIONS,
+                            max_iterations: max_iters,
                         });
                     }
                     let mut broke = false;
@@ -1157,10 +1880,9 @@ impl IrStmt {
                 for (pin, target_sym) in outputs {
                     let sym = format!("{instance}.{pin}");
                     let out_val = ctx.read_symbol(&sym)?;
-                    let upper = target_sym.to_ascii_uppercase();
                     let mut matched_key = None;
                     for k in env.keys() {
-                        if k.to_ascii_uppercase() == upper {
+                        if k.eq_ignore_ascii_case(target_sym) {
                             matched_key = Some(k.clone());
                             break;
                         }
@@ -1176,12 +1898,306 @@ impl IrStmt {
         }
     }
 
-    pub fn validate(&self, tags: &TagTable, pou_name: &str, in_sfc: bool) -> Result<(), IrError> {
+    pub fn execute_with_resolver_and_env(
+        &self,
+        resolver: &dyn Fn(&str) -> Result<IecValue, RuntimeError>,
+        env: &mut HashMap<String, IecValue>,
+        pou_name: &str,
+    ) -> Result<StmtControl, RuntimeError> {
         match self {
             Self::Assign { target, expr } => {
-                let target_ty =
-                    SymbolResolver::validate_writable_symbol(tags, target, pou_name, in_sfc)?;
-                let expr_ty = expr.infer_type(tags, pou_name)?;
+                let val = expr.evaluate_with_resolver(
+                    &|sym| {
+                        if let Some(v) = env.get(sym) {
+                            return Ok(v.clone());
+                        }
+                        for (k, v) in env.iter() {
+                            if k.eq_ignore_ascii_case(sym) {
+                                return Ok(v.clone());
+                            }
+                        }
+                        resolver(sym)
+                    },
+                    pou_name,
+                )?;
+                let mut matched_key = None;
+                for k in env.keys() {
+                    if k.eq_ignore_ascii_case(target) {
+                        matched_key = Some(k.clone());
+                        break;
+                    }
+                }
+                if let Some(k) = matched_key {
+                    env.insert(k, val);
+                } else {
+                    env.insert(target.clone(), val);
+                }
+                Ok(StmtControl::None)
+            }
+            Self::If {
+                branches,
+                else_body,
+            } => {
+                for (cond, body) in branches {
+                    let cond_val = cond.evaluate_with_resolver(
+                        &|sym| {
+                            if let Some(v) = env.get(sym) {
+                                return Ok(v.clone());
+                            }
+                            for (k, v) in env.iter() {
+                                if k.eq_ignore_ascii_case(sym) {
+                                    return Ok(v.clone());
+                                }
+                            }
+                            resolver(sym)
+                        },
+                        pou_name,
+                    )?;
+                    if cond_val.as_bool()? {
+                        for stmt in body {
+                            let flow = stmt.execute_with_resolver_and_env(resolver, env, pou_name)?;
+                            if flow != StmtControl::None {
+                                return Ok(flow);
+                            }
+                        }
+                        return Ok(StmtControl::None);
+                    }
+                }
+                for stmt in else_body {
+                    let flow = stmt.execute_with_resolver_and_env(resolver, env, pou_name)?;
+                    if flow != StmtControl::None {
+                        return Ok(flow);
+                    }
+                }
+                Ok(StmtControl::None)
+            }
+            Self::Case {
+                selector,
+                arms,
+                else_body,
+            } => {
+                let sel_val = selector.evaluate_with_resolver(
+                    &|sym| {
+                        if let Some(v) = env.get(sym) {
+                            return Ok(v.clone());
+                        }
+                        for (k, v) in env.iter() {
+                            if k.eq_ignore_ascii_case(sym) {
+                                return Ok(v.clone());
+                            }
+                        }
+                        resolver(sym)
+                    },
+                    pou_name,
+                )?.as_dint()?;
+                for (labels, body) in arms {
+                    if labels.contains(&sel_val) {
+                        for stmt in body {
+                            let flow = stmt.execute_with_resolver_and_env(resolver, env, pou_name)?;
+                            if flow != StmtControl::None {
+                                return Ok(flow);
+                            }
+                        }
+                        return Ok(StmtControl::None);
+                    }
+                }
+                for stmt in else_body {
+                    let flow = stmt.execute_with_resolver_and_env(resolver, env, pou_name)?;
+                    if flow != StmtControl::None {
+                        return Ok(flow);
+                    }
+                }
+                Ok(StmtControl::None)
+            }
+            Self::For {
+                var,
+                start,
+                end,
+                step,
+                body,
+            } => {
+                let eval_env = |e: &IrExpr| e.evaluate_with_resolver(
+                    &|sym| {
+                        if let Some(v) = env.get(sym) {
+                            return Ok(v.clone());
+                        }
+                        for (k, v) in env.iter() {
+                            if k.eq_ignore_ascii_case(sym) {
+                                return Ok(v.clone());
+                            }
+                        }
+                        resolver(sym)
+                    },
+                    pou_name,
+                );
+                let start_val = eval_env(start)?.as_dint()?;
+                let end_val = eval_env(end)?.as_dint()?;
+                let step_val = match step {
+                    Some(s) => eval_env(s)?.as_dint()?,
+                    None => 1,
+                };
+                if step_val == 0 {
+                    return Err(RuntimeError::ExecutionError {
+                        pou: pou_name.to_string(),
+                        message: "FOR loop step cannot be zero".to_string(),
+                    });
+                }
+                let mut cur = start_val;
+                let mut iters = 0usize;
+                let max_iters = max_loop_iterations();
+                while (step_val > 0 && cur <= end_val) || (step_val < 0 && cur >= end_val) {
+                    if iters >= max_iters {
+                        return Err(RuntimeError::IterationLimitExceeded {
+                            pou: pou_name.to_string(),
+                            max_iterations: max_iters,
+                        });
+                    }
+                    env.insert(var.clone(), IecValue::Dint(cur));
+                    let mut broke = false;
+                    for stmt in body {
+                        match stmt.execute_with_resolver_and_env(resolver, env, pou_name)? {
+                            StmtControl::None => {}
+                            StmtControl::Break => {
+                                broke = true;
+                                break;
+                            }
+                            StmtControl::Continue => break,
+                            StmtControl::Return => return Ok(StmtControl::Return),
+                        }
+                    }
+                    if broke {
+                        break;
+                    }
+                    cur = cur.wrapping_add(step_val);
+                    iters += 1;
+                }
+                Ok(StmtControl::None)
+            }
+            Self::While { cond, body } => {
+                let mut iters = 0usize;
+                let max_iters = max_loop_iterations();
+                while cond.evaluate_with_resolver(
+                    &|sym| {
+                        if let Some(v) = env.get(sym) {
+                            return Ok(v.clone());
+                        }
+                        for (k, v) in env.iter() {
+                            if k.eq_ignore_ascii_case(sym) {
+                                return Ok(v.clone());
+                            }
+                        }
+                        resolver(sym)
+                    },
+                    pou_name,
+                )?.as_bool()? {
+                    if iters >= max_iters {
+                        return Err(RuntimeError::IterationLimitExceeded {
+                            pou: pou_name.to_string(),
+                            max_iterations: max_iters,
+                        });
+                    }
+                    let mut broke = false;
+                    for stmt in body {
+                        match stmt.execute_with_resolver_and_env(resolver, env, pou_name)? {
+                            StmtControl::None => {}
+                            StmtControl::Break => {
+                                broke = true;
+                                break;
+                            }
+                            StmtControl::Continue => break,
+                            StmtControl::Return => return Ok(StmtControl::Return),
+                        }
+                    }
+                    if broke {
+                        break;
+                    }
+                    iters += 1;
+                }
+                Ok(StmtControl::None)
+            }
+            Self::Repeat { body, until_cond } => {
+                let mut iters = 0usize;
+                let max_iters = max_loop_iterations();
+                loop {
+                    if iters >= max_iters {
+                        return Err(RuntimeError::IterationLimitExceeded {
+                            pou: pou_name.to_string(),
+                            max_iterations: max_iters,
+                        });
+                    }
+                    let mut broke = false;
+                    for stmt in body {
+                        match stmt.execute_with_resolver_and_env(resolver, env, pou_name)? {
+                            StmtControl::None => {}
+                            StmtControl::Break => {
+                                broke = true;
+                                break;
+                            }
+                            StmtControl::Continue => break,
+                            StmtControl::Return => return Ok(StmtControl::Return),
+                        }
+                    }
+                    if broke {
+                        break;
+                    }
+                    iters += 1;
+                    if until_cond.evaluate_with_resolver(
+                        &|sym| {
+                            if let Some(v) = env.get(sym) {
+                                return Ok(v.clone());
+                            }
+                            for (k, v) in env.iter() {
+                                if k.eq_ignore_ascii_case(sym) {
+                                    return Ok(v.clone());
+                                }
+                            }
+                            resolver(sym)
+                        },
+                        pou_name,
+                    )?.as_bool()? {
+                        break;
+                    }
+                }
+                Ok(StmtControl::None)
+            }
+            Self::Exit => Ok(StmtControl::Break),
+            Self::Continue => Ok(StmtControl::Continue),
+            Self::Return => Ok(StmtControl::Return),
+            Self::FbCall { .. } => Err(RuntimeError::ExecutionError {
+                pou: pou_name.to_string(),
+                message: "FB calls inside pure functions without ScanContext are not supported".to_string(),
+            }),
+        }
+    }
+
+    pub fn validate(&self, tags: &TagTable, pou_name: &str, in_sfc: bool) -> Result<(), IrError> {
+        self.validate_with_locals(tags, &HashMap::new(), pou_name, in_sfc)
+    }
+
+    pub fn validate_with_locals(
+        &self,
+        tags: &TagTable,
+        locals: &HashMap<String, IecType>,
+        pou_name: &str,
+        in_sfc: bool,
+    ) -> Result<(), IrError> {
+        match self {
+            Self::Assign { target, expr } => {
+                let target_ty = {
+                    let mut local_ty = None;
+                    for (k, ty) in locals {
+                        if k.eq_ignore_ascii_case(target) {
+                            local_ty = Some(*ty);
+                            break;
+                        }
+                    }
+                    if let Some(ty) = local_ty {
+                        ty
+                    } else {
+                        SymbolResolver::validate_writable_symbol(tags, target, pou_name, in_sfc)?
+                    }
+                };
+                let expr_ty = expr.infer_type_with_locals(tags, locals, pou_name)?;
                 if !types_compatible(target_ty, expr_ty) {
                     return Err(IrError::TypeMismatch {
                         pou: pou_name.to_string(),
@@ -1197,7 +2213,7 @@ impl IrStmt {
                 else_body,
             } => {
                 for (cond, body) in branches {
-                    let cty = cond.infer_type(tags, pou_name)?;
+                    let cty = cond.infer_type_with_locals(tags, locals, pou_name)?;
                     if cty != IecType::Bool {
                         return Err(IrError::TypeMismatch {
                             pou: pou_name.to_string(),
@@ -1207,11 +2223,11 @@ impl IrStmt {
                         });
                     }
                     for s in body {
-                        s.validate(tags, pou_name, in_sfc)?;
+                        s.validate_with_locals(tags, locals, pou_name, in_sfc)?;
                     }
                 }
                 for s in else_body {
-                    s.validate(tags, pou_name, in_sfc)?;
+                    s.validate_with_locals(tags, locals, pou_name, in_sfc)?;
                 }
                 Ok(())
             }
@@ -1220,7 +2236,7 @@ impl IrStmt {
                 arms,
                 else_body,
             } => {
-                let sty = selector.infer_type(tags, pou_name)?;
+                let sty = selector.infer_type_with_locals(tags, locals, pou_name)?;
                 if !matches!(sty, IecType::Int | IecType::Dint) {
                     return Err(IrError::TypeMismatch {
                         pou: pou_name.to_string(),
@@ -1229,13 +2245,22 @@ impl IrStmt {
                         context: "CASE selector".to_string(),
                     });
                 }
-                for (_, body) in arms {
+                let mut seen_labels = HashSet::new();
+                for (labels, body) in arms {
+                    for label in labels {
+                        if !seen_labels.insert(*label) {
+                            return Err(IrError::Validation {
+                                pou: pou_name.to_string(),
+                                message: format!("Duplicate CASE label '{label}'"),
+                            });
+                        }
+                    }
                     for s in body {
-                        s.validate(tags, pou_name, in_sfc)?;
+                        s.validate_with_locals(tags, locals, pou_name, in_sfc)?;
                     }
                 }
                 for s in else_body {
-                    s.validate(tags, pou_name, in_sfc)?;
+                    s.validate_with_locals(tags, locals, pou_name, in_sfc)?;
                 }
                 Ok(())
             }
@@ -1246,7 +2271,20 @@ impl IrStmt {
                 step,
                 body,
             } => {
-                let vty = SymbolResolver::validate_writable_symbol(tags, var, pou_name, in_sfc)?;
+                let vty = {
+                    let mut local_ty = None;
+                    for (k, ty) in locals {
+                        if k.eq_ignore_ascii_case(var) {
+                            local_ty = Some(*ty);
+                            break;
+                        }
+                    }
+                    if let Some(ty) = local_ty {
+                        ty
+                    } else {
+                        SymbolResolver::validate_writable_symbol(tags, var, pou_name, in_sfc)?
+                    }
+                };
                 if !matches!(vty, IecType::Int | IecType::Dint) {
                     return Err(IrError::TypeMismatch {
                         pou: pou_name.to_string(),
@@ -1255,18 +2293,18 @@ impl IrStmt {
                         context: "FOR loop variable".to_string(),
                     });
                 }
-                let _ = start.infer_type(tags, pou_name)?;
-                let _ = end.infer_type(tags, pou_name)?;
+                let _ = start.infer_type_with_locals(tags, locals, pou_name)?;
+                let _ = end.infer_type_with_locals(tags, locals, pou_name)?;
                 if let Some(s) = step {
-                    let _ = s.infer_type(tags, pou_name)?;
+                    let _ = s.infer_type_with_locals(tags, locals, pou_name)?;
                 }
                 for s in body {
-                    s.validate(tags, pou_name, in_sfc)?;
+                    s.validate_with_locals(tags, locals, pou_name, in_sfc)?;
                 }
                 Ok(())
             }
             Self::While { cond, body } => {
-                let cty = cond.infer_type(tags, pou_name)?;
+                let cty = cond.infer_type_with_locals(tags, locals, pou_name)?;
                 if cty != IecType::Bool {
                     return Err(IrError::TypeMismatch {
                         pou: pou_name.to_string(),
@@ -1276,15 +2314,15 @@ impl IrStmt {
                     });
                 }
                 for s in body {
-                    s.validate(tags, pou_name, in_sfc)?;
+                    s.validate_with_locals(tags, locals, pou_name, in_sfc)?;
                 }
                 Ok(())
             }
             Self::Repeat { body, until_cond } => {
                 for s in body {
-                    s.validate(tags, pou_name, in_sfc)?;
+                    s.validate_with_locals(tags, locals, pou_name, in_sfc)?;
                 }
-                let cty = until_cond.infer_type(tags, pou_name)?;
+                let cty = until_cond.infer_type_with_locals(tags, locals, pou_name)?;
                 if cty != IecType::Bool {
                     return Err(IrError::TypeMismatch {
                         pou: pou_name.to_string(),
@@ -1314,7 +2352,7 @@ impl IrStmt {
                             pin: pin.clone(),
                         },
                     })?;
-                    let ety = expr.infer_type(tags, pou_name)?;
+                    let ety = expr.infer_type_with_locals(tags, locals, pou_name)?;
                     if !types_compatible(pty, ety) {
                         return Err(IrError::TypeMismatch {
                             pou: pou_name.to_string(),
@@ -1332,9 +2370,22 @@ impl IrStmt {
                             pin: pin.clone(),
                         },
                     })?;
-                    let tty = SymbolResolver::validate_writable_symbol(
-                        tags, target_sym, pou_name, in_sfc,
-                    )?;
+                    let tty = {
+                        let mut local_ty = None;
+                        for (k, ty) in locals {
+                            if k.eq_ignore_ascii_case(target_sym) {
+                                local_ty = Some(*ty);
+                                break;
+                            }
+                        }
+                        if let Some(ty) = local_ty {
+                            ty
+                        } else {
+                            SymbolResolver::validate_writable_symbol(
+                                tags, target_sym, pou_name, in_sfc,
+                            )?
+                        }
+                    };
                     if !types_compatible(tty, pty) {
                         return Err(IrError::TypeMismatch {
                             pou: pou_name.to_string(),
@@ -1354,18 +2405,23 @@ pub fn types_compatible(expected: IecType, actual: IecType) -> bool {
     if expected == actual {
         return true;
     }
-    matches!(
-        (expected, actual),
-        (IecType::Int, IecType::Dint)
-            | (IecType::Dint, IecType::Int)
-            | (IecType::Real, IecType::Int)
-            | (IecType::Real, IecType::Dint)
-            | (IecType::Int, IecType::Real)
-            | (IecType::Dint, IecType::Real)
-            | (IecType::Time, IecType::Int)
-            | (IecType::Time, IecType::Dint)
-            | (IecType::Time, IecType::Real)
-    )
+    if expected.is_numeric() && actual.is_numeric() {
+        return true;
+    }
+    if expected.is_bit_string() && actual.is_bit_string() {
+        return true;
+    }
+    if (expected.is_bit_string() && actual.is_numeric())
+        || (expected.is_numeric() && actual.is_bit_string())
+    {
+        return true;
+    }
+    if (expected == IecType::Time && (actual.is_numeric() || actual == IecType::Time))
+        || (actual == IecType::Time && expected.is_numeric())
+    {
+        return true;
+    }
+    false
 }
 
 /// Cross-language symbol resolver and validator.
@@ -1409,6 +2465,7 @@ impl SymbolResolver {
                 ferrite_core::AccessWidth::Bit => IecType::Bool,
                 ferrite_core::AccessWidth::Byte | ferrite_core::AccessWidth::Word => IecType::Int,
                 ferrite_core::AccessWidth::DWord => IecType::Dint,
+                ferrite_core::AccessWidth::LWord => IecType::Lword,
             });
         }
         if let Some((inst, pin)) = trimmed.split_once('.')
@@ -1503,12 +2560,13 @@ impl PouGraph {
 
         if ordered.len() != self.nodes.len() {
             let visited: HashSet<&String> = ordered.iter().collect();
-            let cycle: Vec<String> = self
+            let unsorted: Vec<String> = self
                 .nodes
                 .iter()
                 .filter(|n| !visited.contains(n))
                 .cloned()
                 .collect();
+            let cycle = self.extract_cycle_nodes(&unsorted);
             return Err(IrError::CombinationalLoop {
                 scope: scope.to_string(),
                 cycle,
@@ -1516,6 +2574,115 @@ impl PouGraph {
         }
 
         Ok(ordered)
+    }
+
+    fn extract_cycle_nodes(&self, unsorted: &[String]) -> Vec<String> {
+        let unsorted_set: HashSet<&str> = unsorted.iter().map(|s| s.as_str()).collect();
+        let mut index = 0usize;
+        let mut indices: HashMap<&str, usize> = HashMap::new();
+        let mut lowlink: HashMap<&str, usize> = HashMap::new();
+        let mut on_stack: HashSet<&str> = HashSet::new();
+        let mut stack: Vec<&str> = Vec::new();
+        let mut cycle_nodes = Vec::new();
+
+        #[allow(clippy::too_many_arguments)]
+        fn scc<'a>(
+            u: &'a str,
+            edges: &'a HashMap<String, Vec<String>>,
+            unsorted_set: &HashSet<&'a str>,
+            index: &mut usize,
+            indices: &mut HashMap<&'a str, usize>,
+            lowlink: &mut HashMap<&'a str, usize>,
+            on_stack: &mut HashSet<&'a str>,
+            stack: &mut Vec<&'a str>,
+            cycle_nodes: &mut Vec<String>,
+        ) {
+            indices.insert(u, *index);
+            lowlink.insert(u, *index);
+            *index += 1;
+            stack.push(u);
+            on_stack.insert(u);
+
+            if let Some(neighbors) = edges.get(u) {
+                for neighbor in neighbors {
+                    let v = neighbor.as_str();
+                    if !unsorted_set.contains(v) {
+                        continue;
+                    }
+                    if !indices.contains_key(v) {
+                        scc(
+                            v,
+                            edges,
+                            unsorted_set,
+                            index,
+                            indices,
+                            lowlink,
+                            on_stack,
+                            stack,
+                            cycle_nodes,
+                        );
+                        let v_low = lowlink.get(v).copied().unwrap_or(0);
+                        if let Some(u_low) = lowlink.get_mut(u) {
+                            *u_low = (*u_low).min(v_low);
+                        }
+                    } else if on_stack.contains(v) {
+                        let v_idx = indices.get(v).copied().unwrap_or(0);
+                        if let Some(u_low) = lowlink.get_mut(u) {
+                            *u_low = (*u_low).min(v_idx);
+                        }
+                    }
+                }
+            }
+
+            let u_low = lowlink.get(u).copied().unwrap_or(0);
+            let u_idx = indices.get(u).copied().unwrap_or(0);
+            if u_low == u_idx {
+                let mut component = Vec::new();
+                while let Some(w) = stack.pop() {
+                    on_stack.remove(w);
+                    component.push(w.to_string());
+                    if w == u {
+                        break;
+                    }
+                }
+                let is_cycle = if component.len() > 1 {
+                    true
+                } else if component.len() == 1 {
+                    let node = &component[0];
+                    edges
+                        .get(node)
+                        .is_some_and(|targets| targets.iter().any(|t| t == node))
+                } else {
+                    false
+                };
+                if is_cycle && cycle_nodes.is_empty() {
+                    component.sort();
+                    *cycle_nodes = component;
+                }
+            }
+        }
+
+        for n in unsorted {
+            if !indices.contains_key(n.as_str()) {
+                scc(
+                    n.as_str(),
+                    &self.edges,
+                    &unsorted_set,
+                    &mut index,
+                    &mut indices,
+                    &mut lowlink,
+                    &mut on_stack,
+                    &mut stack,
+                    &mut cycle_nodes,
+                );
+            }
+        }
+
+        if cycle_nodes.is_empty() {
+            unsorted.to_vec()
+        } else {
+            cycle_nodes
+        }
     }
 
     pub fn pou_ids_in_order(&self, scope: &str) -> Result<Vec<PouId>, IrError> {
@@ -1543,6 +2710,314 @@ mod tests {
         };
         let res = expr.evaluate_with_resolver(&lookup, "main")?;
         assert_eq!(res, IecValue::Bool(true));
+        Ok(())
+    }
+
+    #[test]
+    fn test_i7_unknown_function_and_bad_arity_validation() {
+        let tags = TagTable::new();
+        // Unknown function
+        let unknown = IrExpr::Call {
+            function_name: "SQRTT".to_string(),
+            args: vec![IrExpr::Literal(IecValue::Real(4.0))],
+        };
+        assert!(matches!(
+            unknown.infer_type(&tags, "main"),
+            Err(IrError::Validation { message, .. }) if message.contains("Unknown standard function 'SQRTT'")
+        ));
+
+        // Bad arity: ABS with 0 arguments
+        let abs_zero = IrExpr::Call {
+            function_name: "ABS".to_string(),
+            args: vec![],
+        };
+        assert!(matches!(
+            abs_zero.infer_type(&tags, "main"),
+            Err(IrError::Validation { message, .. }) if message.contains("expects at least 1 arguments")
+        ));
+    }
+
+    #[test]
+    fn test_mux_out_of_range_k() {
+        let k_neg = IrExpr::Call {
+            function_name: "MUX".to_string(),
+            args: vec![
+                IrExpr::Literal(IecValue::Dint(-1)),
+                IrExpr::Literal(IecValue::Int(10)),
+                IrExpr::Literal(IecValue::Int(20)),
+            ],
+        };
+        let empty_lookup = |sym: &str| Err(CoreError::UnknownSymbol(sym.to_string()).into());
+        let res = k_neg.evaluate_with_resolver(&empty_lookup, "main");
+        assert!(matches!(res, Err(RuntimeError::ExecutionError { message, .. }) if message.contains("out of range")));
+
+        let k_high = IrExpr::Call {
+            function_name: "MUX".to_string(),
+            args: vec![
+                IrExpr::Literal(IecValue::Dint(5)),
+                IrExpr::Literal(IecValue::Int(10)),
+                IrExpr::Literal(IecValue::Int(20)),
+            ],
+        };
+        let res2 = k_high.evaluate_with_resolver(&empty_lookup, "main");
+        assert!(matches!(res2, Err(RuntimeError::ExecutionError { message, .. }) if message.contains("out of range")));
+    }
+
+    #[test]
+    fn test_case_duplicate_label_detection() {
+        let tags = TagTable::new();
+        let case_dup = IrStmt::Case {
+            selector: IrExpr::Literal(IecValue::Int(1)),
+            arms: vec![
+                (vec![1, 2], vec![]),
+                (vec![2, 3], vec![]),
+            ],
+            else_body: vec![],
+        };
+        let res = case_dup.validate(&tags, "main", false);
+        assert!(matches!(
+            res,
+            Err(IrError::Validation { message, .. }) if message.contains("Duplicate CASE label '2'")
+        ));
+    }
+
+    #[test]
+    fn test_pou_graph_cycle_reporting_only_real_cycle_members() {
+        let mut graph = PouGraph::new();
+        // A -> B -> A, and B -> C
+        graph.add_edge("A", "B");
+        graph.add_edge("B", "A");
+        graph.add_edge("B", "C");
+
+        let Err(err) = graph.topological_sort("test_scope") else {
+            panic!("topological_sort should fail on a cyclic graph");
+        };
+        match err {
+            IrError::CombinationalLoop { cycle, .. } => {
+                assert!(cycle.contains(&"A".to_string()));
+                assert!(cycle.contains(&"B".to_string()));
+                assert!(!cycle.contains(&"C".to_string()), "Downstream node C must not be in cycle report: {cycle:?}");
+            }
+            other => panic!("Expected CombinationalLoop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_extended_string_functions() -> Result<(), Box<dyn std::error::Error>> {
+        let empty_lookup = |sym: &str| Err(CoreError::UnknownSymbol(sym.to_string()).into());
+
+        // MID(IN, L, P)
+        let mid_expr = IrExpr::Call {
+            function_name: "MID".to_string(),
+            args: vec![
+                IrExpr::Literal(IecValue::String("ABCDEF".to_string())),
+                IrExpr::Literal(IecValue::Int(3)),
+                IrExpr::Literal(IecValue::Int(2)),
+            ],
+        };
+        let res = mid_expr.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::String("BCD".to_string()));
+
+        // INSERT(IN1, IN2, P)
+        let ins_expr = IrExpr::Call {
+            function_name: "INSERT".to_string(),
+            args: vec![
+                IrExpr::Literal(IecValue::String("ABC".to_string())),
+                IrExpr::Literal(IecValue::String("XY".to_string())),
+                IrExpr::Literal(IecValue::Int(1)),
+            ],
+        };
+        let res = ins_expr.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::String("AXYBC".to_string()));
+
+        // DELETE(IN, L, P)
+        let del_expr = IrExpr::Call {
+            function_name: "DELETE".to_string(),
+            args: vec![
+                IrExpr::Literal(IecValue::String("ABCDEF".to_string())),
+                IrExpr::Literal(IecValue::Int(2)),
+                IrExpr::Literal(IecValue::Int(3)),
+            ],
+        };
+        let res = del_expr.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::String("ABEF".to_string()));
+
+        // REPLACE(IN1, IN2, L, P)
+        let rep_expr = IrExpr::Call {
+            function_name: "REPLACE".to_string(),
+            args: vec![
+                IrExpr::Literal(IecValue::String("ABCDEF".to_string())),
+                IrExpr::Literal(IecValue::String("ZZ".to_string())),
+                IrExpr::Literal(IecValue::Int(2)),
+                IrExpr::Literal(IecValue::Int(3)),
+            ],
+        };
+        let res = rep_expr.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::String("ABZZEF".to_string()));
+
+        // FIND(IN1, IN2)
+        let find_found = IrExpr::Call {
+            function_name: "FIND".to_string(),
+            args: vec![
+                IrExpr::Literal(IecValue::String("ABCDEF".to_string())),
+                IrExpr::Literal(IecValue::String("CD".to_string())),
+            ],
+        };
+        let res = find_found.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::Int(3));
+
+        let find_not_found = IrExpr::Call {
+            function_name: "FIND".to_string(),
+            args: vec![
+                IrExpr::Literal(IecValue::String("ABCDEF".to_string())),
+                IrExpr::Literal(IecValue::String("ZZ".to_string())),
+            ],
+        };
+        let res = find_not_found.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::Int(0));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_extended_conversion_functions() -> Result<(), Box<dyn std::error::Error>> {
+        let empty_lookup = |sym: &str| Err(CoreError::UnknownSymbol(sym.to_string()).into());
+
+        // LREAL_TO_REAL
+        let call_lr_to_r = IrExpr::Call {
+            function_name: "LREAL_TO_REAL".to_string(),
+            args: vec![IrExpr::Literal(IecValue::Lreal(123.456))],
+        };
+        let res = call_lr_to_r.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::Real(123.456));
+
+        // REAL_TO_LREAL
+        let call_r_to_lr = IrExpr::Call {
+            function_name: "REAL_TO_LREAL".to_string(),
+            args: vec![IrExpr::Literal(IecValue::Real(45.5))],
+        };
+        let res = call_r_to_lr.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::Lreal(45.5));
+
+        // LREAL_TO_INT (rounds)
+        let call_lr_to_i = IrExpr::Call {
+            function_name: "LREAL_TO_INT".to_string(),
+            args: vec![IrExpr::Literal(IecValue::Lreal(42.6))],
+        };
+        let res = call_lr_to_i.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::Int(43));
+
+        // INT_TO_BYTE
+        let call_i_to_b = IrExpr::Call {
+            function_name: "INT_TO_BYTE".to_string(),
+            args: vec![IrExpr::Literal(IecValue::Int(250))],
+        };
+        let res = call_i_to_b.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::Byte(250));
+
+        // DINT_TO_DWORD
+        let call_d_to_dw = IrExpr::Call {
+            function_name: "DINT_TO_DWORD".to_string(),
+            args: vec![IrExpr::Literal(IecValue::Dint(0x1234))],
+        };
+        let res = call_d_to_dw.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::Dword(0x1234));
+
+        // INT_TO_SINT
+        let call_i_to_sint = IrExpr::Call {
+            function_name: "INT_TO_SINT".to_string(),
+            args: vec![IrExpr::Literal(IecValue::Int(127))],
+        };
+        let res = call_i_to_sint.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::Sint(127));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_user_function_registration_and_invocation() -> Result<(), Box<dyn std::error::Error>> {
+        // FUNCTION MultiplyAdd : INT (a: INT, b: INT, c: INT) -> (a * b) + c
+        let func = UserFunction::new(
+            "MultiplyAdd",
+            IecType::Int,
+            vec![
+                FunctionParam {
+                    name: "a".to_string(),
+                    data_type: IecType::Int,
+                    default_value: None,
+                },
+                FunctionParam {
+                    name: "b".to_string(),
+                    data_type: IecType::Int,
+                    default_value: None,
+                },
+                FunctionParam {
+                    name: "c".to_string(),
+                    data_type: IecType::Int,
+                    default_value: Some(IecValue::Int(0)),
+                },
+            ],
+            vec![FunctionParam {
+                name: "temp".to_string(),
+                data_type: IecType::Int,
+                default_value: Some(IecValue::Int(0)),
+            }],
+            vec![
+                IrStmt::Assign {
+                    target: "temp".to_string(),
+                    expr: IrExpr::Binary {
+                        op: IrBinaryOp::Mul,
+                        left: Box::new(IrExpr::Symbol("a".to_string())),
+                        right: Box::new(IrExpr::Symbol("b".to_string())),
+                    },
+                },
+                IrStmt::Assign {
+                    target: "MultiplyAdd".to_string(),
+                    expr: IrExpr::Binary {
+                        op: IrBinaryOp::Add,
+                        left: Box::new(IrExpr::Symbol("temp".to_string())),
+                        right: Box::new(IrExpr::Symbol("c".to_string())),
+                    },
+                },
+            ],
+        );
+
+        register_user_function(func);
+
+        let empty_lookup = |sym: &str| Err(CoreError::UnknownSymbol(sym.to_string()).into());
+
+        // Positional call: MultiplyAdd(3, 4, 5) -> 17
+        let call_expr = IrExpr::Call {
+            function_name: "MultiplyAdd".to_string(),
+            args: vec![
+                IrExpr::Literal(IecValue::Int(3)),
+                IrExpr::Literal(IecValue::Int(4)),
+                IrExpr::Literal(IecValue::Int(5)),
+            ],
+        };
+        let res = call_expr.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res, IecValue::Int(17));
+
+        // Named call: MultiplyAdd(c := 10, b := 2, a := 6) -> (6 * 2) + 10 = 22
+        let named_call = IrExpr::NamedCall {
+            function_name: "MultiplyAdd".to_string(),
+            args: vec![
+                ("c".to_string(), IrExpr::Literal(IecValue::Int(10))),
+                ("b".to_string(), IrExpr::Literal(IecValue::Int(2))),
+                ("a".to_string(), IrExpr::Literal(IecValue::Int(6))),
+            ],
+        };
+        let res_named = named_call.evaluate_with_resolver(&empty_lookup, "main")?;
+        assert_eq!(res_named, IecValue::Int(22));
+
+        // Type inference
+        let tags = TagTable::new();
+        let inferred = call_expr.infer_type(&tags, "main")?;
+        assert_eq!(inferred, IecType::Int);
+
+        let inferred_named = named_call.infer_type(&tags, "main")?;
+        assert_eq!(inferred_named, IecType::Int);
+
         Ok(())
     }
 }
