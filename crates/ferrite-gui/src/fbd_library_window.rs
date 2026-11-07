@@ -600,12 +600,24 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
             };
 
             let add_btn = if let Some(ref target_pou) = active_fbd_pou {
-                let current_block_count = if let Some(PouSource::Fbd(fbd)) = app.project.pous.get(target_pou) {
-                    fbd.blocks.len()
+                let next_free_idx = if let Some(PouSource::Fbd(fbd)) = app.project.pous.get(target_pou) {
+                    let prefix = format!("{}_", item.name);
+                    let mut candidate: usize = 1;
+                    while fbd.blocks.iter().any(|b| b.id == format!("{prefix}{candidate}"))
+                        || app
+                            .project
+                            .fb_instances
+                            .instances
+                            .iter()
+                            .any(|fb| fb.name == format!("{prefix}{candidate}"))
+                    {
+                        candidate += 1;
+                    }
+                    candidate.saturating_sub(1)
                 } else {
                     0
                 };
-                let kind = (item.make_kind)(current_block_count);
+                let kind = (item.make_kind)(next_free_idx);
                 button(text(lang.tr("+ Add", "+ Ajouter")).size(11))
                     .on_press(Message::FbdAddBlock(target_pou.clone(), kind))
                     .style(StudioTheme::primary_button)

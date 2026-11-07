@@ -64,9 +64,9 @@ pub fn render_alarms_panel<'a>(
     };
 
     let toolbar = row![
-        text("ISA-18.2 Alarm Management").size(15),
+        text(lang.tr("ISA-18.2 Alarm Management", "Gestion des Alarmes ISA-18.2")).size(15),
         unack_badge,
-        text(format!("({active_count} Active)"))
+        text(format!("({active_count} {})", lang.tr("Active", "Actif")))
             .size(12)
             .color(StudioTheme::TEXT_SECONDARY),
         iced::widget::Space::with_width(Length::Fill),
@@ -81,27 +81,27 @@ pub fn render_alarms_panel<'a>(
     // Left card: Active Alarms
     let mut active_list = column![
         row![
-            text("Severity")
+            text(lang.tr("Severity", "Gravité"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(1)),
-            text("ID")
+            text(lang.tr("ID", "ID"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(2)),
-            text("Tag")
+            text(lang.tr("Tag", "Variable"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(2)),
-            text("State")
+            text(lang.tr("State", "État"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(1)),
-            text("Message")
+            text(lang.tr("Message", "Message"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(4)),
-            text("Action")
+            text(lang.tr("Action", "Action"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::Shrink),
@@ -178,23 +178,23 @@ pub fn render_alarms_panel<'a>(
     // Right card: Sequence of Events (SOE) Journal
     let mut journal_list = column![
         row![
-            text("Time")
+            text(lang.tr("Time", "Heure"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(2)),
-            text("Severity")
+            text(lang.tr("Severity", "Gravité"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(1)),
-            text("ID")
+            text(lang.tr("ID", "ID"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(2)),
-            text("State")
+            text(lang.tr("State", "État"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(2)),
-            text("Event")
+            text(lang.tr("Event", "Événement"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(4)),

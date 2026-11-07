@@ -135,11 +135,22 @@ impl TrendPlotter {
                             0.0
                         }
                     }
+                    IecValue::Sint(i) => i as f64,
                     IecValue::Int(i) => i as f64,
                     IecValue::Dint(d) => d as f64,
+                    IecValue::Lint(l) => l as f64,
+                    IecValue::Usint(u) => u as f64,
+                    IecValue::Uint(u) => u as f64,
+                    IecValue::Udint(u) => u as f64,
+                    IecValue::Ulint(u) => u as f64,
+                    IecValue::Byte(b) => b as f64,
+                    IecValue::Word(w) => w as f64,
+                    IecValue::Dword(d) => d as f64,
+                    IecValue::Lword(l) => l as f64,
                     IecValue::Real(r) => r as f64,
+                    IecValue::Lreal(lr) => lr,
                     IecValue::Time(ms) => ms as f64,
-                    _ => 0.0,
+                    IecValue::String(_) => 0.0,
                 };
                 ch.push(now_s, numeric_val, max_age);
             }

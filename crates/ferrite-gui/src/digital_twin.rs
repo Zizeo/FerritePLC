@@ -19,6 +19,20 @@ pub struct TwinCanvasState {
     pub is_mouse_down: bool,
 }
 
+static TWIN_CANVAS_SIZE: std::sync::Mutex<(f32, f32)> = std::sync::Mutex::new((1000.0, 700.0));
+
+pub fn get_twin_canvas_size() -> (f32, f32) {
+    TWIN_CANVAS_SIZE.lock().map(|s| *s).unwrap_or((1000.0, 700.0))
+}
+
+pub fn update_twin_canvas_size(width: f32, height: f32) {
+    if width > 1.0 && height > 1.0
+        && let Ok(mut size) = TWIN_CANVAS_SIZE.lock()
+    {
+        *size = (width, height);
+    }
+}
+
 pub struct TwinCanvasProgram<'a> {
     pub workspace: &'a DigitalTwinWorkspace,
     pub io_snapshot: SharedIoSnapshot,
@@ -35,6 +49,7 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> (event::Status, Option<Message>) {
+        update_twin_canvas_size(bounds.width, bounds.height);
         match canvas_event {
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = cursor.position_in(bounds) {
@@ -88,6 +103,7 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
+        update_twin_canvas_size(bounds.width, bounds.height);
         let mut frame = Frame::new(renderer, bounds.size());
         let width = bounds.width;
         let height = bounds.height;
@@ -981,8 +997,11 @@ pub fn render_digital_twin_window<'a>(app: &'a FerriteStudioApp) -> Element<'a, 
             .padding(8)
             .style(StudioTheme::card_style);
 
-            let clamped_x = menu_pos.x.clamp(8.0, 820.0);
-            let clamped_y = menu_pos.y.clamp(8.0, 520.0);
+            let canvas_size = get_twin_canvas_size();
+            let max_x = (canvas_size.0 - 175.0).max(8.0);
+            let max_y = (canvas_size.1 - 280.0).max(8.0);
+            let clamped_x = menu_pos.x.clamp(8.0, max_x);
+            let clamped_y = menu_pos.y.clamp(8.0, max_y);
             let positioned_menu = column![
                 Space::with_height(Length::Fixed(clamped_y)),
                 row![Space::with_width(Length::Fixed(clamped_x)), menu_card],
