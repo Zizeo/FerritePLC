@@ -18,7 +18,7 @@ It supports four industrial programming paradigms defined by **IEC 61131-3** and
 2. **Grafcet / Sequential Function Chart (SFC — IEC 60848)**
    - Steps: Initial, Normal, Macro, and Enclosing steps.
    - Directed links with single transitions, OR divergences/convergences, and simultaneous AND divergences/convergences.
-   - Step-associated actions with IEC 60848 qualifiers (`N`, `S`, `R`, `L`, `D`, `P`, plus `SET_SFC`, `RESET_SFC`, `FREEZE_SFC`).
+     - Step-associated actions with IEC 60848 qualifiers (`N`, `S`, `R`, `L`, `D`, `P`, plus force qualifiers `F` / `FZ`).
    - Direct on-canvas editing of step actions and transition receptivities.
 3. **Structured Text (ST)**
    - High-level imperative PLC language (`IF/THEN/ELSIF/ELSE`, `CASE`, `FOR`, `WHILE`).
@@ -80,7 +80,7 @@ FerritePLC/
 │   ├── ferrite-lang-fbd/      # Function Block Diagram graph, topological sorter, loop detector
 │   ├── ferrite-project/       # Project manifest (.fplc), atomic file I/O, symbol/POU serialization
 │   ├── ferrite-runtime/       # Deterministic scan loop, virtual clock, force/watch table, scenarios
-│   ├── ferrite-gui/           # Native desktop IDE & simulator (egui / eframe) with multi-window panels
+│   ├── ferrite-gui/           # Native desktop IDE & simulator (iced 0.13) with multi-window panels
 │   └── ferrite-cli/           # CLI & terminal UI (clap + ratatui)
 └── examples/                  # Multi-language sample projects (e.g., thermal_batch_plant)
 ```
