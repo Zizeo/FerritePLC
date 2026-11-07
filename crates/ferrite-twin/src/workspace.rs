@@ -16,6 +16,37 @@ const HANDLE_HIT_RADIUS: f32 = 8.0;
 const MIN_ELEMENT_SIZE: f32 = 24.0;
 pub const TWIN_REL_PATH: &str = "sim/digital_twin.json";
 
+/// Blink phase (true = on) for the given elapsed time; a zero interval is treated as 1 ms.
+pub(crate) fn blink_phase(elapsed_ms: u64, interval_ms: u64) -> bool {
+    (elapsed_ms / interval_ms.max(1)).is_multiple_of(2)
+}
+
+/// Errors from loading/saving the digital twin workspace file.
+#[derive(Debug, thiserror::Error)]
+pub enum TwinError {
+    /// Reading the twin file failed (other than file-not-found).
+    #[error("failed to read digital twin file {}: {source}", path.display())]
+    Io {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// Twin JSON could not be parsed or serialized.
+    #[error("invalid digital twin JSON in {}: {source}", path.display())]
+    Serde {
+        path: std::path::PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    /// Writing the twin file (dir creation, temp write, or atomic rename) failed.
+    #[error("failed to save digital twin file {}: {source}", path.display())]
+    Save {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
 /// State for the Digital Twin Visual Canvas and Equipment Inspector.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DigitalTwinWorkspace {
@@ -573,7 +604,7 @@ impl DigitalTwinWorkspace {
                     && blink.enabled
                     && is_active == blink.trigger_state
                 {
-                    let phase = (elapsed_ms / blink.interval_ms).is_multiple_of(2);
+                    let phase = blink_phase(elapsed_ms, blink.interval_ms);
                     is_active = phase;
                     request_continuous_repaint = true;
                 }
@@ -1061,32 +1092,61 @@ impl DigitalTwinWorkspace {
         self.hsv_state = rgb_to_hsv(rgba);
     }
 
-    /// Loads `<project_root>/sim/digital_twin.json` if present and valid; otherwise returns starter plant.
-    pub fn load_or_default(project_root: &std::path::Path) -> Self {
+    /// Loads `<project_root>/sim/digital_twin.json`.
+    ///
+    /// Only a missing file falls back to the starter plant. Any other I/O failure
+    /// or malformed/incompatible JSON is returned as an error so callers can surface
+    /// it instead of overwriting the user's canvas on the next save.
+    pub fn load(project_root: &std::path::Path) -> Result<Self, TwinError> {
         let path = project_root.join(TWIN_REL_PATH);
-        if let Ok(raw) = std::fs::read_to_string(&path)
-            && let Ok(mut ws) = serde_json::from_str::<Self>(&raw)
-        {
-            ws.mode = TwinMode::Edit;
-            ws.session_start = Some(Instant::now());
-            let max_id = ws.elements.iter().map(|e| e.id).max().unwrap_or(100);
-            if ws.next_id <= max_id {
-                ws.next_id = max_id;
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::with_starter_plant());
             }
-            return ws;
+            Err(source) => return Err(TwinError::Io { path, source }),
+        };
+        let mut ws =
+            serde_json::from_str::<Self>(&raw).map_err(|source| TwinError::Serde { path, source })?;
+        ws.mode = TwinMode::Edit;
+        ws.session_start = Some(Instant::now());
+        let max_id = ws.elements.iter().map(|e| e.id).max().unwrap_or(100);
+        if ws.next_id <= max_id {
+            ws.next_id = max_id;
         }
-        Self::with_starter_plant()
+        Ok(ws)
+    }
+
+    /// Legacy infallible loader: returns the starter plant on *any* load failure.
+    ///
+    /// Prefer [`Self::load`]; callers using this must not auto-save after a failed
+    /// load, as that would overwrite an unreadable-but-recoverable file.
+    pub fn load_or_default(project_root: &std::path::Path) -> Self {
+        Self::load(project_root).unwrap_or_else(|_| Self::with_starter_plant())
     }
 
     /// Atomically saves the Digital Twin workspace to `<project_root>/sim/digital_twin.json`.
-    pub fn save_to_project(&self, project_root: &std::path::Path) -> Result<(), String> {
+    pub fn save_to_project(&self, project_root: &std::path::Path) -> Result<(), TwinError> {
         let sim_dir = project_root.join("sim");
-        std::fs::create_dir_all(&sim_dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&sim_dir).map_err(|source| TwinError::Save {
+            path: sim_dir.clone(),
+            source,
+        })?;
         let target = project_root.join(TWIN_REL_PATH);
         let temp = project_root.join("sim/digital_twin.json.tmp");
-        let serialized = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(&temp, serialized).map_err(|e| e.to_string())?;
-        std::fs::rename(&temp, &target).map_err(|e| e.to_string())?;
+        let serialized =
+            serde_json::to_string_pretty(self).map_err(|source| TwinError::Serde {
+                path: target.clone(),
+                source,
+            })?;
+        std::fs::write(&temp, serialized).map_err(|source| TwinError::Save {
+            path: temp.clone(),
+            source,
+        })?;
+        std::fs::rename(&temp, &target).map_err(|source| TwinError::Save {
+            path: target,
+            source,
+        })?;
         Ok(())
     }
 

@@ -136,7 +136,16 @@ pub enum AccessMode {
 pub struct BlinkConfig {
     pub enabled: bool,
     pub trigger_state: bool,
+    /// Blink half-period in ms; clamped to >= 1 on load to avoid divide-by-zero.
+    #[serde(deserialize_with = "deserialize_interval_ms")]
     pub interval_ms: u64,
+}
+
+fn deserialize_interval_ms<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(<u64 as Deserialize>::deserialize(deserializer)?.max(1))
 }
 
 impl Default for BlinkConfig {

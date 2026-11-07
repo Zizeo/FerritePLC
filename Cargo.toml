@@ -18,6 +18,10 @@ members = [
 ]
 default-members = ["crates/ferrite-cli"]
 
+[profile.release]
+# PLC runtime: silent integer wrap redirected physical outputs (see REVIEW_REPORT.md CR-1/I-1).
+overflow-checks = true
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
