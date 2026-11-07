@@ -6,7 +6,7 @@
 
 use iced::border::Radius;
 use iced::widget::{button, column, container, row, scrollable, text, text_editor, text_input};
-use iced::{Alignment, Background, Border, Element, Length};
+use iced::{Alignment, Background, Border, Element, Length, Theme};
 
 use ferrite_core::StandardFbKind;
 use ferrite_lang_fbd::FbdBlockKind;
@@ -544,10 +544,10 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
             )
             .padding([8, 12])
             .width(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_SURFACE)),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_surface(theme))),
                 border: Border {
-                    color: StudioTheme::BORDER_CARD,
+                    color: StudioTheme::border_card(theme),
                     width: 1.0,
                     radius: Radius::from(6.0),
                 },
@@ -654,10 +654,10 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
             )
             .padding([8, 12])
             .width(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_SURFACE)),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_surface(theme))),
                 border: Border {
-                    color: StudioTheme::BORDER_CARD,
+                    color: StudioTheme::border_card(theme),
                     width: 1.0,
                     radius: Radius::from(6.0),
                 },
@@ -742,10 +742,10 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
         let st_editor_container = container(st_editor_widget)
             .height(Length::Fixed(120.0))
             .width(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_SURFACE)),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_surface(theme))),
                 border: Border {
-                    color: StudioTheme::BORDER_HAIRLINE,
+                    color: StudioTheme::border_hairline(theme),
                     width: 1.0,
                     radius: Radius::from(4.0),
                 },
@@ -801,8 +801,8 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
             )
             .padding(12)
             .width(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_elevated(theme))),
                 border: Border {
                     color: StudioTheme::ACCENT_CYAN,
                     width: 1.0,
@@ -825,8 +825,8 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
     container(main_col.padding(16))
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(StudioTheme::BG_BASE)),
+        .style(move |theme: &Theme| container::Style {
+            background: Some(Background::Color(StudioTheme::bg_base(theme))),
             ..Default::default()
         })
         .into()

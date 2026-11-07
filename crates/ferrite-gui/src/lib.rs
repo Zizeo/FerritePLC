@@ -3063,4 +3063,43 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
+
+    #[test]
+    fn test_light_theme_backgrounds_and_palette() {
+        let dark = iced::Theme::Dark;
+        let light = iced::Theme::Light;
+
+        assert!(theme::StudioTheme::is_dark(&dark));
+        assert!(!theme::StudioTheme::is_dark(&light));
+
+        // Backgrounds must be distinctly different between dark and light
+        assert_ne!(
+            theme::StudioTheme::bg_base(&dark),
+            theme::StudioTheme::bg_base(&light)
+        );
+        assert_ne!(
+            theme::StudioTheme::bg_panel(&dark),
+            theme::StudioTheme::bg_panel(&light)
+        );
+        assert_ne!(
+            theme::StudioTheme::bg_elevated(&dark),
+            theme::StudioTheme::bg_elevated(&light)
+        );
+        assert_ne!(
+            theme::StudioTheme::bg_surface(&dark),
+            theme::StudioTheme::bg_surface(&light)
+        );
+
+        // Light background must be light (luminance > 0.8)
+        let light_bg = theme::StudioTheme::bg_base(&light);
+        assert!(light_bg.r > 0.8 && light_bg.g > 0.8 && light_bg.b > 0.8);
+
+        // Light text must be dark ink for high contrast
+        let light_text = theme::StudioTheme::text_primary(&light);
+        assert!(light_text.r < 0.2 && light_text.g < 0.2 && light_text.b < 0.2);
+
+        // Card style in light theme must use light elevated background
+        let card_light = theme::StudioTheme::card_style(&light);
+        assert!(matches!(card_light.background, Some(iced::Background::Color(c)) if c == iced::Color::WHITE));
+    }
 }

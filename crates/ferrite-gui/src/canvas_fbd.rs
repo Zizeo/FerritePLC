@@ -307,23 +307,44 @@ fn pin_display_label(pin: &str, is_corrector: bool, lang: UiLanguage) -> String 
     }
 }
 
-fn tech_terminal_input(_theme: &Theme, status: text_input::Status) -> text_input::Style {
+fn tech_terminal_input(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let is_dark = StudioTheme::is_dark(theme);
     let (border_color, bg) = match status {
         text_input::Status::Focused => (
             StudioTheme::ACCENT_CYAN,
-            iced::Color::from_rgb(0.02, 0.04, 0.07),
+            if is_dark {
+                iced::Color::from_rgb(0.02, 0.04, 0.07)
+            } else {
+                iced::Color::WHITE
+            },
         ),
         text_input::Status::Hovered => (
             iced::Color::from_rgba(0.220, 0.741, 0.973, 0.6),
-            iced::Color::from_rgb(0.04, 0.06, 0.09),
+            if is_dark {
+                iced::Color::from_rgb(0.04, 0.06, 0.09)
+            } else {
+                iced::Color::from_rgb(0.97, 0.98, 0.99)
+            },
         ),
         text_input::Status::Disabled => (
-            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.04),
-            iced::Color::from_rgb(0.03, 0.04, 0.06),
+            if is_dark {
+                iced::Color::from_rgba(1.0, 1.0, 1.0, 0.04)
+            } else {
+                iced::Color::from_rgba(0.0, 0.0, 0.0, 0.04)
+            },
+            if is_dark {
+                iced::Color::from_rgb(0.03, 0.04, 0.06)
+            } else {
+                iced::Color::from_rgb(0.94, 0.95, 0.96)
+            },
         ),
         text_input::Status::Active => (
-            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.12),
-            iced::Color::from_rgb(0.04, 0.05, 0.08),
+            StudioTheme::border_card(theme),
+            if is_dark {
+                iced::Color::from_rgb(0.04, 0.05, 0.08)
+            } else {
+                iced::Color::WHITE
+            },
         ),
     };
     text_input::Style {
@@ -333,26 +354,43 @@ fn tech_terminal_input(_theme: &Theme, status: text_input::Status) -> text_input
             width: 1.0,
             radius: Radius::from(4.0),
         },
-        icon: StudioTheme::TEXT_SECONDARY,
-        placeholder: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.25),
-        value: StudioTheme::TEXT_PRIMARY,
+        icon: StudioTheme::text_secondary(theme),
+        placeholder: StudioTheme::text_muted(theme),
+        value: StudioTheme::text_primary(theme),
         selection: iced::Color::from_rgba(0.220, 0.741, 0.973, 0.3),
     }
 }
 
-fn tech_id_input(_theme: &Theme, status: text_input::Status) -> text_input::Style {
+fn tech_id_input(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let is_dark = StudioTheme::is_dark(theme);
     let (border_color, bg) = match status {
         text_input::Status::Focused => (
             StudioTheme::ACCENT_CYAN,
-            iced::Color::from_rgb(0.03, 0.05, 0.08),
+            if is_dark {
+                iced::Color::from_rgb(0.03, 0.05, 0.08)
+            } else {
+                iced::Color::WHITE
+            },
         ),
         text_input::Status::Hovered => (
-            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.3),
-            iced::Color::from_rgb(0.05, 0.07, 0.10),
+            if is_dark {
+                iced::Color::from_rgba(1.0, 1.0, 1.0, 0.3)
+            } else {
+                iced::Color::from_rgba(0.0, 0.0, 0.0, 0.25)
+            },
+            if is_dark {
+                iced::Color::from_rgb(0.05, 0.07, 0.10)
+            } else {
+                iced::Color::from_rgb(0.98, 0.99, 1.0)
+            },
         ),
         _ => (
-            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.10),
-            iced::Color::from_rgb(0.05, 0.07, 0.10),
+            StudioTheme::border_card(theme),
+            if is_dark {
+                iced::Color::from_rgb(0.05, 0.07, 0.10)
+            } else {
+                iced::Color::WHITE
+            },
         ),
     };
     text_input::Style {
@@ -367,9 +405,9 @@ fn tech_id_input(_theme: &Theme, status: text_input::Status) -> text_input::Styl
                 bottom_right: 4.0,
             },
         },
-        icon: StudioTheme::TEXT_SECONDARY,
-        placeholder: StudioTheme::TEXT_MUTED,
-        value: StudioTheme::TEXT_PRIMARY,
+        icon: StudioTheme::text_secondary(theme),
+        placeholder: StudioTheme::text_muted(theme),
+        value: StudioTheme::text_primary(theme),
         selection: iced::Color::from_rgba(0.220, 0.741, 0.973, 0.3),
     }
 }
@@ -875,23 +913,31 @@ fn render_single_block_card<'a>(
         .align_x(Alignment::Center),
     )
     .padding([8, 12])
-    .style(move |_theme: &Theme| container::Style {
-        background: Some(Background::Color(iced::Color::from_rgb(0.038, 0.048, 0.068))),
-        border: Border {
-            color: if is_block_active {
-                StudioTheme::ACCENT_EMERALD
-            } else {
-                iced::Color::from_rgba(
-                    category.accent_color().r,
-                    category.accent_color().g,
-                    category.accent_color().b,
-                    0.35,
-                )
+    .style(move |theme: &Theme| {
+        let is_dark = StudioTheme::is_dark(theme);
+        let center_bg = if is_dark {
+            iced::Color::from_rgb(0.038, 0.048, 0.068)
+        } else {
+            iced::Color::WHITE
+        };
+        container::Style {
+            background: Some(Background::Color(center_bg)),
+            border: Border {
+                color: if is_block_active {
+                    StudioTheme::ACCENT_EMERALD
+                } else {
+                    iced::Color::from_rgba(
+                        category.accent_color().r,
+                        category.accent_color().g,
+                        category.accent_color().b,
+                        if is_dark { 0.35 } else { 0.50 },
+                    )
+                },
+                width: if is_block_active { 1.5 } else { 1.0 },
+                radius: Radius::from(6.0),
             },
-            width: if is_block_active { 1.5 } else { 1.0 },
-            radius: Radius::from(6.0),
-        },
-        ..Default::default()
+            ..Default::default()
+        }
     });
 
     // Outputs Column
@@ -1081,14 +1127,22 @@ fn render_single_block_card<'a>(
     inner_col = inner_col.push(
         container(schematic_body)
             .padding([8, 10])
-            .style(move |_| container::Style {
-                background: Some(Background::Color(iced::Color::from_rgb(0.045, 0.055, 0.075))),
-                border: Border {
-                    color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.05),
-                    width: 1.0,
-                    radius: Radius::from(6.0),
-                },
-                ..Default::default()
+            .style(move |theme: &Theme| {
+                let is_dark = StudioTheme::is_dark(theme);
+                let body_bg = if is_dark {
+                    iced::Color::from_rgb(0.045, 0.055, 0.075)
+                } else {
+                    iced::Color::from_rgb(0.950, 0.960, 0.975)
+                };
+                container::Style {
+                    background: Some(Background::Color(body_bg)),
+                    border: Border {
+                        color: StudioTheme::border_hairline(theme),
+                        width: 1.0,
+                        radius: Radius::from(6.0),
+                    },
+                    ..Default::default()
+                }
             })
             .width(Length::Fill),
     );
@@ -1102,7 +1156,8 @@ fn render_single_block_card<'a>(
         }),
     );
 
-    let card_style_fn = move |_theme: &Theme| {
+    let card_style_fn = move |theme: &Theme| {
+        let is_dark = StudioTheme::is_dark(theme);
         let border = if is_hovered {
             Border {
                 color: iced::Color::from_rgb(0.25, 0.65, 1.0),
@@ -1117,14 +1172,20 @@ fn render_single_block_card<'a>(
             }
         } else {
             Border {
-                color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.09),
+                color: StudioTheme::border_card(theme),
                 width: 1.0,
                 radius: Radius::from(8.0),
             }
         };
 
+        let card_bg = if is_dark {
+            iced::Color::from_rgb(0.070, 0.082, 0.110)
+        } else {
+            iced::Color::WHITE
+        };
+
         container::Style {
-            background: Some(Background::Color(iced::Color::from_rgb(0.070, 0.082, 0.110))),
+            background: Some(Background::Color(card_bg)),
             border,
             ..Default::default()
         }
@@ -1215,10 +1276,10 @@ pub fn render_fbd_editor<'a>(
     let header_container = container(scrollable_header)
         .width(Length::Fill)
         .padding([4, 6])
-        .style(|_| container::Style {
-            background: Some(Background::Color(iced::Color::from_rgb(0.065, 0.078, 0.102))),
+        .style(|theme: &Theme| container::Style {
+            background: Some(Background::Color(StudioTheme::bg_panel(theme))),
             border: Border {
-                color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.07),
+                color: StudioTheme::border_hairline(theme),
                 width: 1.0,
                 radius: Radius::from(6.0),
             },

@@ -99,7 +99,7 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
         &self,
         _state: &Self::State,
         renderer: &Renderer,
-        _theme: &Theme,
+        theme: &Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
@@ -112,7 +112,7 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
         frame.fill_rectangle(
             Point::ORIGIN,
             Size::new(width, height),
-            StudioTheme::BG_BASE,
+            StudioTheme::bg_base(theme),
         );
 
         // Grid dots (stronger in Edit mode, subtle in Runtime mode)
@@ -121,7 +121,11 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
         } else {
             0.03
         };
-        let dot_color = Color::from_rgba(1.0, 1.0, 1.0, dot_alpha);
+        let dot_color = if StudioTheme::is_dark(theme) {
+            Color::from_rgba(1.0, 1.0, 1.0, dot_alpha)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, dot_alpha * 1.5)
+        };
         let step = (self.workspace.grid_size * 2.0).max(10.0) as i32;
         for x in (0..width as i32).step_by(step as usize) {
             for y in (0..height as i32).step_by(step as usize) {

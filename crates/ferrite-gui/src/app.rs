@@ -6433,8 +6433,8 @@ impl FerriteStudioApp {
                 left: 6.0,
                 right: 6.0,
             })
-            .style(|_| container::Style {
-                background: Some(Background::Color(StudioTheme::BORDER_CARD)),
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::border_card(theme))),
                 ..Default::default()
             })
             .into()
@@ -6668,15 +6668,19 @@ impl FerriteStudioApp {
         container(items_col)
             .width(250)
             .padding(4)
-            .style(|_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_elevated(theme))),
                 border: Border {
-                    color: StudioTheme::BORDER_CARD,
+                    color: StudioTheme::border_card(theme),
                     width: 1.0,
                     radius: Radius::from(6.0),
                 },
                 shadow: iced::Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+                    color: if StudioTheme::is_dark(theme) {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.4)
+                    } else {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.15)
+                    },
                     offset: iced::Vector::new(0.0, 4.0),
                     blur_radius: 12.0,
                 },
@@ -6723,15 +6727,19 @@ impl FerriteStudioApp {
         container(items_col)
             .width(180)
             .padding(4)
-            .style(|_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_elevated(theme))),
                 border: Border {
-                    color: StudioTheme::BORDER_CARD,
+                    color: StudioTheme::border_card(theme),
                     width: 1.0,
                     radius: Radius::from(6.0),
                 },
                 shadow: iced::Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+                    color: if StudioTheme::is_dark(theme) {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.4)
+                    } else {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.15)
+                    },
                     offset: iced::Vector::new(0.0, 4.0),
                     blur_radius: 12.0,
                 },
@@ -6766,8 +6774,8 @@ impl FerriteStudioApp {
         let base_content: Element<'_, Message> = container(root_col)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_BASE)),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_base(theme))),
                 ..Default::default()
             })
             .into();
@@ -7327,8 +7335,8 @@ impl FerriteStudioApp {
         container(column![header, content].spacing(0))
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_BASE)),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_panel(theme))),
                 ..Default::default()
             })
             .into()
@@ -7420,16 +7428,6 @@ impl FerriteStudioApp {
                 let is_dragging = self.dragging_pou.as_ref() == Some(&p.name) && self.drag_hover_pou.is_some();
                 let is_hovered = self.drag_hover_pou.as_ref() == Some(&p.name);
 
-                let (bg, border_col, border_w) = if is_hovered {
-                    (StudioTheme::BG_HOVER, StudioTheme::ACCENT_CYAN, 1.5)
-                } else if is_dragging {
-                    (StudioTheme::BG_HOVER, StudioTheme::ACCENT_AMBER, 1.0)
-                } else if is_active {
-                    (StudioTheme::BG_SURFACE, StudioTheme::ACCENT_CYAN, 1.5)
-                } else {
-                    (Color::TRANSPARENT, Color::TRANSPARENT, 0.0)
-                };
-
                 let pou_card = container(
                     row![
                         container(text(badge_txt).size(10).color(badge_color))
@@ -7448,14 +7446,34 @@ impl FerriteStudioApp {
                 )
                 .width(Length::Fill)
                 .padding([6, 8])
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(bg)),
-                    border: Border {
-                        color: border_col,
-                        width: border_w,
-                        radius: Radius::from(6.0),
-                    },
-                    ..Default::default()
+                .style(move |theme: &Theme| {
+                    let is_dark = StudioTheme::is_dark(theme);
+                    let (bg, border_col, border_w) = if is_hovered {
+                        (StudioTheme::bg_hover(theme), StudioTheme::ACCENT_CYAN, 1.5)
+                    } else if is_dragging {
+                        (StudioTheme::bg_hover(theme), StudioTheme::ACCENT_AMBER, 1.0)
+                    } else if is_active {
+                        (
+                            StudioTheme::bg_surface(theme),
+                            if is_dark {
+                                StudioTheme::ACCENT_CYAN
+                            } else {
+                                Color::from_rgb(0.008, 0.518, 0.780)
+                            },
+                            1.5,
+                        )
+                    } else {
+                        (Color::TRANSPARENT, Color::TRANSPARENT, 0.0)
+                    };
+                    container::Style {
+                        background: Some(Background::Color(bg)),
+                        border: Border {
+                            color: border_col,
+                            width: border_w,
+                            radius: Radius::from(6.0),
+                        },
+                        ..Default::default()
+                    }
                 });
 
                 let p_drag_start = p.name.clone();
@@ -7519,10 +7537,10 @@ impl FerriteStudioApp {
                     )
                     .padding(6)
                     .width(Length::Fill)
-                    .style(move |_| container::Style {
-                        background: Some(Background::Color(StudioTheme::BG_SURFACE)),
+                    .style(move |theme: &Theme| container::Style {
+                        background: Some(Background::Color(StudioTheme::bg_elevated(theme))),
                         border: Border {
-                            color: StudioTheme::BORDER_CARD,
+                            color: StudioTheme::border_card(theme),
                             width: 1.0,
                             radius: Radius::from(6.0),
                         },
@@ -7663,8 +7681,8 @@ impl FerriteStudioApp {
         container(column![header, content].spacing(0))
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_BASE)),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_panel(theme))),
                 ..Default::default()
             })
             .into()
@@ -7994,8 +8012,8 @@ impl FerriteStudioApp {
             .height(Length::Fill);
 
         container(column![tabs, content,].spacing(10).padding([8, 16]))
-            .style(move |_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_BASE)),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_base(theme))),
                 ..Default::default()
             })
             .width(Length::Fill)

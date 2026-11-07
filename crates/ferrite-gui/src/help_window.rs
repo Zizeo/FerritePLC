@@ -281,7 +281,7 @@ pub fn filter_topics(query: &str) -> Vec<HelpTopic> {
 
 use iced::border::Radius;
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
-use iced::{Alignment, Background, Border, Color, Element, Length};
+use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use crate::i18n::UiLanguage;
 use crate::theme::StudioTheme;
@@ -536,8 +536,8 @@ fn callout_box<'a, Message: 'a>(
         .spacing(4),
     )
     .padding(10)
-    .style(move |_theme| container::Style {
-        background: Some(Background::Color(StudioTheme::BG_SURFACE)),
+    .style(move |theme: &Theme| container::Style {
+        background: Some(Background::Color(StudioTheme::bg_surface(theme))),
         border: Border {
             color: accent,
             width: 1.0,
@@ -561,10 +561,10 @@ fn symbol_card<'a, Message: 'a>(
             .color(StudioTheme::ACCENT_CYAN),
     )
     .padding([5, 10])
-    .style(|_theme| container::Style {
-        background: Some(Background::Color(StudioTheme::BG_BASE)),
+    .style(|theme: &Theme| container::Style {
+        background: Some(Background::Color(StudioTheme::bg_base(theme))),
         border: Border {
-            color: StudioTheme::BORDER_CARD,
+            color: StudioTheme::border_card(theme),
             width: 1.0,
             radius: Radius::from(6.0),
         },
@@ -587,10 +587,10 @@ fn symbol_card<'a, Message: 'a>(
         text(semantics.to_string()).size(12).color(StudioTheme::TEXT_SECONDARY),
         container(text(example.to_string()).size(11).color(StudioTheme::ACCENT_EMERALD))
             .padding([4, 8])
-            .style(|_theme| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_BASE)),
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_base(theme))),
                 border: Border {
-                    color: StudioTheme::BORDER_HAIRLINE,
+                    color: StudioTheme::border_hairline(theme),
                     width: 1.0,
                     radius: Radius::from(4.0),
                 },
@@ -612,10 +612,10 @@ fn code_snippet<'a, Message: 'a>(code: &str) -> Element<'a, Message> {
             .color(StudioTheme::TEXT_PRIMARY),
     )
     .padding(10)
-    .style(|_theme| container::Style {
-        background: Some(Background::Color(StudioTheme::BG_BASE)),
+    .style(|theme: &Theme| container::Style {
+        background: Some(Background::Color(StudioTheme::bg_base(theme))),
         border: Border {
-            color: StudioTheme::BORDER_HAIRLINE,
+            color: StudioTheme::border_hairline(theme),
             width: 1.0,
             radius: Radius::from(6.0),
         },

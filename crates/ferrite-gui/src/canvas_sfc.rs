@@ -1227,7 +1227,7 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
         &self,
         state: &Self::State,
         renderer: &Renderer,
-        _theme: &Theme,
+        theme: &Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
@@ -1236,10 +1236,14 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
         let height = bounds.height;
 
         // 1. Background
-        frame.fill_rectangle(Point::ORIGIN, bounds.size(), COLOR_CANVAS_BG);
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), StudioTheme::bg_base(theme));
 
         // 2. Discrete 20px grid dots
-        let dot_color = Color::from_rgba(1.0, 1.0, 1.0, 0.05);
+        let dot_color = if StudioTheme::is_dark(theme) {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.05)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.08)
+        };
         for x in (0..width as i32).step_by(20) {
             for y in (0..height as i32).step_by(20) {
                 frame.fill_rectangle(
@@ -1747,8 +1751,10 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 Color::from_rgb(56.0 / 255.0, 24.0 / 255.0, 28.0 / 255.0)
             } else if active {
                 Color::from_rgb(22.0 / 255.0, 46.0 / 255.0, 34.0 / 255.0)
-            } else {
+            } else if StudioTheme::is_dark(theme) {
                 COLOR_STEP_BG
+            } else {
+                StudioTheme::bg_elevated(theme)
             };
 
             frame.fill_rectangle(
@@ -1816,7 +1822,11 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             frame.fill_text(canvas::Text {
                 content: display_id,
                 position: Point::new(x + 10.0, y + 8.0),
-                color: Color::WHITE,
+                color: if StudioTheme::is_dark(theme) {
+                    Color::WHITE
+                } else {
+                    StudioTheme::text_primary(theme)
+                },
                 size: iced::Pixels(13.0),
                 font: iced::Font::MONOSPACE,
                 ..Default::default()
@@ -1892,10 +1902,15 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 let mut act_y = start_act_y;
                 for act in &step.actions {
                     let qual_str = SfcActionQualifierWrapper(act.qualifier).to_string();
+                    let act_bg = if StudioTheme::is_dark(theme) {
+                        COLOR_ACTION_BG
+                    } else {
+                        StudioTheme::bg_surface(theme)
+                    };
                     frame.fill_rectangle(
                         Point::new(act_x, act_y),
                         Size::new(26.0, 22.0),
-                        COLOR_ACTION_BG,
+                        act_bg,
                     );
                     frame.stroke_rectangle(
                         Point::new(act_x, act_y),
@@ -1907,7 +1922,11 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     frame.fill_text(canvas::Text {
                         content: qual_str,
                         position: Point::new(act_x + 8.0, act_y + 4.0),
-                        color: Color::WHITE,
+                        color: if StudioTheme::is_dark(theme) {
+                            Color::WHITE
+                        } else {
+                            StudioTheme::text_primary(theme)
+                        },
                         size: iced::Pixels(11.0),
                         font: iced::Font::MONOSPACE,
                         ..Default::default()
@@ -1919,10 +1938,15 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         act.target.clone()
                     };
                     let target_w = (target_text.len() as f32 * 7.5 + 20.0).max(110.0);
+                    let target_bg = if StudioTheme::is_dark(theme) {
+                        COLOR_STEP_BG
+                    } else {
+                        StudioTheme::bg_elevated(theme)
+                    };
                     frame.fill_rectangle(
                         Point::new(act_x + 26.0, act_y),
                         Size::new(target_w, 22.0),
-                        COLOR_STEP_BG,
+                        target_bg,
                     );
                     frame.stroke_rectangle(
                         Point::new(act_x + 26.0, act_y),
@@ -1934,7 +1958,11 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     frame.fill_text(canvas::Text {
                         content: target_text,
                         position: Point::new(act_x + 32.0, act_y + 4.0),
-                        color: Color::from_rgb(200.0 / 255.0, 215.0 / 255.0, 230.0 / 255.0),
+                        color: if StudioTheme::is_dark(theme) {
+                            Color::from_rgb(200.0 / 255.0, 215.0 / 255.0, 230.0 / 255.0)
+                        } else {
+                            StudioTheme::text_primary(theme)
+                        },
                         size: iced::Pixels(10.5),
                         font: iced::Font::MONOSPACE,
                         ..Default::default()
@@ -2221,33 +2249,76 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
     }
 }
 
-// Styling helper for dark monospace inputs
-fn sfc_input_style(_theme: &Theme, _status: text_input::Status) -> text_input::Style {
+// Styling helper for monospace inputs
+fn sfc_input_style(theme: &Theme, _status: text_input::Status) -> text_input::Style {
+    let is_dark = StudioTheme::is_dark(theme);
     text_input::Style {
-        background: Background::Color(COLOR_INPUT_BG),
+        background: Background::Color(if is_dark {
+            COLOR_INPUT_BG
+        } else {
+            Color::WHITE
+        }),
         border: Border {
-            color: Color::from_rgb(44.0 / 255.0, 56.0 / 255.0, 72.0 / 255.0),
+            color: if is_dark {
+                Color::from_rgb(44.0 / 255.0, 56.0 / 255.0, 72.0 / 255.0)
+            } else {
+                StudioTheme::border_card(theme)
+            },
             width: 1.0,
             radius: Radius::from(3.0),
         },
-        placeholder: StudioTheme::TEXT_MUTED,
-        value: Color::from_rgb(226.0 / 255.0, 232.0 / 255.0, 240.0 / 255.0),
+        placeholder: StudioTheme::text_muted(theme),
+        value: if is_dark {
+            Color::from_rgb(226.0 / 255.0, 232.0 / 255.0, 240.0 / 255.0)
+        } else {
+            StudioTheme::text_primary(theme)
+        },
         selection: StudioTheme::ACCENT_CYAN,
-        icon: StudioTheme::TEXT_SECONDARY,
+        icon: StudioTheme::text_secondary(theme),
     }
 }
 
-fn sfc_subtle_button(_theme: &Theme, status: button::Status) -> button::Style {
-    let bg = match status {
-        button::Status::Hovered => Color::from_rgb(37.0 / 255.0, 49.0 / 255.0, 65.0 / 255.0),
-        button::Status::Pressed => Color::from_rgb(28.0 / 255.0, 38.0 / 255.0, 50.0 / 255.0),
-        _ => Color::from_rgb(32.0 / 255.0, 42.0 / 255.0, 56.0 / 255.0),
+fn sfc_subtle_button(theme: &Theme, status: button::Status) -> button::Style {
+    let is_dark = StudioTheme::is_dark(theme);
+    let (bg, txt) = match status {
+        button::Status::Hovered => (
+            if is_dark {
+                Color::from_rgb(37.0 / 255.0, 49.0 / 255.0, 65.0 / 255.0)
+            } else {
+                StudioTheme::bg_hover(theme)
+            },
+            StudioTheme::text_primary(theme),
+        ),
+        button::Status::Pressed => (
+            if is_dark {
+                Color::from_rgb(28.0 / 255.0, 38.0 / 255.0, 50.0 / 255.0)
+            } else {
+                Color::from_rgb(0.85, 0.88, 0.92)
+            },
+            StudioTheme::text_primary(theme),
+        ),
+        _ => (
+            if is_dark {
+                Color::from_rgb(32.0 / 255.0, 42.0 / 255.0, 56.0 / 255.0)
+            } else {
+                StudioTheme::bg_surface(theme)
+            },
+            if is_dark {
+                Color::from_rgb(200.0 / 255.0, 210.0 / 255.0, 225.0 / 255.0)
+            } else {
+                StudioTheme::text_secondary(theme)
+            },
+        ),
     };
     button::Style {
         background: Some(Background::Color(bg)),
-        text_color: Color::from_rgb(200.0 / 255.0, 210.0 / 255.0, 225.0 / 255.0),
+        text_color: txt,
         border: Border {
-            color: Color::from_rgb(50.0 / 255.0, 65.0 / 255.0, 85.0 / 255.0),
+            color: if is_dark {
+                Color::from_rgb(50.0 / 255.0, 65.0 / 255.0, 85.0 / 255.0)
+            } else {
+                StudioTheme::border_card(theme)
+            },
             width: 1.0,
             radius: Radius::from(3.0),
         },
