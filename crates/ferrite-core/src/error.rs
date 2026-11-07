@@ -30,6 +30,13 @@ pub enum CoreError {
 
     #[error("Duplicate symbol registration '{0}'")]
     DuplicateSymbol(String),
+
+    #[error("Array index out of bounds: index {index} >= size {size} on '{name}'")]
+    IndexOutOfBounds {
+        name: String,
+        index: usize,
+        size: usize,
+    },
 }
 
 #[derive(Debug, Error, Clone, PartialEq)]

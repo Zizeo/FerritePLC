@@ -138,13 +138,12 @@ impl<'a> ScanContext<'a> {
 
     /// Zero-allocation write by pre-resolved `TagId`.
     pub fn write_tag_id(&mut self, id: TagId, val: IecValue) -> Result<(), RuntimeError> {
-        let (name, read_only, data_type, addr_opt, is_forced) = {
+        let (read_only, data_type, addr_opt, is_forced) = {
             let tag = self
                 .tags
                 .get_tag_by_id(id)
                 .ok_or_else(|| CoreError::UnknownSymbol(format!("TagId({})", id.0)))?;
             (
-                tag.name.clone(),
                 tag.read_only_outside_sfc,
                 tag.data_type,
                 tag.address,
@@ -153,6 +152,11 @@ impl<'a> ScanContext<'a> {
         };
 
         if read_only && !self.in_sfc_engine {
+            let name = self
+                .tags
+                .get_tag_by_id(id)
+                .map(|t| t.name.clone())
+                .unwrap_or_default();
             return Err(CoreError::ReadOnlySymbol(name).into());
         }
         let coerced = val.coerce_to(data_type)?;
@@ -184,6 +188,7 @@ impl<'a> ScanContext<'a> {
                     IecType::Int
                 }
                 crate::address::AccessWidth::DWord => IecType::Dint,
+                crate::address::AccessWidth::LWord => IecType::Lword,
             };
             return Ok(self.process_image.read(addr, default_ty)?);
         }
