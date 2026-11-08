@@ -15,7 +15,7 @@ pub use context::{ExecutablePou, LanguageKind, PouId, ScanContext};
 pub use error::{CoreError, RuntimeError};
 pub use fb::{FbInstance, StandardFbKind};
 pub use process_image::{DEFAULT_MEMORY_AREA_BYTES, MemoryMap, ProcessImage};
-pub use tag_table::{FbId, TagEntry, TagId, TagTable, normalize_sfc_step_prefix};
+pub use tag_table::{DerivedTypeKey, FbId, TagEntry, TagId, TagTable, normalize_sfc_step_prefix};
 pub use types::{IecType, IecValue, parse_iec_time_literal};
 
 #[cfg(test)]
@@ -316,5 +316,33 @@ mod tests {
         assert!(ctx.read_bool("Analog_In.ERR")?);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_iec_time_literal_h_d_and_composite() {
+        assert_eq!(parse_iec_time_literal("T#500ms"), Some(500));
+        assert_eq!(parse_iec_time_literal("T#5s"), Some(5_000));
+        assert_eq!(parse_iec_time_literal("TIME#2m"), Some(120_000));
+        assert_eq!(parse_iec_time_literal("T#1h"), Some(3_600_000));
+        assert_eq!(parse_iec_time_literal("TIME#2d"), Some(172_800_000));
+        assert_eq!(parse_iec_time_literal("T#1m30s"), Some(90_000));
+        assert_eq!(parse_iec_time_literal("T#1d2h3m4s5ms"), Some(93_784_005));
+        assert_eq!(parse_iec_time_literal("t#1.5s"), Some(1_500));
+        assert_eq!(parse_iec_time_literal("T#500"), Some(500)); // bare == ms
+        assert_eq!(parse_iec_time_literal("500"), None); // no prefix, no unit
+        assert_eq!(parse_iec_time_literal("T#junk"), None);
+        assert_eq!(parse_iec_time_literal("T#5x"), None);
+    }
+
+    #[test]
+    fn test_coerce_real_to_int_rounds_to_nearest() {
+        use IecValue::Real;
+        assert_eq!(Real(1.7).coerce_to(IecType::Int).ok(), Some(IecValue::Int(2)));
+        assert_eq!(Real(1.4).coerce_to(IecType::Int).ok(), Some(IecValue::Int(1)));
+        assert_eq!(Real(-1.5).coerce_to(IecType::Dint).ok(), Some(IecValue::Dint(-2)));
+        assert_eq!(
+            IecValue::parse_literal("1.7", Some(IecType::Int)).ok(),
+            Some(IecValue::Int(2))
+        );
     }
 }

@@ -1,16 +1,21 @@
+pub mod draw;
 pub mod model;
+pub mod theme;
 pub mod workspace;
 
+pub use draw::{draw_canvas_element, draw_selection_overlay};
 pub use model::{
     AccessMode, ActiveResize, ActuatorKind, BlinkConfig, ButtonActionMode, CanvasElement,
     ColorEditTarget, ElementKind, ResizeHandle, ShapeType, SharedIoHandle, SharedIoSnapshot,
     SharedIoState, TwinMode, VariableBinding, hex_to_rgb, hsv_to_rgb, rgb_to_hex, rgb_to_hsv,
 };
-pub use workspace::DigitalTwinWorkspace;
+pub use theme::TwinTheme;
+pub use workspace::{DigitalTwinWorkspace, TwinError};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::{Color32, pos2};
     use ferrite_core::types::{IecType, IecValue};
     use std::sync::{Arc, RwLock};
 
@@ -59,32 +64,47 @@ mod tests {
             z_index: 0,
             element_type: ElementKind::Tank,
             binding: None,
-            base_color: [128, 128, 128, 255],
+            base_color: Color32::GRAY.to_array(),
             button_mode: ButtonActionMode::default(),
         };
 
         // Top-Left corner is at (100.0, 100.0)
         assert_eq!(
-            elem.hit_test_handle((100.0, 100.0), 8.0),
+            elem.hit_test_handle(pos2(100.0, 100.0), 8.0),
             Some(ResizeHandle::TopLeft)
         );
         // Top-Right corner is at (300.0, 100.0)
         assert_eq!(
-            elem.hit_test_handle((300.0, 100.0), 8.0),
+            elem.hit_test_handle(pos2(300.0, 100.0), 8.0),
             Some(ResizeHandle::TopRight)
         );
         // Bottom-Left corner is at (100.0, 250.0)
         assert_eq!(
-            elem.hit_test_handle((100.0, 250.0), 8.0),
+            elem.hit_test_handle(pos2(100.0, 250.0), 8.0),
             Some(ResizeHandle::BottomLeft)
         );
         // Bottom-Right corner is at (300.0, 250.0)
         assert_eq!(
-            elem.hit_test_handle((300.0, 250.0), 8.0),
+            elem.hit_test_handle(pos2(300.0, 250.0), 8.0),
             Some(ResizeHandle::BottomRight)
         );
         // Center of element should NOT hit any corner handle
-        assert_eq!(elem.hit_test_handle((200.0, 175.0), 8.0), None);
+        assert_eq!(elem.hit_test_handle(pos2(200.0, 175.0), 8.0), None);
+
+        // Verify cursor mappings
+        assert_eq!(ResizeHandle::TopLeft.cursor(), egui::CursorIcon::ResizeNwSe);
+        assert_eq!(
+            ResizeHandle::BottomRight.cursor(),
+            egui::CursorIcon::ResizeNwSe
+        );
+        assert_eq!(
+            ResizeHandle::TopRight.cursor(),
+            egui::CursorIcon::ResizeNeSw
+        );
+        assert_eq!(
+            ResizeHandle::BottomLeft.cursor(),
+            egui::CursorIcon::ResizeNeSw
+        );
     }
 
     #[test]
@@ -240,6 +260,73 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    fn unique_temp_dir(tag: &str) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ferrite_twin_{tag}_{nanos}"));
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    #[test]
+    fn test_blink_interval_zero_deserializes_clamped_and_phase_defined()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let cfg: BlinkConfig =
+            serde_json::from_str(r#"{"enabled":true,"trigger_state":true,"interval_ms":0}"#)?;
+        assert_eq!(cfg.interval_ms, 1);
+        // No panic, and phase is defined for a zero interval even if constructed directly.
+        assert!(crate::workspace::blink_phase(10, 0) == crate::workspace::blink_phase(10, 1));
+        assert!(crate::workspace::blink_phase(0, 0));
+        assert!(!crate::workspace::blink_phase(1, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_invalid_json_returns_error_not_starter() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = unique_temp_dir("badjson")?;
+        std::fs::create_dir_all(dir.join("sim"))?;
+        let file = dir.join("sim").join("digital_twin.json");
+        std::fs::write(&file, "{ not valid json")?;
+
+        let result = DigitalTwinWorkspace::load(&dir);
+        assert!(matches!(result, Err(TwinError::Serde { .. })));
+        // Original file untouched.
+        assert_eq!(std::fs::read_to_string(&file)?, "{ not valid json");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_missing_file_falls_back_to_starter() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = unique_temp_dir("missing")?;
+        let ws = DigitalTwinWorkspace::load(&dir)?;
+        assert_eq!(
+            ws.elements.len(),
+            DigitalTwinWorkspace::with_starter_plant().elements.len()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_save_to_unwritable_path_returns_save_error() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = unique_temp_dir("unwritable")?;
+        // A regular file where the project root should be a directory.
+        let blocker = dir.join("not_a_dir");
+        std::fs::write(&blocker, "x")?;
+
+        let ws = DigitalTwinWorkspace::with_starter_plant();
+        let result = ws.save_to_project(&blocker);
+        assert!(matches!(result, Err(TwinError::Save { .. })));
+
+        let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
 }

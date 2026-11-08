@@ -15,3 +15,4 @@ workspace = true
 ferrite-core.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+serialport = "4.7"

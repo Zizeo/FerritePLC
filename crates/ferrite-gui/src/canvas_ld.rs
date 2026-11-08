@@ -667,11 +667,18 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
         &self,
         state: &Self::State,
         renderer: &iced::Renderer,
-        _theme: &Theme,
+        theme: &Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
+
+        // Fill canvas background
+        frame.fill_rectangle(
+            Point::ORIGIN,
+            bounds.size(),
+            StudioTheme::bg_base(theme),
+        );
 
         let pan = if state.initialized { state.pan } else { self.initial_pan };
         let zoom = if state.initialized { state.zoom } else { self.initial_zoom };
@@ -681,7 +688,11 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
         if dot_spacing >= 8.0 {
             let offset_x = (pan.x * zoom) % dot_spacing;
             let offset_y = (pan.y * zoom) % dot_spacing;
-            let dot_color = Color::from_rgba(0.25, 0.35, 0.5, 0.18);
+            let dot_color = if StudioTheme::is_dark(theme) {
+                Color::from_rgba(0.25, 0.35, 0.5, 0.18)
+            } else {
+                Color::from_rgba(0.15, 0.20, 0.30, 0.14)
+            };
             let mut x = offset_x;
             while x < bounds.width {
                 let mut y = offset_y;
@@ -937,7 +948,7 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                 frame.fill_rectangle(
                     Point::new(elem.bounds.x, elem.bounds.y),
                     elem.bounds.size(),
-                    StudioTheme::BG_BASE,
+                    StudioTheme::bg_base(theme),
                 );
                 if elem.energized {
                     frame.fill_rectangle(
@@ -1124,7 +1135,7 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                 let bg_color = if coil_placed.energized {
                     Color::from_rgba(0.063, 0.725, 0.506, 0.15)
                 } else {
-                    StudioTheme::BG_BASE
+                    StudioTheme::bg_base(theme)
                 };
 
                 // Coil wire to coil card
@@ -1145,7 +1156,7 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                 frame.fill_rectangle(
                     Point::new(coil_placed.bounds.x, coil_placed.bounds.y),
                     coil_placed.bounds.size(),
-                    StudioTheme::BG_BASE,
+                    StudioTheme::bg_base(theme),
                 );
                 if coil_placed.energized {
                     frame.fill_rectangle(

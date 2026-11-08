@@ -12,6 +12,7 @@ use crossterm::terminal::{
 use ferrite_core::{IecType, IecValue, LanguageKind};
 use ferrite_project::Project;
 use ferrite_runtime::PlcRuntime;
+use serde::Serialize;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -71,6 +72,12 @@ impl From<CliLang> for LanguageKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum OutputFormat {
+    Text,
+    Json,
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Scaffolds a new FerritePLC project directory with starter LD, SFC, ST, and FBD POUs
@@ -103,6 +110,9 @@ enum Commands {
         /// Project directory (defaults to current directory)
         #[arg(short, long, default_value = ".")]
         path: PathBuf,
+        /// Output format (text, json)
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
     },
     /// Runs the interactive TUI simulator or executes headless test scenarios
     Sim {
@@ -112,6 +122,9 @@ enum Commands {
         /// Project directory (defaults to current directory)
         #[arg(short, long, default_value = ".")]
         path: PathBuf,
+        /// Output format for headless simulation (text, json)
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
     },
     /// Launches the native FerritePLC Studio graphical IDE and live PLC simulator
     Gui {
@@ -188,12 +201,16 @@ fn main() -> Result<()> {
                 .with_context(|| format!("Failed to add POU '{name}' ({kind})"))?;
             println!("Added {kind} POU '{name}' -> {}", created.display());
         }
-        Some(Commands::Check { path }) => {
-            run_check(&path)?;
+        Some(Commands::Check { path, format }) => {
+            run_check(&path, format)?;
         }
-        Some(Commands::Sim { headless, path }) => {
+        Some(Commands::Sim {
+            headless,
+            path,
+            format,
+        }) => {
             if headless {
-                run_headless_sim(&path)?;
+                run_headless_sim(&path, format)?;
             } else {
                 run_tui_sim(&path)?;
             }
@@ -229,10 +246,78 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_check(path: &Path) -> Result<()> {
+#[derive(Serialize)]
+struct JsonCheckReport {
+    ok: bool,
+    project: String,
+    pous_count: usize,
+    tags_count: usize,
+    fbs_count: usize,
+    diagnostics: Vec<JsonDiagnostic>,
+}
+
+#[derive(Serialize)]
+struct JsonDiagnostic {
+    severity: String,
+    pou: String,
+    language: String,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct JsonSimReport {
+    ok: bool,
+    project: String,
+    scenarios_total: usize,
+    scenarios_failed: usize,
+    results: Vec<JsonScenarioResult>,
+}
+
+#[derive(Serialize)]
+struct JsonScenarioResult {
+    name: String,
+    passed: bool,
+    scans_executed: u64,
+    assertions_verified: usize,
+    max_scan_duration_us: u64,
+    error: Option<String>,
+}
+
+fn run_check(path: &Path, format: OutputFormat) -> Result<()> {
     let project = Project::load(path)
         .with_context(|| format!("Failed to load project from {}", path.display()))?;
     let diagnostics = project.check()?;
+
+    if format == OutputFormat::Json {
+        let (tags_count, pous_count, fbs_count) = if diagnostics.is_empty() {
+            let (tags, pous) = project.compile().unwrap_or_default();
+            (tags.tags().len(), pous.len(), tags.fbs().len())
+        } else {
+            (0, 0, 0)
+        };
+        let report = JsonCheckReport {
+            ok: diagnostics.is_empty(),
+            project: project.manifest.name,
+            pous_count,
+            tags_count,
+            fbs_count,
+            diagnostics: diagnostics
+                .iter()
+                .map(|d| JsonDiagnostic {
+                    severity: format!("{:?}", d.severity),
+                    pou: d.pou.clone(),
+                    language: d.language.to_string(),
+                    message: d.message.clone(),
+                })
+                .collect(),
+        };
+        let json_str = serde_json::to_string_pretty(&report)?;
+        println!("{json_str}");
+        if !diagnostics.is_empty() {
+            bail!("Validation failed with {} error(s)", diagnostics.len());
+        }
+        return Ok(());
+    }
 
     if diagnostics.is_empty() {
         let (tags, pous) = project.compile()?;
@@ -259,16 +344,27 @@ fn run_check(path: &Path) -> Result<()> {
     }
 }
 
-fn run_headless_sim(path: &Path) -> Result<()> {
+fn run_headless_sim(path: &Path, format: OutputFormat) -> Result<()> {
     let project = Project::load(path)
         .with_context(|| format!("Failed to load project from {}", path.display()))?;
     let diagnostics = project.check()?;
     if !diagnostics.is_empty() {
-        for diag in &diagnostics {
-            eprintln!(
-                "[{:?}] POU '{}' ({}): {}",
-                diag.severity, diag.pou, diag.language, diag.message
-            );
+        if format == OutputFormat::Json {
+            let report = JsonSimReport {
+                ok: false,
+                project: project.manifest.name,
+                scenarios_total: 0,
+                scenarios_failed: 0,
+                results: vec![],
+            };
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            for diag in &diagnostics {
+                eprintln!(
+                    "[{:?}] POU '{}' ({}): {}",
+                    diag.severity, diag.pou, diag.language, diag.message
+                );
+            }
         }
         bail!("Cannot start simulation: project has validation errors.");
     }
@@ -279,28 +375,114 @@ fn run_headless_sim(path: &Path) -> Result<()> {
         for _ in 0..scans {
             runtime.step_scan()?;
         }
-        println!(
-            "Executed {scans} headless scan cycles (virtual time = {} ms, max scan = {} us).",
-            runtime.virtual_time_ms, runtime.max_scan_duration_us
-        );
+        if format == OutputFormat::Json {
+            let report = JsonSimReport {
+                ok: true,
+                project: project.manifest.name,
+                scenarios_total: 1,
+                scenarios_failed: 0,
+                results: vec![JsonScenarioResult {
+                    name: "default_scan_run".to_string(),
+                    passed: true,
+                    scans_executed: scans,
+                    assertions_verified: 0,
+                    max_scan_duration_us: runtime.max_scan_duration_us,
+                    error: None,
+                }],
+            };
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            println!(
+                "Executed {scans} headless scan cycles (virtual time = {} ms, max scan = {} us).",
+                runtime.virtual_time_ms, runtime.max_scan_duration_us
+            );
+        }
         return Ok(());
     }
 
-    println!(
-        "Running {} headless scenario(s) for project '{}'...",
-        project.scenarios.scenarios.len(),
-        project.manifest.name
-    );
-    for scenario in &project.scenarios.scenarios {
-        let mut runtime = PlcRuntime::from_project(&project)?;
-        let report = runtime.run_scenario(scenario)?;
+    if format != OutputFormat::Json {
         println!(
-            "  [PASS] Scenario '{}': {} scans, {} assertions verified (max scan: {} us)",
-            report.scenario_name,
-            report.scans_executed,
-            report.assertions_verified,
-            report.max_scan_duration_us
+            "Running {} headless scenario(s) for project '{}'...",
+            project.scenarios.scenarios.len(),
+            project.manifest.name
         );
+    }
+
+    let mut failures = 0usize;
+    let mut json_results = Vec::new();
+
+    for scenario in &project.scenarios.scenarios {
+        let mut runtime = match PlcRuntime::from_project(&project) {
+            Ok(rt) => rt,
+            Err(e) => {
+                if format != OutputFormat::Json {
+                    eprintln!(
+                        "  [FAIL] Scenario '{}': failed to initialize runtime: {}",
+                        scenario.name, e
+                    );
+                }
+                failures += 1;
+                json_results.push(JsonScenarioResult {
+                    name: scenario.name.clone(),
+                    passed: false,
+                    scans_executed: 0,
+                    assertions_verified: 0,
+                    max_scan_duration_us: 0,
+                    error: Some(format!("Failed to initialize runtime: {e}")),
+                });
+                continue;
+            }
+        };
+        match runtime.run_scenario(scenario) {
+            Ok(report) => {
+                if format != OutputFormat::Json {
+                    println!(
+                        "  [PASS] Scenario '{}': {} scans, {} assertions verified (max scan: {} us)",
+                        report.scenario_name,
+                        report.scans_executed,
+                        report.assertions_verified,
+                        report.max_scan_duration_us
+                    );
+                }
+                json_results.push(JsonScenarioResult {
+                    name: scenario.name.clone(),
+                    passed: true,
+                    scans_executed: report.scans_executed,
+                    assertions_verified: report.assertions_verified,
+                    max_scan_duration_us: report.max_scan_duration_us,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                if format != OutputFormat::Json {
+                    eprintln!("  [FAIL] Scenario '{}': {}", scenario.name, e);
+                }
+                failures += 1;
+                json_results.push(JsonScenarioResult {
+                    name: scenario.name.clone(),
+                    passed: false,
+                    scans_executed: 0,
+                    assertions_verified: 0,
+                    max_scan_duration_us: 0,
+                    error: Some(e.to_string()),
+                });
+            }
+        }
+    }
+
+    if format == OutputFormat::Json {
+        let report = JsonSimReport {
+            ok: failures == 0,
+            project: project.manifest.name.clone(),
+            scenarios_total: project.scenarios.scenarios.len(),
+            scenarios_failed: failures,
+            results: json_results,
+        };
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    }
+
+    if failures > 0 {
+        bail!("{failures} scenario(s) failed");
     }
     Ok(())
 }
@@ -514,4 +696,72 @@ fn tui_loop(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ferrite_core::IecValue;
+    use ferrite_project::{SimScenario, SimStep};
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_i30_headless_sim_runs_all_scenarios_and_reports_failures(
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_cli_test_i30_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let mut proj = Project::scaffold(&temp_dir, "cli_test_plant")?;
+
+        // Scenario 1: passing scenario (scaffold default scenario)
+        assert!(!proj.scenarios.scenarios.is_empty());
+
+        // Scenario 2: failing scenario (asserts impossible condition)
+        let mut failing_step = SimStep {
+            scan: 1,
+            description: "Failing step".to_string(),
+            set: HashMap::new(),
+            expect: HashMap::new(),
+            asserts: Vec::new(),
+        };
+        // EStop_OK is true by default, so expecting false fails
+        failing_step
+            .expect
+            .insert("EStop_OK".to_string(), IecValue::Bool(false));
+
+        let failing_scenario = SimScenario {
+            name: "Failing_Scenario".to_string(),
+            description: "Deliberately fails to verify headless sim runs all scenarios".to_string(),
+            total_scans: 2,
+            steps: vec![failing_step],
+            asserts: Vec::new(),
+        };
+        proj.scenarios.scenarios.push(failing_scenario);
+
+        // Scenario 3: another scenario to ensure it runs even after failure
+        let third_scenario = SimScenario {
+            name: "Third_Scenario".to_string(),
+            description: "Runs after failing scenario".to_string(),
+            total_scans: 1,
+            steps: vec![],
+            asserts: Vec::new(),
+        };
+        proj.scenarios.scenarios.push(third_scenario);
+
+        proj.save(&temp_dir)?;
+
+        // run_headless_sim must execute all 3 scenarios, print FAIL, and return Err
+        let res = run_headless_sim(&temp_dir, OutputFormat::Text);
+        let Err(err) = res else {
+            panic!("run_headless_sim must return Err when any scenario fails");
+        };
+        let err_msg = err.to_string();
+        assert!(err_msg.contains("failed"), "Error message should indicate scenario failures: {err_msg}");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }

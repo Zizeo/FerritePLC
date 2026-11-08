@@ -29,7 +29,7 @@ ferrite-hal.workspace = true
 ferrite-project.workspace = true
 ferrite-runtime.workspace = true
 ferrite-twin.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 rust-i18n.workspace = true

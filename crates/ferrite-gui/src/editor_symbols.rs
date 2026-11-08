@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length};
 
@@ -7,6 +10,35 @@ use ferrite_project::Project;
 use crate::app::Message;
 use crate::i18n::UiLanguage;
 use crate::theme::StudioTheme;
+
+static SYMBOL_BUFFERS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+
+pub fn get_symbol_buffer(key: &str) -> Option<String> {
+    SYMBOL_BUFFERS.lock().ok()?.as_ref()?.get(key).cloned()
+}
+
+pub fn set_symbol_buffer(key: &str, val: String) {
+    if let Ok(mut lock) = SYMBOL_BUFFERS.lock() {
+        let map = lock.get_or_insert_with(HashMap::new);
+        map.insert(key.to_string(), val);
+    }
+}
+
+pub fn clear_symbol_buffer(key: &str) {
+    if let Ok(mut lock) = SYMBOL_BUFFERS.lock()
+        && let Some(map) = lock.as_mut()
+    {
+        map.remove(key);
+    }
+}
+
+pub fn clear_all_symbol_buffers() {
+    if let Ok(mut lock) = SYMBOL_BUFFERS.lock()
+        && let Some(map) = lock.as_mut()
+    {
+        map.clear();
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FbKindWrapper(pub StandardFbKind);
@@ -102,16 +134,22 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                 text(crate::tr!("symbols.scan_cycle", lang))
                     .size(11)
                     .color(StudioTheme::TEXT_SECONDARY),
-                text_input("50", &project.manifest.scan_cycle_ms.to_string())
-                    .on_input(|s| {
-                        if let Ok(ms) = s.parse::<u64>() {
-                            Message::ScanCycleMsChanged(ms)
-                        } else {
-                            Message::None
-                        }
-                    })
-                    .padding([4, 8])
-                    .style(StudioTheme::styled_input),
+                {
+                    let scan_str = get_symbol_buffer("manifest.scan_cycle_ms")
+                        .unwrap_or_else(|| project.manifest.scan_cycle_ms.to_string());
+                    text_input("50", &scan_str)
+                        .on_input(|s| {
+                            set_symbol_buffer("manifest.scan_cycle_ms", s.clone());
+                            if let Ok(ms) = s.parse::<u64>() {
+                                Message::ScanCycleMsChanged(ms)
+                            } else {
+                                Message::None
+                            }
+                        })
+                        .on_submit(Message::CommitSymbolBuffer("manifest.scan_cycle_ms".to_string()))
+                        .padding([4, 8])
+                        .style(StudioTheme::styled_input)
+                },
             ]
             .spacing(4)
             .width(Length::FillPortion(1)),
@@ -119,16 +157,22 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                 text(crate::tr!("symbols.watchdog", lang))
                     .size(11)
                     .color(StudioTheme::TEXT_SECONDARY),
-                text_input("100000", &project.manifest.watchdog_us.to_string())
-                    .on_input(|s| {
-                        if let Ok(us) = s.parse::<u64>() {
-                            Message::WatchdogUsChanged(us)
-                        } else {
-                            Message::None
-                        }
-                    })
-                    .padding([4, 8])
-                    .style(StudioTheme::styled_input),
+                {
+                    let wd_str = get_symbol_buffer("manifest.watchdog_us")
+                        .unwrap_or_else(|| project.manifest.watchdog_us.to_string());
+                    text_input("100000", &wd_str)
+                        .on_input(|s| {
+                            set_symbol_buffer("manifest.watchdog_us", s.clone());
+                            if let Ok(us) = s.parse::<u64>() {
+                                Message::WatchdogUsChanged(us)
+                            } else {
+                                Message::None
+                            }
+                        })
+                        .on_submit(Message::CommitSymbolBuffer("manifest.watchdog_us".to_string()))
+                        .padding([4, 8])
+                        .style(StudioTheme::styled_input)
+                },
             ]
             .spacing(4)
             .width(Length::FillPortion(1)),
@@ -166,7 +210,7 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
             text(crate::tr!("symbols.col_action", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(Length::Shrink),
+                .width(Length::Fixed(80.0)),
         ]
         .spacing(12)
     ]
@@ -175,6 +219,8 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
     for (idx, tag) in project.global_tags.tags.iter().enumerate() {
         let addr_str = tag.address.map(|a| a.to_string()).unwrap_or_default();
         let init_val_str = tag.initial_value.to_string();
+        let init_key = format!("tag.{idx}.init");
+        let cur_init_str = get_symbol_buffer(&init_key).unwrap_or(init_val_str);
 
         let row_item = row![
             text_input("Tag_Name", &tag.name)
@@ -183,14 +229,7 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                 .padding([4, 8])
                 .style(StudioTheme::styled_input),
             pick_list(
-                &[
-                    IecType::Bool,
-                    IecType::Int,
-                    IecType::Dint,
-                    IecType::Real,
-                    IecType::Time,
-                    IecType::String,
-                ][..],
+                IecType::ALL_ELEMENTARY,
                 Some(tag.data_type),
                 move |ty| Message::TagTypeChanged(idx, ty),
             )
@@ -201,8 +240,13 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                 .width(Length::FillPortion(2))
                 .padding([4, 8])
                 .style(StudioTheme::styled_input),
-            text_input("0", &init_val_str)
-                .on_input(move |s| Message::TagInitialValueChanged(idx, s))
+            text_input("0", &cur_init_str)
+                .on_input(move |s| {
+                    let key = format!("tag.{idx}.init");
+                    set_symbol_buffer(&key, s.clone());
+                    Message::TagInitialValueChanged(idx, s)
+                })
+                .on_submit(Message::CommitSymbolBuffer(format!("tag.{idx}.init")))
                 .width(Length::FillPortion(2))
                 .padding([4, 8])
                 .style(StudioTheme::styled_input),
@@ -211,10 +255,15 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
                 .width(Length::FillPortion(4))
                 .padding([4, 8])
                 .style(StudioTheme::styled_input),
-            button(text(crate::tr!("symbols.delete", lang)).size(11))
-                .on_press(Message::RemoveGlobalTag(idx))
-                .style(StudioTheme::danger_button)
-                .padding([8, 16]),
+            button(
+                text(crate::tr!("symbols.delete", lang))
+                    .size(11)
+                    .align_x(iced::alignment::Horizontal::Center)
+            )
+            .width(Length::Fixed(80.0))
+            .on_press(Message::RemoveGlobalTag(idx))
+            .style(StudioTheme::danger_button)
+            .padding([8, 12]),
         ]
         .spacing(12)
         .align_y(Alignment::Center);
@@ -255,7 +304,7 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
             text(crate::tr!("symbols.col_action", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
-                .width(Length::Shrink),
+                .width(Length::Fixed(80.0)),
         ]
         .spacing(12)
     ]
@@ -263,44 +312,56 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
 
     for (idx, fb) in project.fb_instances.instances.iter().enumerate() {
         let param_view: Element<'_, Message> = if fb.kind.is_corrector() {
-            let kp_str = format!("{:.2}", fb.kp);
-            let ti_str = format!("{:.2}", fb.ti_s);
-            let td_str = format!("{:.2}", fb.td_s);
+            let kp_key = format!("fb.{idx}.kp");
+            let kp_str = get_symbol_buffer(&kp_key).unwrap_or_else(|| format!("{:.2}", fb.kp));
+            let ti_key = format!("fb.{idx}.ti");
+            let ti_str = get_symbol_buffer(&ti_key).unwrap_or_else(|| format!("{:.2}", fb.ti_s));
+            let td_key = format!("fb.{idx}.td");
+            let td_str = get_symbol_buffer(&td_key).unwrap_or_else(|| format!("{:.2}", fb.td_s));
 
             row![
                 text("Kp:").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("1.0", &kp_str)
                     .on_input(move |s| {
+                        let key = format!("fb.{idx}.kp");
+                        set_symbol_buffer(&key, s.clone());
                         if let Ok(v) = s.parse::<f32>() {
                             Message::FbGainChanged(idx, v)
                         } else {
                             Message::None
                         }
                     })
+                    .on_submit(Message::CommitSymbolBuffer(format!("fb.{idx}.kp")))
                     .width(Length::FillPortion(1))
                     .padding([3, 6])
                     .style(StudioTheme::styled_input),
                 text("Ti(s):").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("2.0", &ti_str)
                     .on_input(move |s| {
+                        let key = format!("fb.{idx}.ti");
+                        set_symbol_buffer(&key, s.clone());
                         if let Ok(v) = s.parse::<f32>() {
                             Message::FbTiChanged(idx, v)
                         } else {
                             Message::None
                         }
                     })
+                    .on_submit(Message::CommitSymbolBuffer(format!("fb.{idx}.ti")))
                     .width(Length::FillPortion(1))
                     .padding([3, 6])
                     .style(StudioTheme::styled_input),
                 text("Td(s):").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("0.5", &td_str)
                     .on_input(move |s| {
+                        let key = format!("fb.{idx}.td");
+                        set_symbol_buffer(&key, s.clone());
                         if let Ok(v) = s.parse::<f32>() {
                             Message::FbTdChanged(idx, v)
                         } else {
                             Message::None
                         }
                     })
+                    .on_submit(Message::CommitSymbolBuffer(format!("fb.{idx}.td")))
                     .width(Length::FillPortion(1))
                     .padding([3, 6])
                     .style(StudioTheme::styled_input),
@@ -318,31 +379,39 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
             .align_y(Alignment::Center)
             .into()
         } else {
-            let pt_str = format!("{}", fb.pt_ms);
-            let pv_str = format!("{}", fb.pv);
+            let pt_key = format!("fb.{idx}.pt");
+            let pt_str = get_symbol_buffer(&pt_key).unwrap_or_else(|| format!("{}", fb.pt_ms));
+            let pv_key = format!("fb.{idx}.pv");
+            let pv_str = get_symbol_buffer(&pv_key).unwrap_or_else(|| format!("{}", fb.pv));
 
             row![
                 text("PT(ms):").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("5000", &pt_str)
                     .on_input(move |s| {
+                        let key = format!("fb.{idx}.pt");
+                        set_symbol_buffer(&key, s.clone());
                         if let Ok(v) = s.parse::<u64>() {
                             Message::FbPtChanged(idx, v)
                         } else {
                             Message::None
                         }
                     })
+                    .on_submit(Message::CommitSymbolBuffer(format!("fb.{idx}.pt")))
                     .width(Length::FillPortion(1))
                     .padding([3, 6])
                     .style(StudioTheme::styled_input),
                 text("PV:").size(11).color(StudioTheme::TEXT_SECONDARY),
                 text_input("10", &pv_str)
                     .on_input(move |s| {
+                        let key = format!("fb.{idx}.pv");
+                        set_symbol_buffer(&key, s.clone());
                         if let Ok(v) = s.parse::<i16>() {
                             Message::FbPvChanged(idx, v)
                         } else {
                             Message::None
                         }
                     })
+                    .on_submit(Message::CommitSymbolBuffer(format!("fb.{idx}.pv")))
                     .width(Length::FillPortion(1))
                     .padding([3, 6])
                     .style(StudioTheme::styled_input),
@@ -364,10 +433,15 @@ pub fn render_symbols_editor<'a>(project: &'a Project, lang: UiLanguage) -> Elem
             .width(Length::FillPortion(2))
             .style(StudioTheme::styled_pick_list),
             container(param_view).width(Length::FillPortion(6)),
-            button(text(crate::tr!("symbols.delete", lang)).size(11))
-                .on_press(Message::RemoveFbInstance(idx))
-                .style(StudioTheme::danger_button)
-                .padding([8, 16]),
+            button(
+                text(crate::tr!("symbols.delete", lang))
+                    .size(11)
+                    .align_x(iced::alignment::Horizontal::Center)
+            )
+            .width(Length::Fixed(80.0))
+            .on_press(Message::RemoveFbInstance(idx))
+            .style(StudioTheme::danger_button)
+            .padding([8, 12]),
         ]
         .spacing(12)
         .align_y(Alignment::Center);

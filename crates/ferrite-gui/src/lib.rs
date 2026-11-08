@@ -2677,73 +2677,467 @@ mod tests {
     }
 
     #[test]
-    fn test_breakpoint_mode_and_input_parsing() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join("ferrite_gui_bp_test");
-        if temp_dir.exists() {
-            let _ = std::fs::remove_dir_all(&temp_dir);
-        }
-        let proj = Project::scaffold(&temp_dir, "bp_test")?;
-        let mut app = FerriteStudioApp::new(proj);
+    fn test_i22_select_tab_clears_editor_selections() -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = FerriteStudioApp::new_test_app();
+        app.active_tab = WorkspaceTab::Pou("main_safety".to_string());
+        app.ld_selected = Some((
+            "main_safety".to_string(),
+            crate::canvas_ld::LdElementKey::Contact { rung: 0, branch_path: vec![], index: 0 },
+        ));
+        app.ld_selected_elements = vec![
+            crate::canvas_ld::LdElementKey::Contact { rung: 0, branch_path: vec![], index: 0 },
+        ];
 
-        // Default mode is ScanCount
-        assert_eq!(app.bp_mode, crate::app::BreakpointMode::ScanCount);
+        // Switch tab to batch_seq (SFC)
+        let _ = app.update(Message::SelectTab(WorkspaceTab::Pou("batch_seq".to_string())));
 
-        // Test empty/whitespace input
-        app.bp_input_val = "   ".to_string();
-        assert!(app.parse_breakpoint_input().is_none());
+        // Verify selections are cleared
+        assert!(app.ld_selected.is_none());
+        assert!(app.ld_selected_elements.is_empty());
+        assert!(app.sfc_selected.is_none());
+        assert!(app.sfc_selected_elements.is_empty());
 
-        // Test ScanCount: valid number
-        app.bp_input_val = " 42 ".to_string();
-        assert_eq!(
-            app.parse_breakpoint_input(),
-            Some(ferrite_runtime::Breakpoint::ScanCount(42))
+        // Pressing delete while on batch_seq should not mutate main_safety
+        let initial_main_safety = app.project.pous.get("main_safety").cloned();
+        let _ = app.update(Message::DeletePressed);
+        assert_eq!(app.project.pous.get("main_safety"), initial_main_safety.as_ref());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_i23_st_contents_resynced_on_load_project() -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = FerriteStudioApp::new_test_app();
+        app.st_contents.insert(
+            "math_pid".to_string(),
+            iced::widget::text_editor::Content::with_text("OLD_ST_SOURCE"),
         );
 
-        // Test ScanCount: invalid number
-        app.bp_input_val = "abc".to_string();
-        assert!(app.parse_breakpoint_input().is_none());
-
-        // Test SymbolTrue
-        app.bp_mode = crate::app::BreakpointMode::SymbolTrue;
-        app.bp_input_val = " EStop_Active ".to_string();
-        assert_eq!(
-            app.parse_breakpoint_input(),
-            Some(ferrite_runtime::Breakpoint::SymbolTrue("EStop_Active".to_string()))
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_i23_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let mut new_proj = ferrite_project::Project::scaffold(&temp_dir, "new_st_proj")?;
+        let new_st = "PROGRAM new_math\n  val := 42;\nEND_PROGRAM\n";
+        new_proj.pous.insert(
+            "math_pid".to_string(),
+            ferrite_project::PouSource::St(ferrite_lang_st::StProgram::parse("math_pid", new_st)?),
         );
+        new_proj.save(&temp_dir)?;
 
-        // Test Pou
-        app.bp_mode = crate::app::BreakpointMode::Pou;
-        app.bp_input_val = " main_safety ".to_string();
-        assert_eq!(
-            app.parse_breakpoint_input(),
-            Some(ferrite_runtime::Breakpoint::Pou(ferrite_core::PouId("main_safety".to_string())))
-        );
+        let _ = app.update(Message::LoadProjectFromPath(temp_dir.clone()));
 
-        // Test AddBreakpoint clears bp_input_val
-        let bp = app.parse_breakpoint_input().ok_or("expected valid bp")?;
-        let _ = app.update(Message::AddBreakpoint(bp));
-        assert!(app.bp_input_val.is_empty(), "bp_input_val must be cleared after adding breakpoint");
-        assert_eq!(app.runtime.as_ref().map(|rt| rt.breakpoints.len()), Some(1));
-
-        // Test ClearAllBreakpoints
-        let _ = app.update(Message::ClearAllBreakpoints);
-        assert_eq!(app.runtime.as_ref().map(|rt| rt.breakpoints.len()), Some(0));
-
-        // Test UI view rendering in both EN and FR with empty and populated breakpoints
-        let win_id = iced::window::Id::unique();
-        app.bottom_dock_tab = crate::app::BottomDockTab::Diagnostics;
-        let _ = app.view(win_id);
-
-        let _ = app.update(Message::SetBpMode(crate::app::BreakpointMode::SymbolTrue));
-        let _ = app.update(Message::SetBpInputVal("Sensor_1".to_string()));
-        let bp = app.parse_breakpoint_input().ok_or("expected valid bp")?;
-        let _ = app.update(Message::AddBreakpoint(bp));
-        let _ = app.view(win_id);
-
-        let _ = app.update(Message::SetLanguage(crate::UiLanguage::Fr));
-        let _ = app.view(win_id);
+        let Some(st_content) = app.st_contents.get("math_pid") else {
+            panic!("ST content should be synced");
+        };
+        assert_eq!(st_content.text(), new_st);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
+    }
+
+    #[test]
+    fn test_i24_sfc_id_no_collision_after_deletions() -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = FerriteStudioApp::new_test_app();
+        let pou_name = "batch_seq".to_string();
+
+        // Add 2 transitions
+        let _ = app.update(Message::SfcAddTransition(pou_name.clone()));
+        let _ = app.update(Message::SfcAddTransition(pou_name.clone()));
+
+        let sfc = match app.project.pous.get(&pou_name) {
+            Some(ferrite_project::PouSource::Sfc(s)) => s.clone(),
+            _ => panic!("Expected SFC POU"),
+        };
+        // Delete a middle transition
+        assert!(sfc.transitions.len() >= 2);
+        let _ = app.update(Message::SfcRemoveTransition(pou_name.clone(), 0));
+
+        // Add a new transition
+        let _ = app.update(Message::SfcAddTransition(pou_name.clone()));
+
+        let sfc_after = match app.project.pous.get(&pou_name) {
+            Some(ferrite_project::PouSource::Sfc(s)) => s,
+            _ => panic!("Expected SFC POU"),
+        };
+
+        // Ensure all transition IDs are unique
+        let mut ids = std::collections::HashSet::new();
+        for t in &sfc_after.transitions {
+            assert!(ids.insert(t.id.clone()), "Duplicate transition ID found: {}", t.id);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_i25_save_pou_preserves_dirty_when_symbols_modified() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_i25_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_i25")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        // Edit a global tag
+        let _ = app.update(Message::TagNameChanged(0, "Renamed_Tag".to_string()));
+        assert!(app.modified);
+
+        // Modify and save only one POU
+        let _ = app.update(Message::LdAddContact("main_safety".to_string(), 0));
+        let _ = app.update(Message::SavePou("main_safety".to_string()));
+
+        // Even though main_safety was saved, modified must still be true because global tags are unsaved!
+        assert!(app.modified, "app.modified must remain true when symbols are dirty");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_i26_confirm_close_save_and_exit_aborts_on_save_error() -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = FerriteStudioApp::new_test_app();
+        app.modified = true;
+        app.show_close_confirm_modal = true;
+
+        // Create a regular file and point root_dir to it, so create_dir_all fails
+        let temp_file = std::env::temp_dir().join(format!(
+            "ferrite_test_i26_file_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        std::fs::write(&temp_file, "blocking file")?;
+        app.project.root_dir = temp_file.clone();
+
+        let _ = app.update(Message::ConfirmCloseSaveAndExit);
+
+        // Exit must have been aborted
+        assert!(!app.allowed_to_close, "Exit must be aborted on save error");
+        assert!(!app.show_close_confirm_modal);
+        assert!(app.status_banner.starts_with("Save failed"), "Status banner: {}", app.status_banner);
+
+        let _ = std::fs::remove_file(&temp_file);
+        Ok(())
+    }
+
+    #[test]
+    fn test_i27_fbd_block_naming_no_duplicates_after_delete() -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = FerriteStudioApp::new_test_app();
+        let pou_name = "pump_ctrl".to_string();
+
+        // Add two TON blocks
+        let _ = app.update(Message::FbdAddBlock(
+            pou_name.clone(),
+            ferrite_lang_fbd::FbdBlockKind::StandardFb {
+                instance: "TON_1".to_string(),
+                fb_type: Some(ferrite_core::StandardFbKind::Ton),
+            },
+        ));
+        let _ = app.update(Message::FbdAddBlock(
+            pou_name.clone(),
+            ferrite_lang_fbd::FbdBlockKind::StandardFb {
+                instance: "TON_2".to_string(),
+                fb_type: Some(ferrite_core::StandardFbKind::Ton),
+            },
+        ));
+
+        // Delete TON_1
+        let _ = app.update(Message::FbdRemoveBlock(pou_name.clone(), 0));
+
+        // Add another block with instance TON_2 (as if clicked from library when count was 1)
+        let _ = app.update(Message::FbdAddBlock(
+            pou_name.clone(),
+            ferrite_lang_fbd::FbdBlockKind::StandardFb {
+                instance: "TON_2".to_string(),
+                fb_type: Some(ferrite_core::StandardFbKind::Ton),
+            },
+        ));
+
+        let fbd = match app.project.pous.get(&pou_name) {
+            Some(ferrite_project::PouSource::Fbd(f)) => f,
+            _ => panic!("Expected FBD POU"),
+        };
+
+        // Verify there are no duplicate block IDs
+        let mut ids = std::collections::HashSet::new();
+        for b in &fbd.blocks {
+            assert!(ids.insert(b.id.clone()), "Duplicate FBD block ID found: {}", b.id);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_i28_numeric_buffer_and_commit() {
+        use crate::editor_symbols::{clear_symbol_buffer, get_symbol_buffer, set_symbol_buffer};
+
+        let key = "fb.0.kp";
+        clear_symbol_buffer(key);
+        assert_eq!(get_symbol_buffer(key), None);
+
+        // User is typing "0."
+        set_symbol_buffer(key, "0.".to_string());
+        assert_eq!(get_symbol_buffer(key).as_deref(), Some("0."));
+
+        // User finishes typing "0.5"
+        set_symbol_buffer(key, "0.5".to_string());
+        assert_eq!(get_symbol_buffer(key).as_deref(), Some("0.5"));
+
+        // Commit on submit
+        clear_symbol_buffer(key);
+        assert_eq!(get_symbol_buffer(key), None);
+    }
+
+    #[test]
+    fn test_digital_twin_load_failure_preserves_corrupted_file() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_twin_fail_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_twin_fail")?;
+
+        // Write malformed JSON to sim/digital_twin.json
+        let sim_dir = temp_dir.join("sim");
+        std::fs::create_dir_all(&sim_dir)?;
+        let twin_path = sim_dir.join("digital_twin.json");
+        let malformed_content = "{ invalid json content !!!";
+        std::fs::write(&twin_path, malformed_content)?;
+
+        // Launch app
+        let mut app = FerriteStudioApp::new(proj);
+
+        // Verify banner shows failure and load_failed is set
+        assert!(app.digital_twin_load_failed);
+        assert!(app.status_banner.contains("Failed to load digital twin"));
+        assert!(app.status_banner.contains("digital_twin.json"));
+
+        // Save project
+        let _ = app.update(Message::SaveProject);
+
+        // Verify corrupted file was NOT overwritten
+        let current_file_content = std::fs::read_to_string(&twin_path)?;
+        assert_eq!(current_file_content, malformed_content, "Corrupted twin file must not be overwritten on save");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_online_reload_preserves_runtime_state() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_online_reload_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_online_reload")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        // 1. Force a tag value
+        let _ = app.update(Message::ToggleForceTag("Start_Button".to_string()));
+        let is_forced = app
+            .runtime
+            .as_ref()
+            .and_then(|r| r.tags.get_tag("Start_Button"))
+            .and_then(|t| t.forced.as_ref())
+            .cloned();
+        assert!(is_forced.is_some(), "Start_Button should be forced");
+
+        // 2. Step scans to advance state and scan counter
+        for _ in 0..5 {
+            let _ = app.execute_plc_scan_tick();
+        }
+        let scans_before = app.runtime.as_ref().map(|r| r.scan_count).unwrap_or(0);
+        assert_eq!(scans_before, 5, "Scan count should be 5");
+
+        // 3. Edit POU in project (set comment on main_safety rung 0)
+        let _ = app.update(Message::LdRungCommentChanged(
+            "main_safety".to_string(),
+            0,
+            "Updated safety rung comment".to_string(),
+        ));
+
+        // 4. Trigger recompile_runtime
+        app.recompile_runtime();
+
+        // 5. Verify status banner and state preservation
+        assert!(
+            app.status_banner.contains("Online reload")
+                || app.status_banner.contains("Rechargement en ligne"),
+            "Banner must show online reload: {}",
+            app.status_banner
+        );
+        let scans_after = app.runtime.as_ref().map(|r| r.scan_count).unwrap_or(0);
+        assert_eq!(
+            scans_after, 5,
+            "Scan count must be preserved across online reload"
+        );
+
+        let is_still_forced = app
+            .runtime
+            .as_ref()
+            .and_then(|r| r.tags.get_tag("Start_Button"))
+            .and_then(|t| t.forced.as_ref())
+            .cloned();
+        assert_eq!(
+            is_still_forced, is_forced,
+            "Forced tag state must be preserved across online reload"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_symbol_editor_new_iec_types_selectable_and_parseable() -> Result<(), Box<dyn std::error::Error>> {
+        let mut app = FerriteStudioApp::new_test_app();
+
+        // Verify ALL_ELEMENTARY contains new types
+        assert!(ferrite_core::IecType::ALL_ELEMENTARY.contains(&ferrite_core::IecType::Sint));
+        assert!(ferrite_core::IecType::ALL_ELEMENTARY.contains(&ferrite_core::IecType::Usint));
+        assert!(ferrite_core::IecType::ALL_ELEMENTARY.contains(&ferrite_core::IecType::Uint));
+        assert!(ferrite_core::IecType::ALL_ELEMENTARY.contains(&ferrite_core::IecType::Udint));
+        assert!(ferrite_core::IecType::ALL_ELEMENTARY.contains(&ferrite_core::IecType::Lint));
+        assert!(ferrite_core::IecType::ALL_ELEMENTARY.contains(&ferrite_core::IecType::Ulint));
+        assert!(ferrite_core::IecType::ALL_ELEMENTARY.contains(&ferrite_core::IecType::Byte));
+        assert!(ferrite_core::IecType::ALL_ELEMENTARY.contains(&ferrite_core::IecType::Word));
+        assert!(ferrite_core::IecType::ALL_ELEMENTARY.contains(&ferrite_core::IecType::Dword));
+        assert!(ferrite_core::IecType::ALL_ELEMENTARY.contains(&ferrite_core::IecType::Lword));
+        assert!(ferrite_core::IecType::ALL_ELEMENTARY.contains(&ferrite_core::IecType::Lreal));
+
+        // Add a new global tag for Dword testing
+        let _ = app.update(Message::AddGlobalTag);
+        let new_idx = app.project.global_tags.tags.len() - 1;
+        let _ = app.update(Message::TagTypeChanged(new_idx, ferrite_core::IecType::Dword));
+        let _ = app.update(Message::TagNameChanged(new_idx, "Dword_Tag".to_string()));
+        assert_eq!(app.project.global_tags.tags[new_idx].data_type, ferrite_core::IecType::Dword);
+        assert_eq!(app.project.global_tags.tags[new_idx].initial_value, ferrite_core::IecValue::Dword(0));
+
+        // Also test Lreal mutation on tag 0 in project
+        let _ = app.update(Message::TagTypeChanged(0, ferrite_core::IecType::Lreal));
+        assert_eq!(app.project.global_tags.tags[0].data_type, ferrite_core::IecType::Lreal);
+        assert_eq!(app.project.global_tags.tags[0].initial_value, ferrite_core::IecValue::Lreal(0.0));
+
+        // Force numeric tag with hex literal
+        let _ = app.update(Message::ForceNumericTag("Dword_Tag".to_string(), "16#ABCD".to_string()));
+        let forced_val = app
+            .runtime
+            .as_ref()
+            .and_then(|r| r.tags.get_tag("Dword_Tag"))
+            .and_then(|t| t.forced.as_ref())
+            .cloned();
+        assert_eq!(forced_val, Some(ferrite_core::IecValue::Dword(0xABCD)));
+
+        // Render symbol editor in all languages
+        for lang in crate::i18n::UiLanguage::ALL {
+            let _view = crate::editor_symbols::render_symbols_editor(&app.project, lang);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_in_scan_trace_configuration_and_drain() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_trace_ui_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_trace_ui")?;
+        let mut app = FerriteStudioApp::new(proj);
+
+        // Configure trace on Start_Button and EStop_OK
+        let _ = app.update(Message::TraceTagsInputChanged("Start_Button, EStop_OK".to_string()));
+        let _ = app.update(Message::TraceCapacityInputChanged("10".to_string()));
+        let _ = app.update(Message::TraceStart);
+        assert!(app.trace_active);
+
+        // Run scans
+        for _ in 0..5 {
+            let _ = app.execute_plc_scan_tick();
+        }
+
+        // Drain trace
+        let _ = app.update(Message::TraceDrain);
+        assert_eq!(app.trace_drained_samples.len(), 5);
+        assert_eq!(app.trace_drained_samples[0].scan_count, 1);
+        assert_eq!(app.trace_drained_samples[4].scan_count, 5);
+
+        // Render bottom dock with trace tab
+        app.bottom_dock_tab = crate::app::BottomDockTab::Trace;
+        {
+            let _view = app.view(iced::window::Id::unique());
+        }
+
+        // Clear trace
+        let _ = app.update(Message::TraceClear);
+        assert!(app.trace_drained_samples.is_empty());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_theme_persistence_in_user_settings() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_test_theme_persist_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let settings_path = temp_dir.join("settings.json");
+        std::fs::create_dir_all(&temp_dir)?;
+
+        crate::settings::set_custom_settings_path(Some(settings_path));
+
+        // Default when absent
+        assert_eq!(crate::settings::load_saved_theme(), None);
+        assert_eq!(crate::settings::load_saved_theme_or_default(), crate::app::UiTheme::Dark);
+
+        // Save Light theme
+        crate::settings::save_theme_preference(crate::app::UiTheme::Light)?;
+        assert_eq!(crate::settings::load_saved_theme(), Some(crate::app::UiTheme::Light));
+        assert_eq!(crate::settings::load_saved_theme_or_default(), crate::app::UiTheme::Light);
+
+        // Save Dark theme
+        crate::settings::save_theme_preference(crate::app::UiTheme::Dark)?;
+        assert_eq!(crate::settings::load_saved_theme(), Some(crate::app::UiTheme::Dark));
+
+        crate::settings::set_custom_settings_path(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_light_theme_backgrounds_and_palette() {
+        let dark = iced::Theme::Dark;
+        let light = iced::Theme::Light;
+
+        assert!(theme::StudioTheme::is_dark(&dark));
+        assert!(!theme::StudioTheme::is_dark(&light));
+
+        // Backgrounds must be distinctly different between dark and light
+        assert_ne!(
+            theme::StudioTheme::bg_base(&dark),
+            theme::StudioTheme::bg_base(&light)
+        );
+        assert_ne!(
+            theme::StudioTheme::bg_panel(&dark),
+            theme::StudioTheme::bg_panel(&light)
+        );
+        assert_ne!(
+            theme::StudioTheme::bg_elevated(&dark),
+            theme::StudioTheme::bg_elevated(&light)
+        );
+        assert_ne!(
+            theme::StudioTheme::bg_surface(&dark),
+            theme::StudioTheme::bg_surface(&light)
+        );
+
+        // Light background must be light (luminance > 0.8)
+        let light_bg = theme::StudioTheme::bg_base(&light);
+        assert!(light_bg.r > 0.8 && light_bg.g > 0.8 && light_bg.b > 0.8);
+
+        // Light text must be dark ink for high contrast
+        let light_text = theme::StudioTheme::text_primary(&light);
+        assert!(light_text.r < 0.2 && light_text.g < 0.2 && light_text.b < 0.2);
+
+        // Card style in light theme must use light elevated background
+        let card_light = theme::StudioTheme::card_style(&light);
+        assert!(matches!(card_light.background, Some(iced::Background::Color(c)) if c == iced::Color::WHITE));
     }
 }

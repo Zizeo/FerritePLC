@@ -77,42 +77,151 @@ fn read_output_live_value(rt: &PlcRuntime, target: &str) -> Option<String> {
 fn format_live_iec_value(val: IecValue) -> String {
     match val {
         IecValue::Bool(b) => if b { "TRUE".to_string() } else { "FALSE".to_string() },
+        IecValue::Sint(i) => format!("{i}"),
         IecValue::Int(i) => format!("{i}"),
         IecValue::Dint(d) => format!("{d}"),
+        IecValue::Lint(l) => format!("{l}"),
+        IecValue::Usint(u) => format!("{u}"),
+        IecValue::Uint(u) => format!("{u}"),
+        IecValue::Udint(u) => format!("{u}"),
+        IecValue::Ulint(u) => format!("{u}"),
+        IecValue::Byte(b) => format!("16#{b:02X}"),
+        IecValue::Word(w) => format!("16#{w:04X}"),
+        IecValue::Dword(d) => format!("16#{d:08X}"),
+        IecValue::Lword(l) => format!("16#{l:016X}"),
         IecValue::Real(r) => format!("{r:.1}"),
+        IecValue::Lreal(r) => format!("{r:.1}"),
         IecValue::Time(ms) => format!("{ms}ms"),
         IecValue::String(s) => s,
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FbdCategory {
+    Logic,
+    Arithmetic,
+    Comparator,
+    Timer,
+    Counter,
+    Edge,
+    Bistable,
+    Conditioning,
+    Corrector,
+    Composite,
+}
+
+impl FbdCategory {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Logic => "LOGIC:GATE",
+            Self::Arithmetic => "MATH:OP",
+            Self::Comparator => "COMPARE",
+            Self::Timer => "TIME:DELAY",
+            Self::Counter => "COUNT:ACC",
+            Self::Edge => "EDGE:TRIG",
+            Self::Bistable => "LATCH:FF",
+            Self::Conditioning => "SIGNAL:COND",
+            Self::Corrector => "CTRL:PID",
+            Self::Composite => "CUSTOM:MOD",
+        }
+    }
+
+    pub fn accent_color(self) -> iced::Color {
+        match self {
+            Self::Logic => iced::Color::from_rgb(0.388, 0.400, 0.945),        // #6366F1 Electric Indigo
+            Self::Arithmetic => iced::Color::from_rgb(0.961, 0.620, 0.043),   // #F59E0B Amber Tech
+            Self::Comparator => iced::Color::from_rgb(0.918, 0.702, 0.031),   // #EAB308 Gold Compare
+            Self::Timer => iced::Color::from_rgb(0.024, 0.714, 0.831),        // #06B6D4 Neon Cyan
+            Self::Counter => iced::Color::from_rgb(0.659, 0.333, 0.969),      // #A855F7 Plasma Purple
+            Self::Edge => iced::Color::from_rgb(0.925, 0.282, 0.600),         // #EC4899 Laser Fuchsia
+            Self::Bistable => iced::Color::from_rgb(0.231, 0.510, 0.965),     // #3B82F6 Electric Blue
+            Self::Conditioning => iced::Color::from_rgb(0.078, 0.722, 0.651), // #14B8A6 Signal Teal
+            Self::Corrector => iced::Color::from_rgb(0.063, 0.725, 0.506),    // #10B981 Emerald Control
+            Self::Composite => iced::Color::from_rgb(0.957, 0.247, 0.369),    // #F43F5E Rose Tech
+        }
+    }
+
+    pub fn bg_subtle(self) -> iced::Color {
+        let mut c = self.accent_color();
+        c.a = 0.06;
+        c
+    }
+
+    pub fn badge_bg(self) -> iced::Color {
+        let mut c = self.accent_color();
+        c.a = 0.14;
+        c
+    }
+}
+
+pub fn block_category(kind: &FbdBlockKind) -> FbdCategory {
+    match kind {
+        FbdBlockKind::And | FbdBlockKind::Or | FbdBlockKind::Xor | FbdBlockKind::Not => {
+            FbdCategory::Logic
+        }
+        FbdBlockKind::Add | FbdBlockKind::Sub | FbdBlockKind::Mul | FbdBlockKind::Div => {
+            FbdCategory::Arithmetic
+        }
+        FbdBlockKind::Gt
+        | FbdBlockKind::Ge
+        | FbdBlockKind::Lt
+        | FbdBlockKind::Le
+        | FbdBlockKind::Eq
+        | FbdBlockKind::Ne => FbdCategory::Comparator,
+        FbdBlockKind::StandardFb {
+            fb_type: Some(fb), ..
+        } => match fb {
+            StandardFbKind::Ton
+            | StandardFbKind::Tof
+            | StandardFbKind::Tp
+            | StandardFbKind::Blink => FbdCategory::Timer,
+            StandardFbKind::Ctu | StandardFbKind::Ctd | StandardFbKind::Ctud => {
+                FbdCategory::Counter
+            }
+            StandardFbKind::RTrig | StandardFbKind::FTrig => FbdCategory::Edge,
+            StandardFbKind::Sr | StandardFbKind::Rs => FbdCategory::Bistable,
+            StandardFbKind::Hysteresis
+            | StandardFbKind::RampReal
+            | StandardFbKind::ScaleLin => FbdCategory::Conditioning,
+            StandardFbKind::P
+            | StandardFbKind::Pi
+            | StandardFbKind::PidParallel
+            | StandardFbKind::PidSeries
+            | StandardFbKind::PidMixed => FbdCategory::Corrector,
+        },
+        FbdBlockKind::StandardFb { .. } => FbdCategory::Logic,
+        FbdBlockKind::Composite { .. } => FbdCategory::Composite,
+    }
+}
+
 fn operator_symbol(kind: &FbdBlockKind) -> (&str, &'static str) {
     match kind {
-        FbdBlockKind::And => ("&", "AND"),
-        FbdBlockKind::Or => ("\u{2265}1", "OR"),
-        FbdBlockKind::Xor => ("=1", "XOR"),
-        FbdBlockKind::Not => ("1", "NOT"),
-        FbdBlockKind::Add => ("+", "ADD"),
-        FbdBlockKind::Sub => ("-", "SUB"),
-        FbdBlockKind::Mul => ("\u{00D7}", "MUL"),
-        FbdBlockKind::Div => ("\u{00F7}", "DIV"),
-        FbdBlockKind::Gt => (">", "GT"),
-        FbdBlockKind::Ge => ("\u{2265}", "GE"),
-        FbdBlockKind::Lt => ("<", "LT"),
-        FbdBlockKind::Le => ("\u{2264}", "LE"),
-        FbdBlockKind::Eq => ("==", "EQ"),
-        FbdBlockKind::Ne => ("\u{2260}", "NE"),
+        FbdBlockKind::And => ("&", "AND GATE"),
+        FbdBlockKind::Or => ("\u{2265}1", "OR GATE"),
+        FbdBlockKind::Xor => ("=1", "XOR GATE"),
+        FbdBlockKind::Not => ("1", "NOT INVERT"),
+        FbdBlockKind::Add => ("+", "ADDITION"),
+        FbdBlockKind::Sub => ("\u{2212}", "SUBTRACT"),
+        FbdBlockKind::Mul => ("\u{00D7}", "MULTIPLY"),
+        FbdBlockKind::Div => ("\u{00F7}", "DIVIDE"),
+        FbdBlockKind::Gt => (">", "GREATER THAN"),
+        FbdBlockKind::Ge => ("\u{2265}", "GREATER OR EQ"),
+        FbdBlockKind::Lt => ("<", "LESS THAN"),
+        FbdBlockKind::Le => ("\u{2264}", "LESS OR EQ"),
+        FbdBlockKind::Eq => ("==", "EQUAL"),
+        FbdBlockKind::Ne => ("\u{2260}", "NOT EQUAL"),
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Ton),
             ..
-        } => ("TON", "TIMER ON"),
+        } => ("TON", "TIMER ON-DELAY"),
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Tof),
             ..
-        } => ("TOF", "TIMER OFF"),
+        } => ("TOF", "TIMER OFF-DELAY"),
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Tp),
             ..
-        } => ("TP", "PULSE"),
+        } => ("TP", "PULSE TIMER"),
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Ctu),
             ..
@@ -130,6 +239,22 @@ fn operator_symbol(kind: &FbdBlockKind) -> (&str, &'static str) {
             ..
         } => ("BLINK", "CLOCK GEN"),
         FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::RTrig),
+            ..
+        } => ("R_TRIG", "RISING EDGE"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::FTrig),
+            ..
+        } => ("F_TRIG", "FALLING EDGE"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::Sr),
+            ..
+        } => ("SR", "SET LATCH"),
+        FbdBlockKind::StandardFb {
+            fb_type: Some(StandardFbKind::Rs),
+            ..
+        } => ("RS", "RESET LATCH"),
+        FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Hysteresis),
             ..
         } => ("HYST", "DEADBAND"),
@@ -144,11 +269,11 @@ fn operator_symbol(kind: &FbdBlockKind) -> (&str, &'static str) {
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::PidParallel),
             ..
-        } => ("PID_PAR", "PARALLEL"),
+        } => ("PID_PAR", "PARALLEL PID"),
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::PidSeries),
             ..
-        } => ("PID_SER", "SERIES"),
+        } => ("PID_SER", "SERIES PID"),
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::PidMixed),
             ..
@@ -156,12 +281,12 @@ fn operator_symbol(kind: &FbdBlockKind) -> (&str, &'static str) {
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Pi),
             ..
-        } => ("PI", "CORRECTOR"),
+        } => ("PI", "PI REGULATOR"),
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::P),
             ..
-        } => ("P", "CORRECTOR"),
-        FbdBlockKind::StandardFb { instance, .. } => (instance.as_str(), "FB"),
+        } => ("P", "PROPORTIONAL"),
+        FbdBlockKind::StandardFb { instance, .. } => (instance.as_str(), "FB INSTANCE"),
         FbdBlockKind::Composite { type_name } => (type_name.as_str(), "COMPOSITE"),
     }
 }
@@ -182,6 +307,146 @@ fn pin_display_label(pin: &str, is_corrector: bool, lang: UiLanguage) -> String 
     }
 }
 
+fn tech_terminal_input(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let is_dark = StudioTheme::is_dark(theme);
+    let (border_color, bg) = match status {
+        text_input::Status::Focused => (
+            StudioTheme::ACCENT_CYAN,
+            if is_dark {
+                iced::Color::from_rgb(0.02, 0.04, 0.07)
+            } else {
+                iced::Color::WHITE
+            },
+        ),
+        text_input::Status::Hovered => (
+            iced::Color::from_rgba(0.220, 0.741, 0.973, 0.6),
+            if is_dark {
+                iced::Color::from_rgb(0.04, 0.06, 0.09)
+            } else {
+                iced::Color::from_rgb(0.97, 0.98, 0.99)
+            },
+        ),
+        text_input::Status::Disabled => (
+            if is_dark {
+                iced::Color::from_rgba(1.0, 1.0, 1.0, 0.04)
+            } else {
+                iced::Color::from_rgba(0.0, 0.0, 0.0, 0.04)
+            },
+            if is_dark {
+                iced::Color::from_rgb(0.03, 0.04, 0.06)
+            } else {
+                iced::Color::from_rgb(0.94, 0.95, 0.96)
+            },
+        ),
+        text_input::Status::Active => (
+            StudioTheme::border_card(theme),
+            if is_dark {
+                iced::Color::from_rgb(0.04, 0.05, 0.08)
+            } else {
+                iced::Color::WHITE
+            },
+        ),
+    };
+    text_input::Style {
+        background: Background::Color(bg),
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: Radius::from(4.0),
+        },
+        icon: StudioTheme::text_secondary(theme),
+        placeholder: StudioTheme::text_muted(theme),
+        value: StudioTheme::text_primary(theme),
+        selection: iced::Color::from_rgba(0.220, 0.741, 0.973, 0.3),
+    }
+}
+
+fn tech_id_input(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let is_dark = StudioTheme::is_dark(theme);
+    let (border_color, bg) = match status {
+        text_input::Status::Focused => (
+            StudioTheme::ACCENT_CYAN,
+            if is_dark {
+                iced::Color::from_rgb(0.03, 0.05, 0.08)
+            } else {
+                iced::Color::WHITE
+            },
+        ),
+        text_input::Status::Hovered => (
+            if is_dark {
+                iced::Color::from_rgba(1.0, 1.0, 1.0, 0.3)
+            } else {
+                iced::Color::from_rgba(0.0, 0.0, 0.0, 0.25)
+            },
+            if is_dark {
+                iced::Color::from_rgb(0.05, 0.07, 0.10)
+            } else {
+                iced::Color::from_rgb(0.98, 0.99, 1.0)
+            },
+        ),
+        _ => (
+            StudioTheme::border_card(theme),
+            if is_dark {
+                iced::Color::from_rgb(0.05, 0.07, 0.10)
+            } else {
+                iced::Color::WHITE
+            },
+        ),
+    };
+    text_input::Style {
+        background: Background::Color(bg),
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: Radius {
+                top_left: 0.0,
+                bottom_left: 0.0,
+                top_right: 4.0,
+                bottom_right: 4.0,
+            },
+        },
+        icon: StudioTheme::text_secondary(theme),
+        placeholder: StudioTheme::text_muted(theme),
+        value: StudioTheme::text_primary(theme),
+        selection: iced::Color::from_rgba(0.220, 0.741, 0.973, 0.3),
+    }
+}
+
+fn tech_remove_button(_theme: &Theme, status: button::Status) -> button::Style {
+    let (bg, text_color, border_color) = match status {
+        button::Status::Hovered => (
+            iced::Color::from_rgba(0.957, 0.247, 0.369, 0.25),
+            StudioTheme::ACCENT_ROSE,
+            StudioTheme::ACCENT_ROSE,
+        ),
+        button::Status::Pressed => (
+            iced::Color::from_rgba(0.957, 0.247, 0.369, 0.40),
+            iced::Color::WHITE,
+            StudioTheme::ACCENT_ROSE,
+        ),
+        button::Status::Disabled => (
+            iced::Color::TRANSPARENT,
+            StudioTheme::TEXT_MUTED,
+            iced::Color::TRANSPARENT,
+        ),
+        button::Status::Active => (
+            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.04),
+            StudioTheme::TEXT_MUTED,
+            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+        ),
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color,
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: Radius::from(4.0),
+        },
+        ..Default::default()
+    }
+}
+
 fn render_single_block_card<'a>(
     program_name: &str,
     b_idx: usize,
@@ -192,6 +457,7 @@ fn render_single_block_card<'a>(
     drag_hover_block: Option<usize>,
 ) -> Element<'a, Message> {
     let p_blk = program_name.to_string();
+    let category = block_category(&blk.kind);
     let (op_symbol, op_desc) = operator_symbol(&blk.kind);
 
     let is_corrector = match &blk.kind {
@@ -210,10 +476,35 @@ fn render_single_block_card<'a>(
     let is_selected = selected_block == Some(b_idx);
     let is_hovered = drag_hover_block == Some(b_idx);
 
+    let any_input_energized = runtime.is_some_and(|rt| {
+        blk.inputs.values().any(|src| is_input_energized(rt, src))
+    });
+    let any_output_energized = runtime.is_some_and(|rt| {
+        blk.outputs.values().any(|target| is_output_energized(rt, target))
+    });
+    let is_block_active = any_input_energized || any_output_energized;
+
+    // Top Category Accent Rail
+    let top_rail = container(iced::widget::Space::with_width(Length::Fill))
+        .height(Length::Fixed(3.0))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(category.accent_color())),
+            border: Border {
+                radius: Radius {
+                    top_left: 8.0,
+                    top_right: 8.0,
+                    bottom_right: 0.0,
+                    bottom_left: 0.0,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
     let drag_handle = mouse_area(
         container(
             text(crate::icons::icon_grip())
-                .size(13)
+                .size(12)
                 .shaping(iced::widget::text::Shaping::Advanced)
                 .color(if is_selected {
                     StudioTheme::ACCENT_CYAN
@@ -222,35 +513,152 @@ fn render_single_block_card<'a>(
                 }),
         )
         .padding([4, 6])
-        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-            1.0, 1.0, 1.0, 0.05,
-        ))),
+        .style(|_| container::Style {
+            background: Some(Background::Color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.04))),
+            border: Border {
+                color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+                width: 1.0,
+                radius: Radius::from(4.0),
+            },
+            ..Default::default()
+        }),
     )
     .on_press(Message::FbdBlockDragStarted(p_blk.clone(), b_idx))
     .on_enter(Message::FbdBlockDragHovered(p_blk.clone(), b_idx))
     .on_release(Message::FbdBlockDragDropped);
 
-    // Block Header with Drag Handle, Editable ID, and Remove Button
-    let blk_header = row![
-        drag_handle,
+    // Block ID with hardware badge prefix
+    let id_box = row![
+        container(
+            text("ID")
+                .size(8.5)
+                .font(iced::Font::MONOSPACE)
+                .color(StudioTheme::TEXT_MUTED),
+        )
+        .padding([4, 6])
+        .style(|_| container::Style {
+            background: Some(Background::Color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.03))),
+            border: Border {
+                color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.08),
+                width: 1.0,
+                radius: Radius {
+                    top_left: 4.0,
+                    bottom_left: 4.0,
+                    top_right: 0.0,
+                    bottom_right: 0.0,
+                },
+            },
+            ..Default::default()
+        }),
         text_input("Block ID", &blk.id)
             .on_input({
                 let p = p_blk.clone();
                 move |s| Message::FbdBlockIdChanged(p.clone(), b_idx, s)
             })
+            .font(iced::Font::MONOSPACE)
+            .size(11.0)
             .width(Length::FillPortion(1))
-            .padding([2, 6])
-            .style(StudioTheme::styled_input),
-        container(text(op_desc).size(11).color(StudioTheme::TEXT_MUTED))
-            .padding([3, 7])
-            .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-                1.0, 1.0, 1.0, 0.05,
-            ))),
+            .padding([3, 6])
+            .style(tech_id_input),
+    ]
+    .align_y(Alignment::Center);
+
+    let cat_badge = container(
+        text(category.label())
+            .size(8.5)
+            .font(iced::Font::MONOSPACE)
+            .color(category.accent_color()),
+    )
+    .padding([3, 7])
+    .style(move |_| container::Style {
+        background: Some(Background::Color(category.badge_bg())),
+        border: Border {
+            color: iced::Color::from_rgba(
+                category.accent_color().r,
+                category.accent_color().g,
+                category.accent_color().b,
+                0.35,
+            ),
+            width: 0.75,
+            radius: Radius::from(4.0),
+        },
+        ..Default::default()
+    });
+
+    let live_status_badge: Element<'a, Message> = if runtime.is_some() {
+        container(
+            row![
+                container(iced::widget::Space::with_width(Length::Fixed(5.0)))
+                    .height(Length::Fixed(5.0))
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(if is_block_active {
+                            StudioTheme::ACCENT_EMERALD
+                        } else {
+                            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.2)
+                        })),
+                        border: Border {
+                            radius: Radius::from(2.5),
+                            color: if is_block_active {
+                                iced::Color::from_rgb(0.2, 0.9, 0.5)
+                            } else {
+                                iced::Color::TRANSPARENT
+                            },
+                            width: if is_block_active { 1.0 } else { 0.0 },
+                        },
+                        ..Default::default()
+                    }),
+                text(if is_block_active { "ACTIVE" } else { "IDLE" })
+                    .size(8.0)
+                    .font(iced::Font::MONOSPACE)
+                    .color(if is_block_active {
+                        StudioTheme::ACCENT_EMERALD
+                    } else {
+                        StudioTheme::TEXT_MUTED
+                    }),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .padding([2, 5])
+        .style(move |_| container::Style {
+            background: Some(Background::Color(if is_block_active {
+                iced::Color::from_rgba(0.063, 0.725, 0.506, 0.12)
+            } else {
+                iced::Color::from_rgba(1.0, 1.0, 1.0, 0.03)
+            })),
+            border: Border {
+                color: if is_block_active {
+                    iced::Color::from_rgba(0.063, 0.725, 0.506, 0.3)
+                } else {
+                    iced::Color::from_rgba(1.0, 1.0, 1.0, 0.05)
+                },
+                width: 0.5,
+                radius: Radius::from(3.0),
+            },
+            ..Default::default()
+        })
+        .into()
+    } else {
+        iced::widget::Space::with_width(Length::Shrink).into()
+    };
+
+    let remove_btn = button(
+        text(crate::icons::icon_close())
+            .size(11.0)
+            .shaping(iced::widget::text::Shaping::Advanced),
+    )
+    .on_press(Message::FbdRemoveBlock(p_blk.clone(), b_idx))
+    .style(tech_remove_button)
+    .padding([2, 6]);
+
+    // Block Header with Drag Handle, Editable ID, Category Badge, and Remove Button
+    let blk_header = row![
+        drag_handle,
+        id_box,
+        cat_badge,
+        live_status_badge,
         iced::widget::Space::with_width(Length::Fill),
-        button(text("x").size(10.5))
-            .on_press(Message::FbdRemoveBlock(p_blk.clone(), b_idx))
-            .style(StudioTheme::ghost_button)
-            .padding([1, 5]),
+        remove_btn,
     ]
     .spacing(6)
     .align_y(Alignment::Center);
@@ -264,32 +672,72 @@ fn render_single_block_card<'a>(
             StandardFbKind::Pi,
             StandardFbKind::P,
         ];
-        column![
+        container(
             column![
-                text(lang.tr("Architecture:", "Architecture :"))
-                    .size(10.5)
-                    .color(StudioTheme::TEXT_MUTED),
-                pick_list(corrector_kinds, Some(cur_k), {
-                    let p = p_blk.clone();
-                    move |k| Message::FbdChangeCorrectorKind(p.clone(), b_idx, k)
-                })
-                .text_size(10.5)
-                .padding([4, 8])
-                .width(Length::Fill),
+                row![
+                    text(lang.tr("CONTROL LOOP TUNING", "BOUCLE DE RÉGULATION"))
+                        .size(8.5)
+                        .font(iced::Font::MONOSPACE)
+                        .color(category.accent_color()),
+                    iced::widget::Space::with_width(Length::Fill),
+                    text("IEC 61131-3")
+                        .size(8.0)
+                        .font(iced::Font::MONOSPACE)
+                        .color(StudioTheme::TEXT_MUTED),
+                ]
+                .align_y(Alignment::Center),
+                row![
+                    text(lang.tr("Architecture:", "Architecture :"))
+                        .size(9.5)
+                        .color(StudioTheme::TEXT_SECONDARY),
+                    pick_list(corrector_kinds, Some(cur_k), {
+                        let p = p_blk.clone();
+                        move |k| Message::FbdChangeCorrectorKind(p.clone(), b_idx, k)
+                    })
+                    .text_size(10.0)
+                    .padding([3, 6])
+                    .width(Length::Fill),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+                container(
+                    row![
+                        text("ƒ(e):")
+                            .size(9.0)
+                            .font(iced::Font::MONOSPACE)
+                            .color(category.accent_color()),
+                        text(cur_k.formula_hint())
+                            .size(9.0)
+                            .font(iced::Font::MONOSPACE)
+                            .color(StudioTheme::ACCENT_CYAN)
+                            .wrapping(iced::widget::text::Wrapping::Word),
+                    ]
+                    .spacing(4)
+                    .align_y(Alignment::Center),
+                )
+                .padding([4, 7])
+                .style(|_| container::Style {
+                    background: Some(Background::Color(iced::Color::from_rgb(0.03, 0.05, 0.08))),
+                    border: Border {
+                        color: iced::Color::from_rgba(0.063, 0.725, 0.506, 0.25),
+                        width: 0.5,
+                        radius: Radius::from(4.0),
+                    },
+                    ..Default::default()
+                }),
             ]
-            .spacing(4),
-            container(
-                text(cur_k.formula_hint())
-                    .size(9.5)
-                    .color(StudioTheme::ACCENT_CYAN)
-                    .wrapping(iced::widget::text::Wrapping::Word),
-            )
-            .padding([3, 6])
-            .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-                0.220, 0.741, 0.973, 0.10,
-            ))),
-        ]
-        .spacing(6)
+            .spacing(5),
+        )
+        .padding([6, 8])
+        .style(|_| container::Style {
+            background: Some(Background::Color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.025))),
+            border: Border {
+                color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.05),
+                width: 1.0,
+                radius: Radius::from(5.0),
+            },
+            ..Default::default()
+        })
     });
 
     // Inputs Column
@@ -300,7 +748,8 @@ fn render_single_block_card<'a>(
     if sorted_inputs.is_empty() {
         inputs_col = inputs_col.push(
             text(lang.tr("(No inputs)", "(Sans entrée)"))
-                .size(10.5)
+                .size(9.5)
+                .font(iced::Font::MONOSPACE)
                 .color(StudioTheme::TEXT_MUTED),
         );
     } else {
@@ -315,30 +764,62 @@ fn render_single_block_card<'a>(
             };
 
             let is_energized = runtime.is_some_and(|rt| is_input_energized(rt, src));
-            let dot_color = if is_energized {
-                StudioTheme::ACCENT_EMERALD
-            } else {
-                StudioTheme::BORDER_CARD
-            };
-
-            let in_dot = container(iced::widget::Space::with_width(Length::Fixed(7.0)))
-                .height(Length::Fixed(7.0))
+            let terminal_led = container(iced::widget::Space::with_width(Length::Fixed(8.0)))
+                .height(Length::Fixed(8.0))
                 .style(move |_theme: &Theme| container::Style {
-                    background: Some(Background::Color(dot_color)),
+                    background: Some(Background::Color(if is_energized {
+                        StudioTheme::ACCENT_EMERALD
+                    } else {
+                        iced::Color::from_rgb(0.12, 0.15, 0.20)
+                    })),
                     border: Border {
-                        radius: Radius::from(3.5),
-                        ..Default::default()
+                        color: if is_energized {
+                            iced::Color::from_rgb(0.3, 0.9, 0.6)
+                        } else {
+                            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.10)
+                        },
+                        width: 1.0,
+                        radius: Radius::from(4.0),
                     },
                     ..Default::default()
                 });
 
             let display_pin = pin_display_label(pin_name, is_corrector, lang);
+            let pin_badge = container(
+                text(display_pin)
+                    .size(9.5)
+                    .font(iced::Font::MONOSPACE)
+                    .color(if is_energized {
+                        StudioTheme::TEXT_PRIMARY
+                    } else {
+                        StudioTheme::TEXT_SECONDARY
+                    }),
+            )
+            .padding([2, 5])
+            .style(move |_| container::Style {
+                background: Some(Background::Color(if is_energized {
+                    iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15)
+                } else {
+                    iced::Color::from_rgba(1.0, 1.0, 1.0, 0.04)
+                })),
+                border: Border {
+                    color: if is_energized {
+                        iced::Color::from_rgba(0.063, 0.725, 0.506, 0.4)
+                    } else {
+                        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.06)
+                    },
+                    width: 0.5,
+                    radius: Radius::from(3.0),
+                },
+                ..Default::default()
+            });
+
             let live_badge: Element<'a, Message> = if let Some(rt) = runtime
                 && let Some(val_str) = read_input_live_value(rt, src)
             {
                 container(
-                    text(format!("= {val_str}"))
-                        .size(9.5)
+                    text(val_str)
+                        .size(9.0)
                         .font(iced::Font::MONOSPACE)
                         .color(if is_energized {
                             StudioTheme::ACCENT_EMERALD
@@ -346,36 +827,52 @@ fn render_single_block_card<'a>(
                             StudioTheme::ACCENT_CYAN
                         }),
                 )
-                .padding([1, 4])
-                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-                    0.0, 0.85, 0.85, 0.10,
-                )))
+                .padding([2, 5])
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(iced::Color::from_rgb(0.03, 0.05, 0.08))),
+                    border: Border {
+                        color: if is_energized {
+                            iced::Color::from_rgba(0.063, 0.725, 0.506, 0.3)
+                        } else {
+                            iced::Color::from_rgba(0.220, 0.741, 0.973, 0.25)
+                        },
+                        width: 1.0,
+                        radius: Radius::from(3.0),
+                    },
+                    ..Default::default()
+                })
                 .into()
             } else {
                 iced::widget::Space::with_width(Length::Shrink).into()
             };
 
+            let wire_trace = container(iced::widget::Space::with_width(Length::Fixed(8.0)))
+                .height(Length::Fixed(2.0))
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(if is_energized {
+                        StudioTheme::ACCENT_EMERALD
+                    } else {
+                        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+                    })),
+                    ..Default::default()
+                });
+
             let in_row = row![
-                in_dot,
-                text(display_pin)
-                    .size(10.0)
-                    .color(StudioTheme::TEXT_SECONDARY),
+                terminal_led,
+                pin_badge,
                 text_input("Source", &expr_str)
                     .on_input({
                         let p = p_blk.clone();
                         let pn = pin_n.clone();
                         move |s| Message::FbdInputSourceChanged(p.clone(), b_idx, pn.clone(), s)
                     })
+                    .font(iced::Font::MONOSPACE)
+                    .size(11.0)
                     .width(Length::Fill)
-                    .padding([2, 5])
-                    .style(StudioTheme::styled_input),
+                    .padding([3, 6])
+                    .style(tech_terminal_input),
                 live_badge,
-                container(iced::widget::Space::with_width(Length::Fixed(8.0)))
-                    .height(Length::Fixed(2.0))
-                    .style(move |_| container::Style {
-                        background: Some(Background::Color(dot_color)),
-                        ..Default::default()
-                    }),
+                wire_trace,
             ]
             .spacing(4)
             .align_y(Alignment::Center);
@@ -384,27 +881,63 @@ fn render_single_block_card<'a>(
         }
     }
 
-    // Central Operator Box
+    // Central Operator Core ("Processing Cell")
     let center_box = container(
         column![
-            text(op_symbol).size(18).color(StudioTheme::TEXT_PRIMARY),
-            text(op_desc)
-                .size(9.5)
-                .color(StudioTheme::TEXT_MUTED)
-                .wrapping(iced::widget::text::Wrapping::Word),
+            text(op_symbol)
+                .size(20)
+                .font(iced::Font::MONOSPACE)
+                .color(if is_block_active {
+                    iced::Color::WHITE
+                } else {
+                    StudioTheme::TEXT_PRIMARY
+                }),
+            container(
+                text(op_desc)
+                    .size(8.5)
+                    .font(iced::Font::MONOSPACE)
+                    .color(category.accent_color())
+                    .wrapping(iced::widget::text::Wrapping::Word),
+            )
+            .padding([2, 5])
+            .style(move |_| container::Style {
+                background: Some(Background::Color(category.bg_subtle())),
+                border: Border {
+                    radius: Radius::from(3.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
         ]
-        .spacing(2)
+        .spacing(4)
         .align_x(Alignment::Center),
     )
-    .padding([6, 10])
-    .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
-        border: Border {
-            color: StudioTheme::BORDER_CARD,
-            width: 1.5,
-            radius: Radius::from(4.0),
-        },
-        ..Default::default()
+    .padding([8, 12])
+    .style(move |theme: &Theme| {
+        let is_dark = StudioTheme::is_dark(theme);
+        let center_bg = if is_dark {
+            iced::Color::from_rgb(0.038, 0.048, 0.068)
+        } else {
+            iced::Color::WHITE
+        };
+        container::Style {
+            background: Some(Background::Color(center_bg)),
+            border: Border {
+                color: if is_block_active {
+                    StudioTheme::ACCENT_EMERALD
+                } else {
+                    iced::Color::from_rgba(
+                        category.accent_color().r,
+                        category.accent_color().g,
+                        category.accent_color().b,
+                        if is_dark { 0.35 } else { 0.50 },
+                    )
+                },
+                width: if is_block_active { 1.5 } else { 1.0 },
+                radius: Radius::from(6.0),
+            },
+            ..Default::default()
+        }
     });
 
     // Outputs Column
@@ -434,19 +967,26 @@ fn render_single_block_card<'a>(
             outputs_col = outputs_col.push(
                 container(
                     text(summary)
-                        .size(9.5)
+                        .size(9.0)
                         .font(iced::Font::MONOSPACE)
                         .color(StudioTheme::ACCENT_EMERALD),
                 )
-                .padding([2, 6])
-                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-                    0.063, 0.725, 0.506, 0.12,
-                ))),
+                .padding([3, 7])
+                .style(|_| container::Style {
+                    background: Some(Background::Color(iced::Color::from_rgb(0.03, 0.05, 0.08))),
+                    border: Border {
+                        color: iced::Color::from_rgba(0.063, 0.725, 0.506, 0.3),
+                        width: 0.5,
+                        radius: Radius::from(4.0),
+                    },
+                    ..Default::default()
+                }),
             );
         } else {
             outputs_col = outputs_col.push(
                 text(lang.tr("(Internal)", "(Interne)"))
-                    .size(10.5)
+                    .size(9.5)
+                    .font(iced::Font::MONOSPACE)
                     .color(StudioTheme::TEXT_MUTED),
             );
         }
@@ -454,30 +994,62 @@ fn render_single_block_card<'a>(
         for (pin_name, target) in sorted_outputs {
             let pin_n = pin_name.clone();
             let is_energized = runtime.is_some_and(|rt| is_output_energized(rt, target));
-            let dot_color = if is_energized {
-                StudioTheme::ACCENT_EMERALD
-            } else {
-                StudioTheme::BORDER_CARD
-            };
-
-            let out_dot = container(iced::widget::Space::with_width(Length::Fixed(7.0)))
-                .height(Length::Fixed(7.0))
+            let terminal_led = container(iced::widget::Space::with_width(Length::Fixed(8.0)))
+                .height(Length::Fixed(8.0))
                 .style(move |_theme: &Theme| container::Style {
-                    background: Some(Background::Color(dot_color)),
+                    background: Some(Background::Color(if is_energized {
+                        StudioTheme::ACCENT_EMERALD
+                    } else {
+                        iced::Color::from_rgb(0.12, 0.15, 0.20)
+                    })),
                     border: Border {
-                        radius: Radius::from(3.5),
-                        ..Default::default()
+                        color: if is_energized {
+                            iced::Color::from_rgb(0.3, 0.9, 0.6)
+                        } else {
+                            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.10)
+                        },
+                        width: 1.0,
+                        radius: Radius::from(4.0),
                     },
                     ..Default::default()
                 });
 
             let display_pin = pin_display_label(pin_name, is_corrector, lang);
+            let pin_badge = container(
+                text(display_pin)
+                    .size(9.5)
+                    .font(iced::Font::MONOSPACE)
+                    .color(if is_energized {
+                        StudioTheme::TEXT_PRIMARY
+                    } else {
+                        StudioTheme::TEXT_SECONDARY
+                    }),
+            )
+            .padding([2, 5])
+            .style(move |_| container::Style {
+                background: Some(Background::Color(if is_energized {
+                    iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15)
+                } else {
+                    iced::Color::from_rgba(1.0, 1.0, 1.0, 0.04)
+                })),
+                border: Border {
+                    color: if is_energized {
+                        iced::Color::from_rgba(0.063, 0.725, 0.506, 0.4)
+                    } else {
+                        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.06)
+                    },
+                    width: 0.5,
+                    radius: Radius::from(3.0),
+                },
+                ..Default::default()
+            });
+
             let out_live_badge: Element<'a, Message> = if let Some(rt) = runtime
                 && let Some(val_str) = read_output_live_value(rt, target)
             {
                 container(
-                    text(format!("= {val_str}"))
-                        .size(9.5)
+                    text(val_str)
+                        .size(9.0)
                         .font(iced::Font::MONOSPACE)
                         .color(if is_energized {
                             StudioTheme::ACCENT_EMERALD
@@ -485,36 +1057,52 @@ fn render_single_block_card<'a>(
                             StudioTheme::ACCENT_AMBER
                         }),
                 )
-                .padding([1, 4])
-                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-                    0.96, 0.62, 0.04, 0.12,
-                )))
+                .padding([2, 5])
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(iced::Color::from_rgb(0.03, 0.05, 0.08))),
+                    border: Border {
+                        color: if is_energized {
+                            iced::Color::from_rgba(0.063, 0.725, 0.506, 0.3)
+                        } else {
+                            iced::Color::from_rgba(0.96, 0.62, 0.04, 0.25)
+                        },
+                        width: 1.0,
+                        radius: Radius::from(3.0),
+                    },
+                    ..Default::default()
+                })
                 .into()
             } else {
                 iced::widget::Space::with_width(Length::Shrink).into()
             };
 
+            let wire_trace = container(iced::widget::Space::with_width(Length::Fixed(8.0)))
+                .height(Length::Fixed(2.0))
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(if is_energized {
+                        StudioTheme::ACCENT_EMERALD
+                    } else {
+                        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+                    })),
+                    ..Default::default()
+                });
+
             let out_row = row![
-                container(iced::widget::Space::with_width(Length::Fixed(8.0)))
-                    .height(Length::Fixed(2.0))
-                    .style(move |_| container::Style {
-                        background: Some(Background::Color(dot_color)),
-                        ..Default::default()
-                    }),
-                text(display_pin)
-                    .size(10.0)
-                    .color(StudioTheme::TEXT_SECONDARY),
+                wire_trace,
+                pin_badge,
                 text_input("Target", target)
                     .on_input({
                         let p = p_blk.clone();
                         let pn = pin_n.clone();
                         move |s| Message::FbdOutputTargetChanged(p.clone(), b_idx, pn.clone(), s)
                     })
+                    .font(iced::Font::MONOSPACE)
+                    .size(11.0)
                     .width(Length::Fill)
-                    .padding([2, 5])
-                    .style(StudioTheme::styled_input),
+                    .padding([3, 6])
+                    .style(tech_terminal_input),
                 out_live_badge,
-                out_dot,
+                terminal_led,
             ]
             .spacing(4)
             .align_y(Alignment::Center);
@@ -528,21 +1116,48 @@ fn render_single_block_card<'a>(
         center_box,
         container(outputs_col).width(Length::FillPortion(1)),
     ]
-    .spacing(6)
+    .spacing(8)
     .align_y(Alignment::Center);
 
-    let mut card_col = column![blk_header];
+    let mut card_col = column![top_rail];
+    let mut inner_col = column![blk_header];
     if let Some(arch) = arch_row {
-        card_col = card_col.push(arch);
+        inner_col = inner_col.push(arch);
     }
-    card_col = card_col.push(
+    inner_col = inner_col.push(
         container(schematic_body)
             .padding([8, 10])
-            .style(StudioTheme::canvas_container_style)
+            .style(move |theme: &Theme| {
+                let is_dark = StudioTheme::is_dark(theme);
+                let body_bg = if is_dark {
+                    iced::Color::from_rgb(0.045, 0.055, 0.075)
+                } else {
+                    iced::Color::from_rgb(0.950, 0.960, 0.975)
+                };
+                container::Style {
+                    background: Some(Background::Color(body_bg)),
+                    border: Border {
+                        color: StudioTheme::border_hairline(theme),
+                        width: 1.0,
+                        radius: Radius::from(6.0),
+                    },
+                    ..Default::default()
+                }
+            })
             .width(Length::Fill),
     );
 
-    let card_style_fn = move |_theme: &Theme| {
+    card_col = card_col.push(
+        container(inner_col.spacing(8)).padding(Padding {
+            top: 6.0,
+            right: 10.0,
+            bottom: 10.0,
+            left: 10.0,
+        }),
+    );
+
+    let card_style_fn = move |theme: &Theme| {
+        let is_dark = StudioTheme::is_dark(theme);
         let border = if is_hovered {
             Border {
                 color: iced::Color::from_rgb(0.25, 0.65, 1.0),
@@ -557,21 +1172,26 @@ fn render_single_block_card<'a>(
             }
         } else {
             Border {
-                color: StudioTheme::BORDER_CARD,
+                color: StudioTheme::border_card(theme),
                 width: 1.0,
                 radius: Radius::from(8.0),
             }
         };
 
+        let card_bg = if is_dark {
+            iced::Color::from_rgb(0.070, 0.082, 0.110)
+        } else {
+            iced::Color::WHITE
+        };
+
         container::Style {
-            background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
+            background: Some(Background::Color(card_bg)),
             border,
             ..Default::default()
         }
     };
 
-    let card_container = container(card_col.spacing(8))
-        .padding(10)
+    let card_container = container(card_col.spacing(0))
         .style(card_style_fn)
         .width(Length::FillPortion(1));
 
@@ -592,41 +1212,56 @@ pub fn render_fbd_editor<'a>(
 
     // 1. Header Toolbar with Quick Standard Blocks & Corrector Suite
     let header_row = row![
-        text(format!(
-            "{} — {}",
-            lang.tr(
-                "Function Block Diagram",
-                "Diagramme Blocs Fonctionnels (FBD)"
-            ),
-            program.name
-        ))
-        .size(18),
+        row![
+            container(
+                text("FBD")
+                    .size(10.0)
+                    .font(iced::Font::MONOSPACE)
+                    .color(StudioTheme::ACCENT_CYAN),
+            )
+            .padding([3, 7])
+            .style(|_| container::Style {
+                background: Some(Background::Color(iced::Color::from_rgba(0.220, 0.741, 0.973, 0.12))),
+                border: Border {
+                    color: iced::Color::from_rgba(0.220, 0.741, 0.973, 0.35),
+                    width: 0.5,
+                    radius: Radius::from(4.0),
+                },
+                ..Default::default()
+            }),
+            text(&program.name)
+                .size(15)
+                .font(iced::Font::MONOSPACE)
+                .color(StudioTheme::TEXT_PRIMARY),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
         button(
             row![
                 text(crate::icons::icon_book())
                     .size(11)
                     .shaping(iced::widget::text::Shaping::Advanced),
-                text(lang.tr("Library...", "Bibliothèque...")).size(12),
+                text(lang.tr("Library...", "Bibliothèque...")).size(11.5),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
         )
         .on_press(Message::OpenFbdLibraryWindow)
         .style(StudioTheme::secondary_button)
-        .padding([8, 16]),
+        .padding([6, 14]),
         button(text(lang.tr("Clear POU", "Vider")).size(11))
             .on_press(Message::ConfirmClearPou(pou_name.clone()))
             .style(StudioTheme::danger_button)
-            .padding([8, 16]),
+            .padding([6, 12]),
     ]
-    .spacing(12)
+    .spacing(10)
     .align_y(Alignment::Center);
 
     let scrollable_header = scrollable(
         container(header_row).padding(Padding {
             top: 2.0,
             right: 4.0,
-            bottom: 8.0,
+            bottom: 6.0,
             left: 2.0,
         }),
     )
@@ -641,15 +1276,22 @@ pub fn render_fbd_editor<'a>(
     let header_container = container(scrollable_header)
         .width(Length::Fill)
         .padding([4, 6])
-        .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-            0.2, 0.4, 0.6, 0.12,
-        )));
+        .style(|theme: &Theme| container::Style {
+            background: Some(Background::Color(StudioTheme::bg_panel(theme))),
+            border: Border {
+                color: StudioTheme::border_hairline(theme),
+                width: 1.0,
+                radius: Radius::from(6.0),
+            },
+            ..Default::default()
+        });
 
     let tip = text(lang.tr(
-        "Tip: FBD blocks render with 2-column industrial schematic signal-flow ports. Green indicator dots glow when signals are active in real-time.",
-        "Astuce : Les blocs FBD s'affichent en schéma industriel sur 2 colonnes avec ports de signal. Les points verts s'allument en direct lorsque le signal est actif.",
+        "FBD Modular Instrument Rack: Double-column schematic with high-speed signal flow. Indicators glow green when energized in real time.",
+        "Rack modulaire FBD : Schéma double colonne avec bus de signaux rapides. Les voyants s'illuminent en vert lors de l'exécution en direct.",
     ))
-    .size(12)
+    .size(11.0)
+    .font(iced::Font::MONOSPACE)
     .color(StudioTheme::TEXT_MUTED);
 
     let top_bar = column![header_container, tip].spacing(4);

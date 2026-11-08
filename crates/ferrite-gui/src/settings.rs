@@ -1,17 +1,20 @@
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
 
+use crate::app::UiTheme;
 use crate::i18n::UiLanguage;
 
-static SETTINGS_PATH_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
+thread_local! {
+    static SETTINGS_PATH_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
 
 /// Overrides the settings file path (e.g. for testing without mutating disk environment or unsafe blocks).
 pub fn set_custom_settings_path(path: Option<PathBuf>) {
-    if let Ok(mut lock) = SETTINGS_PATH_OVERRIDE.write() {
-        *lock = path;
-    }
+    SETTINGS_PATH_OVERRIDE.with(|cell| {
+        *cell.borrow_mut() = path;
+    });
 }
 
 /// User preferences and application settings persisted across sessions.
@@ -19,14 +22,14 @@ pub fn set_custom_settings_path(path: Option<PathBuf>) {
 pub struct UserSettings {
     #[serde(default)]
     pub language: Option<UiLanguage>,
+    #[serde(default)]
+    pub theme: Option<UiTheme>,
 }
 
 /// Resolves the user settings file path across Windows, macOS, and Linux.
 pub fn get_user_settings_path() -> PathBuf {
-    if let Ok(guard) = SETTINGS_PATH_OVERRIDE.read()
-        && let Some(ref path) = *guard
-    {
-        return path.clone();
+    if let Some(path) = SETTINGS_PATH_OVERRIDE.with(|cell| cell.borrow().clone()) {
+        return path;
     }
 
     #[cfg(target_os = "windows")]
@@ -116,6 +119,23 @@ pub fn save_language_preference(lang: UiLanguage) -> Result<(), String> {
     settings.save()
 }
 
+/// Reads the user's saved UI theme, if configured.
+pub fn load_saved_theme() -> Option<UiTheme> {
+    UserSettings::load().theme
+}
+
+/// Returns the saved UI theme if present, or falls back to dark by default.
+pub fn load_saved_theme_or_default() -> UiTheme {
+    load_saved_theme().unwrap_or(UiTheme::Dark)
+}
+
+/// Persists the selected UI theme to the user's settings.
+pub fn save_theme_preference(theme: UiTheme) -> Result<(), String> {
+    let mut settings = UserSettings::load();
+    settings.theme = Some(theme);
+    settings.save()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,25 +149,30 @@ mod tests {
         let loaded = UserSettings::load_from_path(&settings_path)?;
         assert_eq!(loaded, UserSettings::default());
         assert_eq!(loaded.language, None);
+        assert_eq!(loaded.theme, None);
 
-        // Save French preference
+        // Save French preference and Light theme
         let settings = UserSettings {
             language: Some(UiLanguage::Fr),
+            theme: Some(UiTheme::Light),
         };
         settings.save_to_path(&settings_path)?;
 
         // Reload
         let reloaded = UserSettings::load_from_path(&settings_path)?;
         assert_eq!(reloaded.language, Some(UiLanguage::Fr));
+        assert_eq!(reloaded.theme, Some(UiTheme::Light));
 
-        // Save German preference
+        // Save German preference and Dark theme
         let updated = UserSettings {
             language: Some(UiLanguage::De),
+            theme: Some(UiTheme::Dark),
         };
         updated.save_to_path(&settings_path)?;
 
         let reloaded2 = UserSettings::load_from_path(&settings_path)?;
         assert_eq!(reloaded2.language, Some(UiLanguage::De));
+        assert_eq!(reloaded2.theme, Some(UiTheme::Dark));
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

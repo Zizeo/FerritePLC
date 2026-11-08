@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
+
 use iced::border::Radius;
 use iced::widget::{
     button, column, container, mouse_area, pick_list, row, scrollable, stack, text, text_editor, text_input,
@@ -72,6 +74,7 @@ pub enum BottomDockTab {
     Alarms,
     Modbus,
     Gpio,
+    Trace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -123,7 +126,7 @@ impl std::fmt::Display for SimSpeed {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum UiTheme {
     #[default]
     Dark,
@@ -280,6 +283,14 @@ pub enum Message {
     TrendClear,
     TrendToggleChannel(String),
 
+    // In-scan Synchronous Trace
+    TraceTagsInputChanged(String),
+    TraceCapacityInputChanged(String),
+    TraceStart,
+    TraceStop,
+    TraceDrain,
+    TraceClear,
+
     // Symbols & Config
     ScanCycleMsChanged(u64),
     WatchdogUsChanged(u64),
@@ -299,6 +310,7 @@ pub enum Message {
     FbTdChanged(usize, f32),
     FbPtChanged(usize, u64),
     FbPvChanged(usize, i16),
+    CommitSymbolBuffer(String),
 
     // Structured Text Editor
     StEditorAction(String, text_editor::Action),
@@ -443,6 +455,10 @@ const HISTORY_COALESCE: Duration = Duration::from_millis(800);
 pub struct FerriteStudioApp {
     pub project: Project,
     pub saved_pous: HashMap<String, PouSource>,
+    pub saved_manifest: ferrite_project::ProjectManifest,
+    pub saved_global_tags: ferrite_project::GlobalTagsFile,
+    pub saved_fb_instances: ferrite_project::FbInstancesFile,
+    pub digital_twin_load_failed: bool,
     pub runtime: Option<PlcRuntime>,
     pub diagnostics: Vec<ValidationDiagnostic>,
     pub active_tab: WorkspaceTab,
@@ -502,6 +518,10 @@ pub struct FerriteStudioApp {
     pub modbus_last_test_result: Option<String>,
     pub trend_plotter: TrendPlotter,
     pub bottom_dock_tab: BottomDockTab,
+    pub trace_tags_input: String,
+    pub trace_capacity_input: String,
+    pub trace_active: bool,
+    pub trace_drained_samples: Vec<ferrite_runtime::TraceSample>,
     pub hal_config: GpioHalConfig,
     pub hal_driver: Box<dyn HardwareDriver>,
     pub hal_enabled: bool,
@@ -631,8 +651,15 @@ impl FerriteStudioApp {
             }
         }
         let shared_io = Arc::new(RwLock::new(initial_shared_io));
-        let digital_twin_workspace =
-            DigitalTwinWorkspace::load_or_default(&initial_project.root_dir);
+        let (digital_twin_workspace, digital_twin_load_failed, twin_err_msg) =
+            match DigitalTwinWorkspace::load(&initial_project.root_dir) {
+                Ok(ws) => (ws, false, None),
+                Err(e) => (
+                    DigitalTwinWorkspace::with_starter_plant(),
+                    true,
+                    Some(format!("Failed to load digital twin: {e}")),
+                ),
+            };
 
         // Initialize ST editor contents from project
         let mut st_contents = HashMap::new();
@@ -647,18 +674,27 @@ impl FerriteStudioApp {
             }
         }
 
-        let status_banner = ui_lang
-            .tr(
-                "Ready — Compiled all POUs into unified ProcessImage & TagTable.",
-                "Prêt — Tous les POU sont compilés dans la mémoire image et la table des symboles.",
-            )
-            .to_string();
+        let status_banner = twin_err_msg.unwrap_or_else(|| {
+            ui_lang
+                .tr(
+                    "Ready — Compiled all POUs into unified ProcessImage & TagTable.",
+                    "Prêt — Tous les POU sont compilés dans la mémoire image et la table des symboles.",
+                )
+                .to_string()
+        });
 
         let saved_pous = initial_project.pous.clone();
+        let saved_manifest = initial_project.manifest.clone();
+        let saved_global_tags = initial_project.global_tags.clone();
+        let saved_fb_instances = initial_project.fb_instances.clone();
         Self {
             last_committed_project: initial_project.clone(),
             project: initial_project,
             saved_pous,
+            saved_manifest,
+            saved_global_tags,
+            saved_fb_instances,
+            digital_twin_load_failed,
             runtime,
             diagnostics,
             active_tab: first_pou,
@@ -675,7 +711,7 @@ impl FerriteStudioApp {
             new_pou_lang: LanguageKind::Ld,
             open_path_input,
             ui_lang,
-            ui_theme: UiTheme::Dark,
+            ui_theme: crate::settings::load_saved_theme_or_default(),
             show_left_explorer: true,
             show_right_io: true,
             show_bottom_dock: true,
@@ -719,6 +755,10 @@ impl FerriteStudioApp {
             modbus_last_test_result: None,
             trend_plotter: TrendPlotter::default(),
             bottom_dock_tab: BottomDockTab::Diagnostics,
+            trace_tags_input: String::new(),
+            trace_capacity_input: "100".to_string(),
+            trace_active: false,
+            trace_drained_samples: Vec::new(),
             hal_config,
             hal_driver,
             hal_enabled: false,
@@ -886,6 +926,31 @@ impl FerriteStudioApp {
         self.project.pous.get(pou_name) != self.saved_pous.get(pou_name)
     }
 
+    pub fn is_dirty(&self) -> bool {
+        self.project.pous != self.saved_pous
+            || self.project.global_tags != self.saved_global_tags
+            || self.project.fb_instances != self.saved_fb_instances
+            || self.project.manifest != self.saved_manifest
+    }
+
+    pub fn clear_editor_selections(&mut self) {
+        self.ld_selected = None;
+        self.ld_selected_elements.clear();
+        self.sfc_selected = None;
+        self.sfc_selected_elements.clear();
+        self.sfc_delete_modal = None;
+        self.fbd_selected_block = None;
+        self.fbd_dragging_block = None;
+        self.fbd_drag_hover_block = None;
+        self.dragging_pou = None;
+        self.drag_hover_pou = None;
+        self.digital_twin_workspace.selected_id = None;
+        self.digital_twin_workspace.drag_target_id = None;
+        self.digital_twin_workspace.drag_start_mouse = None;
+        self.digital_twin_workspace.active_resize = None;
+        self.digital_twin_workspace.context_menu = None;
+    }
+
     pub fn undo(&mut self) {
         if let Some(prev) = self.undo_stack.pop() {
             let curr = std::mem::replace(&mut self.project, prev);
@@ -894,7 +959,7 @@ impl FerriteStudioApp {
             self.last_edit_time = None;
             self.recompile_runtime();
             self.sync_st_contents();
-            self.modified = self.project.pous != self.saved_pous;
+            self.modified = self.is_dirty();
         }
     }
 
@@ -906,7 +971,7 @@ impl FerriteStudioApp {
             self.last_edit_time = None;
             self.recompile_runtime();
             self.sync_st_contents();
-            self.modified = self.project.pous != self.saved_pous;
+            self.modified = self.is_dirty();
         }
     }
 
@@ -922,6 +987,30 @@ impl FerriteStudioApp {
             }
         }
     }
+}
+
+fn sfc_extract_num(id: &str) -> Option<usize> {
+    let s = id.trim_start_matches(|c: char| !c.is_ascii_digit());
+    let num_str: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+    num_str.parse::<usize>().ok()
+}
+
+fn sfc_next_step_num(sfc: &ferrite_lang_sfc::SfcProgram) -> usize {
+    sfc.steps
+        .iter()
+        .filter_map(|s| sfc_extract_num(&s.id))
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
+fn sfc_next_transition_num(sfc: &ferrite_lang_sfc::SfcProgram) -> usize {
+    sfc.transitions
+        .iter()
+        .filter_map(|t| sfc_extract_num(&t.id))
+        .max()
+        .unwrap_or(0)
+        + 1
 }
 
 fn remove_from_elements(
@@ -1063,19 +1152,46 @@ impl FerriteStudioApp {
 
     pub fn recompile_runtime(&mut self) {
         self.diagnostics = self.project.check().unwrap_or_default();
-        match PlcRuntime::from_project(&self.project) {
-            Ok(rt) => {
-                self.runtime = Some(rt);
-                self.status_banner = self
-                    .ui_lang
-                    .tr(
-                        "Runtime recompiled successfully.",
-                        "API recompilée avec succès.",
-                    )
-                    .to_string();
+        if let Some(ref mut rt) = self.runtime {
+            match rt.reload_from_project_preserving_state(&self.project) {
+                Ok(report) => {
+                    self.status_banner = self
+                        .ui_lang
+                        .tr(
+                            &format!(
+                                "Online reload / recompile successful (updated: {}, added: {}, dropped: {}).",
+                                report.updated_pous.len(),
+                                report.added_pous.len(),
+                                report.dropped_pous.len()
+                            ),
+                            &format!(
+                                "Rechargement en ligne / recompilation réussie (mis à jour : {}, ajoutés : {}, supprimés : {}).",
+                                report.updated_pous.len(),
+                                report.added_pous.len(),
+                                report.dropped_pous.len()
+                            ),
+                        )
+                        .to_string();
+                }
+                Err(e) => {
+                    self.status_banner = format!("Compilation error: {e}");
+                }
             }
-            Err(e) => {
-                self.status_banner = format!("Compilation error: {e}");
+        } else {
+            match PlcRuntime::from_project(&self.project) {
+                Ok(rt) => {
+                    self.runtime = Some(rt);
+                    self.status_banner = self
+                        .ui_lang
+                        .tr(
+                            "Runtime recompiled successfully.",
+                            "API recompilée avec succès.",
+                        )
+                        .to_string();
+                }
+                Err(e) => {
+                    self.status_banner = format!("Compilation error: {e}");
+                }
             }
         }
     }
@@ -1515,6 +1631,27 @@ impl FerriteStudioApp {
         }
     }
 
+    pub fn configure_trace_tags(&mut self, tags: &[&str], capacity: usize) {
+        if let Some(rt) = &mut self.runtime {
+            let ids: Vec<ferrite_core::tag_table::TagId> = tags
+                .iter()
+                .filter_map(|t| rt.tags.tag_id(t))
+                .collect();
+            rt.configure_trace(&ids, capacity);
+            self.trace_active = !ids.is_empty() && capacity > 0;
+        }
+    }
+
+    pub fn drain_trace_samples(&mut self) -> Vec<ferrite_runtime::TraceSample> {
+        if let Some(rt) = &mut self.runtime {
+            let drained = rt.drain_trace();
+            self.trace_drained_samples.extend(drained.clone());
+            drained
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn execute_all_scenarios(&mut self) {
         self.scenario_logs.clear();
         let mut rt = match PlcRuntime::from_project(&self.project) {
@@ -1699,7 +1836,8 @@ impl FerriteStudioApp {
             }
             Message::SelectTab(tab) => {
                 self.active_menu = None;
-
+                self.clear_editor_selections();
+                crate::editor_symbols::clear_all_symbol_buffers();
                 self.active_tab = tab;
                 Task::none()
             }
@@ -1928,10 +2066,21 @@ impl FerriteStudioApp {
                     blocks: Vec::new(),
                 };
 
-                let target_name = self.custom_fbd_editing_name.as_deref().unwrap_or(&name);
-                if let Some(pos) = self.global_custom_fbs.iter().position(|b| b.name == target_name || b.name == name) {
-                    self.global_custom_fbs[pos] = def;
+                if let Some(ref target_name) = self.custom_fbd_editing_name {
+                    if target_name != &name && self.global_custom_fbs.iter().any(|b| b.name == name) {
+                        self.custom_fbd_validation_error = Some(format!("Block '{name}' already exists"));
+                        return Task::none();
+                    }
+                    if let Some(pos) = self.global_custom_fbs.iter().position(|b| &b.name == target_name) {
+                        self.global_custom_fbs[pos] = def;
+                    } else {
+                        self.global_custom_fbs.push(def);
+                    }
                 } else {
+                    if self.global_custom_fbs.iter().any(|b| b.name == name) {
+                        self.custom_fbd_validation_error = Some(format!("Block '{name}' already exists"));
+                        return Task::none();
+                    }
                     self.global_custom_fbs.push(def);
                 }
 
@@ -1939,7 +2088,9 @@ impl FerriteStudioApp {
                     version: crate::custom_fbd_library::GLOBAL_CUSTOM_FBD_VERSION,
                     blocks: self.global_custom_fbs.clone(),
                 };
-                let _ = crate::custom_fbd_library::save_global_library(&lib);
+                if let Err(e) = crate::custom_fbd_library::save_global_library(&lib) {
+                    self.status_banner = format!("Failed to save custom FBD library: {e}");
+                }
 
                 self.custom_fbd_builder_open = false;
                 self.custom_fbd_editing_name = None;
@@ -1966,7 +2117,9 @@ impl FerriteStudioApp {
                     version: crate::custom_fbd_library::GLOBAL_CUSTOM_FBD_VERSION,
                     blocks: self.global_custom_fbs.clone(),
                 };
-                let _ = crate::custom_fbd_library::save_global_library(&lib);
+                if let Err(e) = crate::custom_fbd_library::save_global_library(&lib) {
+                    self.status_banner = format!("Failed to save custom FBD library: {e}");
+                }
                 if self.custom_fbd_editing_name.as_deref() == Some(&name) {
                     self.custom_fbd_builder_open = false;
                     self.custom_fbd_editing_name = None;
@@ -2008,7 +2161,10 @@ impl FerriteStudioApp {
                         inputs.insert(pin.clone(), ferrite_lang_fbd::FbdInputSource::Value { expr: "FALSE".to_string() });
                     }
 
-                    let next = fbd.blocks.len() + 1;
+                    let mut next = 1;
+                    while fbd.blocks.iter().any(|b| b.id == format!("{}_{next}", def.name)) {
+                        next += 1;
+                    }
                     let block_id = format!("{}_{next}", def.name);
                     fbd.blocks.push(ferrite_lang_fbd::FbdBlock {
                         id: block_id,
@@ -2095,8 +2251,18 @@ impl FerriteStudioApp {
             }
             Message::ConfirmCloseSaveAndExit => {
                 let root = self.project.root_dir.clone();
-                let _ = self.project.save(&root);
-                let _ = self.digital_twin_workspace.save_to_project(&root);
+                if let Err(e) = self.project.save(&root) {
+                    self.status_banner = format!("Save failed: {e}");
+                    self.show_close_confirm_modal = false;
+                    return Task::none();
+                }
+                if !self.digital_twin_load_failed
+                    && let Err(e) = self.digital_twin_workspace.save_to_project(&root)
+                {
+                    self.status_banner = format!("Save failed: {e}");
+                    self.show_close_confirm_modal = false;
+                    return Task::none();
+                }
                 self.modified = false;
                 self.allowed_to_close = true;
                 self.show_close_confirm_modal = false;
@@ -2119,6 +2285,7 @@ impl FerriteStudioApp {
             }
             Message::SetTheme(theme) => {
                 self.ui_theme = theme;
+                let _ = crate::settings::save_theme_preference(theme);
                 Task::none()
             }
             Message::ToggleRunSim => {
@@ -2142,6 +2309,7 @@ impl FerriteStudioApp {
                 if let Some(held_id) = self.digital_twin_workspace.active_momentary_id.take() {
                     self.release_twin_momentary_button(held_id);
                 }
+                self.runtime = None;
                 self.recompile_runtime();
                 self.trend_plotter.clear_all();
                 Task::none()
@@ -2278,12 +2446,7 @@ impl FerriteStudioApp {
                 if let Some(rt) = &mut self.runtime
                     && let Some(tag) = rt.tags.get_tag(&name)
                 {
-                    let parsed_val = match tag.data_type {
-                        IecType::Int => val_str.trim().parse::<i16>().map(IecValue::Int).ok(),
-                        IecType::Dint => val_str.trim().parse::<i32>().map(IecValue::Dint).ok(),
-                        IecType::Real => val_str.trim().parse::<f32>().map(IecValue::Real).ok(),
-                        _ => None,
-                    };
+                    let parsed_val = IecValue::parse_literal(val_str.trim(), Some(tag.data_type)).ok();
                     if let Some(val) = parsed_val {
                         let _ = rt.force(&name, val);
                         self.status_banner =
@@ -2347,11 +2510,20 @@ impl FerriteStudioApp {
             }
             Message::SaveProject => {
                 let root = self.project.root_dir.clone();
-                let _ = self.digital_twin_workspace.save_to_project(&root);
+                let twin_err = if !self.digital_twin_load_failed {
+                    self.digital_twin_workspace.save_to_project(&root).err()
+                } else {
+                    None
+                };
                 if let Err(e) = self.project.save(&root) {
+                    self.status_banner = format!("Save failed: {e}");
+                } else if let Some(e) = twin_err {
                     self.status_banner = format!("Save failed: {e}");
                 } else {
                     self.saved_pous = self.project.pous.clone();
+                    self.saved_manifest = self.project.manifest.clone();
+                    self.saved_global_tags = self.project.global_tags.clone();
+                    self.saved_fb_instances = self.project.fb_instances.clone();
                     self.modified = false;
                     self.status_banner = self
                         .ui_lang
@@ -2370,7 +2542,7 @@ impl FerriteStudioApp {
                         if let Some(pou_src) = self.project.pous.get(&pou_name).cloned() {
                             self.saved_pous.insert(pou_name.clone(), pou_src);
                         }
-                        self.modified = self.project.pous != self.saved_pous;
+                        self.modified = self.is_dirty();
                         self.status_banner = format!(
                             "{} '{}'",
                             self.ui_lang.tr("POU saved:", "POU enregistre :"),
@@ -2393,10 +2565,28 @@ impl FerriteStudioApp {
                     Ok(loaded) => {
                         let p_name = loaded.manifest.name.clone();
                         self.saved_pous = loaded.pous.clone();
+                        self.saved_manifest = loaded.manifest.clone();
+                        self.saved_global_tags = loaded.global_tags.clone();
+                        self.saved_fb_instances = loaded.fb_instances.clone();
                         self.project = loaded;
                         self.modified = false;
-                        self.digital_twin_workspace =
-                            DigitalTwinWorkspace::load_or_default(&self.project.root_dir);
+                        self.clear_editor_selections();
+                        self.st_contents.clear();
+                        self.sync_st_contents();
+                        crate::editor_symbols::clear_all_symbol_buffers();
+                        let twin_res = DigitalTwinWorkspace::load(&self.project.root_dir);
+                        let twin_err = match twin_res {
+                            Ok(ws) => {
+                                self.digital_twin_workspace = ws;
+                                self.digital_twin_load_failed = false;
+                                None
+                            }
+                            Err(e) => {
+                                self.digital_twin_workspace = DigitalTwinWorkspace::with_starter_plant();
+                                self.digital_twin_load_failed = true;
+                                Some(e)
+                            }
+                        };
                         self.undo_stack.clear();
                         self.redo_stack.clear();
                         self.last_committed_project = self.project.clone();
@@ -2407,12 +2597,17 @@ impl FerriteStudioApp {
                             .first()
                             .map(|p| WorkspaceTab::Pou(p.name.clone()))
                             .unwrap_or(WorkspaceTab::SymbolsAndConfig);
+                        self.runtime = None;
                         self.recompile_runtime();
-                        self.status_banner = format!(
-                            "Project '{}' successfully loaded from {}",
-                            p_name,
-                            path.display()
-                        );
+                        if let Some(e) = twin_err {
+                            self.status_banner = format!("Failed to load digital twin: {e}");
+                        } else {
+                            self.status_banner = format!(
+                                "Project '{}' successfully loaded from {}",
+                                p_name,
+                                path.display()
+                            );
+                        }
                     }
                     Err(e) => {
                         self.status_banner =
@@ -2462,11 +2657,22 @@ impl FerriteStudioApp {
                 if let Some(folder) = dialog.pick_folder() {
                     match self.project.save(&folder) {
                         Ok(()) => {
-                            let _ = self.digital_twin_workspace.save_to_project(&folder);
+                            let twin_err = if !self.digital_twin_load_failed {
+                                self.digital_twin_workspace.save_to_project(&folder).err()
+                            } else {
+                                None
+                            };
                             self.project.root_dir = folder.clone();
                             self.saved_pous = self.project.pous.clone();
+                            self.saved_manifest = self.project.manifest.clone();
+                            self.saved_global_tags = self.project.global_tags.clone();
+                            self.saved_fb_instances = self.project.fb_instances.clone();
                             self.modified = false;
-                            self.status_banner = format!("Project saved to {}", folder.display());
+                            if let Some(e) = twin_err {
+                                self.status_banner = format!("Save As digital twin failed: {e}");
+                            } else {
+                                self.status_banner = format!("Project saved to {}", folder.display());
+                            }
                         }
                         Err(e) => {
                             self.status_banner = format!("Save As failed: {e}");
@@ -2524,20 +2730,40 @@ impl FerriteStudioApp {
                                     Ok(imported_project) => {
                                         let p_name = imported_project.manifest.name.clone();
                                         self.saved_pous = imported_project.pous.clone();
+                                        self.saved_manifest = imported_project.manifest.clone();
+                                        self.saved_global_tags = imported_project.global_tags.clone();
+                                        self.saved_fb_instances = imported_project.fb_instances.clone();
                                         self.project = imported_project;
                                         self.modified = false;
-                                        self.digital_twin_workspace =
-                                            DigitalTwinWorkspace::load_or_default(
-                                                &self.project.root_dir,
-                                            );
+                                        self.clear_editor_selections();
+                                        self.st_contents.clear();
+                                        self.sync_st_contents();
+                                        crate::editor_symbols::clear_all_symbol_buffers();
+                                        let twin_res = DigitalTwinWorkspace::load(&self.project.root_dir);
+                                        let twin_err = match twin_res {
+                                            Ok(ws) => {
+                                                self.digital_twin_workspace = ws;
+                                                self.digital_twin_load_failed = false;
+                                                None
+                                            }
+                                            Err(e) => {
+                                                self.digital_twin_workspace = DigitalTwinWorkspace::with_starter_plant();
+                                                self.digital_twin_load_failed = true;
+                                                Some(e)
+                                            }
+                                        };
                                         self.undo_stack.clear();
                                         self.redo_stack.clear();
                                         self.recompile_runtime();
-                                        self.status_banner = format!(
-                                            "Project '{}' successfully imported from PLCopen XML to {}",
-                                            p_name,
-                                            target_dir.display()
-                                        );
+                                        if let Some(e) = twin_err {
+                                            self.status_banner = format!("Failed to load digital twin: {e}");
+                                        } else {
+                                            self.status_banner = format!(
+                                                "Project '{}' successfully imported from PLCopen XML to {}",
+                                                p_name,
+                                                target_dir.display()
+                                            );
+                                        }
                                     }
                                     Err(e) => {
                                         self.status_banner = format!("PLCopen import failed: {e}");
@@ -2919,6 +3145,8 @@ impl FerriteStudioApp {
                         if let Some(pou_src) = self.project.pous.get(&name).cloned() {
                             self.saved_pous.insert(name.clone(), pou_src);
                         }
+                        self.clear_editor_selections();
+                        crate::editor_symbols::clear_all_symbol_buffers();
                         self.track_history();
                         self.active_tab = WorkspaceTab::Pou(name.clone());
                         if kind == LanguageKind::St {
@@ -2929,7 +3157,7 @@ impl FerriteStudioApp {
                         }
                         self.new_pou_name.clear();
                         self.recompile_runtime();
-                        self.modified = self.project.pous != self.saved_pous;
+                        self.modified = self.is_dirty();
                     }
                 }
                 Task::none()
@@ -3064,6 +3292,8 @@ impl FerriteStudioApp {
             Message::DeletePou(pou_name) => {
                 match self.project.delete_pou(&pou_name) {
                     Ok(()) => {
+                        self.clear_editor_selections();
+                        crate::editor_symbols::clear_all_symbol_buffers();
                         if self.active_tab == WorkspaceTab::Pou(pou_name.clone()) {
                             if let Some(first_pou) = self.project.manifest.pous.first() {
                                 self.active_tab = WorkspaceTab::Pou(first_pou.name.clone());
@@ -3074,19 +3304,9 @@ impl FerriteStudioApp {
                         self.st_contents.remove(&pou_name);
                         self.ld_canvas_pan.remove(&pou_name);
                         self.ld_canvas_zoom.remove(&pou_name);
-                        if let Some((ref p, _)) = self.sfc_selected
-                            && p == &pou_name
-                        {
-                            self.sfc_selected = None;
-                        }
-                        if let Some((ref p, _)) = self.ld_selected
-                            && p == &pou_name
-                        {
-                            self.ld_selected = None;
-                        }
                         self.saved_pous.remove(&pou_name);
                         self.track_history();
-                        self.modified = self.project.pous != self.saved_pous;
+                        self.modified = self.is_dirty();
                         self.recompile_runtime();
                     }
                     Err(e) => {
@@ -3221,16 +3441,83 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
+            Message::TraceTagsInputChanged(s) => {
+                self.trace_tags_input = s;
+                Task::none()
+            }
+            Message::TraceCapacityInputChanged(s) => {
+                self.trace_capacity_input = s;
+                Task::none()
+            }
+            Message::TraceStart => {
+                let cap = self.trace_capacity_input.trim().parse::<usize>().unwrap_or(100);
+                if let Some(rt) = &mut self.runtime {
+                    let tag_names: Vec<&str> = self
+                        .trace_tags_input
+                        .split([',', ' ', ';'])
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    let tag_ids: Vec<ferrite_core::tag_table::TagId> = tag_names
+                        .iter()
+                        .filter_map(|name| rt.tags.tag_id(name))
+                        .collect();
+                    if !tag_ids.is_empty() {
+                        rt.configure_trace(&tag_ids, cap);
+                        self.trace_active = true;
+                        self.status_banner = format!(
+                            "In-scan trace started ({} tags, capacity {})",
+                            tag_ids.len(),
+                            cap
+                        );
+                    } else {
+                        self.status_banner =
+                            "No matching tag names found for in-scan trace".to_string();
+                    }
+                }
+                Task::none()
+            }
+            Message::TraceStop => {
+                if let Some(rt) = &mut self.runtime {
+                    rt.configure_trace(&[], 0);
+                }
+                self.trace_active = false;
+                self.status_banner = "In-scan trace stopped".to_string();
+                Task::none()
+            }
+            Message::TraceDrain => {
+                if let Some(rt) = &mut self.runtime {
+                    let drained = rt.drain_trace();
+                    let count = drained.len();
+                    self.trace_drained_samples.extend(drained);
+                    if self.trace_drained_samples.len() > 500 {
+                        let excess = self.trace_drained_samples.len() - 500;
+                        self.trace_drained_samples.drain(0..excess);
+                    }
+                    self.status_banner = format!("Drained {count} in-scan trace samples");
+                }
+                Task::none()
+            }
+            Message::TraceClear => {
+                self.trace_drained_samples.clear();
+                if let Some(rt) = &mut self.runtime {
+                    let _ = rt.drain_trace();
+                }
+                self.status_banner = "In-scan trace buffer cleared".to_string();
+                Task::none()
+            }
             Message::ScanCycleMsChanged(ms) => {
                 self.project.manifest.scan_cycle_ms = ms;
                 self.track_history();
-                self.modified = true;
+                self.recompile_runtime();
+                self.modified = self.is_dirty();
                 Task::none()
             }
             Message::WatchdogUsChanged(us) => {
                 self.project.manifest.watchdog_us = us;
                 self.track_history();
-                self.modified = true;
+                self.recompile_runtime();
+                self.modified = self.is_dirty();
                 Task::none()
             }
             Message::AddGlobalTag => {
@@ -3243,14 +3530,16 @@ impl FerriteStudioApp {
                     self.ui_lang.tr("User variable", "Variable utilisateur"),
                 ));
                 self.track_history();
-                self.modified = true;
+                self.recompile_runtime();
+                self.modified = self.is_dirty();
                 Task::none()
             }
             Message::RemoveGlobalTag(idx) => {
                 if idx < self.project.global_tags.tags.len() {
                     self.project.global_tags.tags.remove(idx);
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3258,7 +3547,8 @@ impl FerriteStudioApp {
                 if let Some(tag) = self.project.global_tags.tags.get_mut(idx) {
                     tag.name = name;
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3266,8 +3556,10 @@ impl FerriteStudioApp {
                 if let Some(tag) = self.project.global_tags.tags.get_mut(idx) {
                     tag.data_type = ty;
                     tag.initial_value = ty.default_value();
+                    crate::editor_symbols::clear_symbol_buffer(&format!("tag.{idx}.init"));
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3279,7 +3571,8 @@ impl FerriteStudioApp {
                         tag.address = Some(parsed);
                     }
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3289,7 +3582,8 @@ impl FerriteStudioApp {
                 {
                     tag.initial_value = v;
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3297,7 +3591,8 @@ impl FerriteStudioApp {
                 if let Some(tag) = self.project.global_tags.tags.get_mut(idx) {
                     tag.comment = c;
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3313,14 +3608,16 @@ impl FerriteStudioApp {
                     .instances
                     .push(FbInstance::new(name, kind));
                 self.track_history();
-                self.modified = true;
+                self.recompile_runtime();
+                self.modified = self.is_dirty();
                 Task::none()
             }
             Message::RemoveFbInstance(idx) => {
                 if idx < self.project.fb_instances.instances.len() {
                     self.project.fb_instances.instances.remove(idx);
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3328,7 +3625,8 @@ impl FerriteStudioApp {
                 if let Some(fb) = self.project.fb_instances.instances.get_mut(idx) {
                     fb.name = name;
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3336,7 +3634,8 @@ impl FerriteStudioApp {
                 if let Some(fb) = self.project.fb_instances.instances.get_mut(idx) {
                     fb.kind = kind;
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3344,7 +3643,8 @@ impl FerriteStudioApp {
                 if let Some(fb) = self.project.fb_instances.instances.get_mut(idx) {
                     fb.kp = kp;
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3352,7 +3652,8 @@ impl FerriteStudioApp {
                 if let Some(fb) = self.project.fb_instances.instances.get_mut(idx) {
                     fb.ti_s = ti;
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3360,7 +3661,8 @@ impl FerriteStudioApp {
                 if let Some(fb) = self.project.fb_instances.instances.get_mut(idx) {
                     fb.td_s = td;
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3368,7 +3670,8 @@ impl FerriteStudioApp {
                 if let Some(fb) = self.project.fb_instances.instances.get_mut(idx) {
                     fb.pt_ms = pt;
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
                 Task::none()
             }
@@ -3376,8 +3679,13 @@ impl FerriteStudioApp {
                 if let Some(fb) = self.project.fb_instances.instances.get_mut(idx) {
                     fb.pv = pv;
                     self.track_history();
-                    self.modified = true;
+                    self.recompile_runtime();
+                    self.modified = self.is_dirty();
                 }
+                Task::none()
+            }
+            Message::CommitSymbolBuffer(key) => {
+                crate::editor_symbols::clear_symbol_buffer(&key);
                 Task::none()
             }
             Message::StEditorAction(name, action) => {
@@ -3788,7 +4096,7 @@ impl FerriteStudioApp {
                         self.sfc_selected
                         && p == &pou_name
                     {
-                        let trans_id = format!("T{}", sfc.transitions.len() + 1);
+                        let trans_id = format!("T{}", sfc_next_transition_num(sfc));
                         let (sx, sy) = sfc
                             .steps
                             .iter()
@@ -3923,7 +4231,7 @@ impl FerriteStudioApp {
             }
             Message::SfcAddTransition(pou_name) => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
-                    let next = sfc.transitions.len() + 1;
+                    let next = sfc_next_transition_num(sfc);
                     let trans_id = format!("T{next}");
 
                     let (pos, from_steps) = if let Some((ref p, ref key)) = self.sfc_selected
@@ -3946,8 +4254,9 @@ impl FerriteStudioApp {
                                     .find(|t| &t.id == tid)
                                     .and_then(|t| t.grid_pos)
                                     .unwrap_or((110, 140));
-                                let inter_step_id = format!("X{}", sfc.steps.len() + 1);
-                                let inter_step_name = format!("Step_{}", sfc.steps.len() + 1);
+                                let next_step = sfc_next_step_num(sfc);
+                                let inter_step_id = format!("X{next_step}");
+                                let inter_step_name = format!("Step_{next_step}");
                                 if let Some(tr) = sfc.transitions.iter_mut().find(|t| &t.id == tid)
                                     && !tr.to_steps.contains(&inter_step_id)
                                 {
@@ -4071,7 +4380,7 @@ impl FerriteStudioApp {
             }
             Message::SfcAddAndDivergence(pou_name) => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
-                    let next_t = sfc.transitions.len() + 1;
+                    let next_t = sfc_next_transition_num(sfc);
                     let trans_id = format!("T{next_t}_AndDiv");
 
                     let mut from_steps = Vec::new();
@@ -4152,7 +4461,7 @@ impl FerriteStudioApp {
             }
             Message::SfcAddAndConvergence(pou_name) => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
-                    let next_t = sfc.transitions.len() + 1;
+                    let next_t = sfc_next_transition_num(sfc);
                     let trans_id = format!("T{next_t}_AndConv");
 
                     let mut from_steps = Vec::new();
@@ -4256,7 +4565,7 @@ impl FerriteStudioApp {
 
                     if selected_steps.len() >= 2 {
                         // In IEC 60848: OR divergence requires an independent transition on each branch
-                        let base_t = sfc.transitions.len() + 1;
+                        let base_t = sfc_next_transition_num(sfc);
                         for (idx, target_id) in selected_steps.iter().enumerate() {
                             let trans_id = format!("T{}_Or_{target_id}", base_t + idx);
                             let s_pos = sfc.steps.iter().find(|s| &s.id == target_id).and_then(|s| s.grid_pos);
@@ -4277,7 +4586,7 @@ impl FerriteStudioApp {
                         let source_pos = source_id.as_ref().and_then(|sid| {
                             sfc.steps.iter().find(|s| &s.id == sid).and_then(|s| s.grid_pos)
                         });
-                        let base_t = sfc.transitions.len() + 1;
+                        let base_t = sfc_next_transition_num(sfc);
                         for i in 1..=2 {
                             let trans_id = format!("T{}_Or{i}", base_t + i - 1);
                             let offset = ((i - 1) * 120) as i32;
@@ -4737,7 +5046,7 @@ impl FerriteStudioApp {
                 to_step,
             } => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
-                    let trans_id = format!("T{}", sfc.transitions.len() + 1);
+                    let trans_id = format!("T{}", sfc_next_transition_num(sfc));
                     let pos = {
                         let p1 = sfc
                             .steps
@@ -4777,8 +5086,9 @@ impl FerriteStudioApp {
                 to_trans,
             } => {
                 if let Some(PouSource::Sfc(sfc)) = self.project.pous.get_mut(&pou_name) {
-                    let step_id = format!("X{}", sfc.steps.len() + 1);
-                    let step_name = format!("Step_{}", sfc.steps.len() + 1);
+                    let next_step = sfc_next_step_num(sfc);
+                    let step_id = format!("X{next_step}");
+                    let step_name = format!("Step_{next_step}");
                     let pos = {
                         let p1 = sfc
                             .transitions
@@ -4873,18 +5183,7 @@ impl FerriteStudioApp {
                             _ => {
                                 if !self.force_analog_input.trim().is_empty() {
                                     let val_str = self.force_analog_input.clone();
-                                    let parsed_val = match tag.data_type {
-                                        IecType::Int => {
-                                            val_str.trim().parse::<i16>().map(IecValue::Int).ok()
-                                        }
-                                        IecType::Dint => {
-                                            val_str.trim().parse::<i32>().map(IecValue::Dint).ok()
-                                        }
-                                        IecType::Real => {
-                                            val_str.trim().parse::<f32>().map(IecValue::Real).ok()
-                                        }
-                                        _ => None,
-                                    };
+                                    let parsed_val = IecValue::parse_literal(val_str.trim(), Some(tag.data_type)).ok();
                                     if let Some(val) = parsed_val {
                                         let _ = rt.force(&tag_name, val);
                                         self.status_banner = format!(
@@ -4910,9 +5209,30 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
-            Message::FbdAddBlock(pou_name, kind) => {
+            Message::FbdAddBlock(pou_name, mut kind) => {
                 if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name) {
-                    let next = fbd.blocks.len() + 1;
+                    if let FbdBlockKind::StandardFb { ref mut instance, .. } = kind
+                        && (fbd.blocks.iter().any(|b| &b.id == instance)
+                            || self.project.fb_instances.instances.iter().any(|fb| &fb.name == instance))
+                    {
+                        let prefix = if let Some(pos) = instance.rfind('_') {
+                            instance[..=pos].to_string()
+                        } else {
+                            format!("{instance}_")
+                        };
+                        let mut candidate = 1;
+                        while fbd.blocks.iter().any(|b| b.id == format!("{prefix}{candidate}"))
+                            || self.project.fb_instances.instances.iter().any(|fb| fb.name == format!("{prefix}{candidate}"))
+                        {
+                            candidate += 1;
+                        }
+                        *instance = format!("{prefix}{candidate}");
+                    }
+
+                    let mut next = 1;
+                    while fbd.blocks.iter().any(|b| b.id == format!("Block_{next}")) {
+                        next += 1;
+                    }
                     let (block_id, inputs, fb_to_register) = match &kind {
                         FbdBlockKind::StandardFb {
                             instance,
@@ -5092,6 +5412,10 @@ impl FerriteStudioApp {
                         }
                     };
 
+                    if fbd.blocks.iter().any(|b| b.id == block_id) {
+                        return Task::none();
+                    }
+
                     if let Some((inst_name, fb_kind)) = fb_to_register
                         && !self
                             .project
@@ -5113,7 +5437,7 @@ impl FerriteStudioApp {
                         outputs: HashMap::new(),
                     });
                     self.track_history();
-                    self.modified = true;
+                    self.modified = self.is_dirty();
                     self.recompile_runtime();
                 }
                 Task::none()
@@ -5428,7 +5752,7 @@ impl FerriteStudioApp {
                                 self.digital_twin_workspace.inspector_open_for = Some(id);
                             }
                             self.digital_twin_workspace.context_menu =
-                                Some(((mx, my), id));
+                                Some(((mx, my).into(), id));
                             self.digital_twin_workspace.sync_color_picker_from_selected();
                             return Task::none();
                         }
@@ -5475,7 +5799,7 @@ impl FerriteStudioApp {
                                 handle,
                                 start_pos: elem.position,
                                 start_size: elem.size,
-                                start_mouse: (mx, my),
+                                start_mouse: (mx, my).into(),
                             });
                             return Task::none();
                         }
@@ -5493,7 +5817,7 @@ impl FerriteStudioApp {
                             self.digital_twin_workspace.inspector_open_for = Some(id);
                         }
                         self.digital_twin_workspace.drag_target_id = Some(id);
-                        self.digital_twin_workspace.drag_start_mouse = Some((mx, my));
+                        self.digital_twin_workspace.drag_start_mouse = Some((mx, my).into());
                         self.digital_twin_workspace.drag_start_elem_pos = pos;
                         self.digital_twin_workspace.sync_color_picker_from_selected();
                         return Task::none();
@@ -5535,8 +5859,8 @@ impl FerriteStudioApp {
                         .iter_mut()
                         .find(|e| e.id == resize.elem_id)
                     {
-                        let dx = mx - resize.start_mouse.0;
-                        let dy = my - resize.start_mouse.1;
+                        let dx = mx - resize.start_mouse.x;
+                        let dy = my - resize.start_mouse.y;
                         let rad = -elem.rotation.to_radians();
                         let ldx = dx * rad.cos() - dy * rad.sin();
                         let ldy = dx * rad.sin() + dy * rad.cos();
@@ -5601,8 +5925,8 @@ impl FerriteStudioApp {
                         .iter_mut()
                         .find(|e| e.id == drag_id)
                     {
-                        let mut nx = (start_pos.0 + (mx - start_mouse.0)).max(0.0);
-                        let mut ny = (start_pos.1 + (my - start_mouse.1)).max(0.0);
+                        let mut nx = (start_pos.0 + (mx - start_mouse.x)).max(0.0);
+                        let mut ny = (start_pos.1 + (my - start_mouse.y)).max(0.0);
                         if snap {
                             nx = (nx / grid_size).round() * grid_size;
                             ny = (ny / grid_size).round() * grid_size;
@@ -6182,8 +6506,8 @@ impl FerriteStudioApp {
                 left: 6.0,
                 right: 6.0,
             })
-            .style(|_| container::Style {
-                background: Some(Background::Color(StudioTheme::BORDER_CARD)),
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::border_card(theme))),
                 ..Default::default()
             })
             .into()
@@ -6417,15 +6741,19 @@ impl FerriteStudioApp {
         container(items_col)
             .width(250)
             .padding(4)
-            .style(|_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_elevated(theme))),
                 border: Border {
-                    color: StudioTheme::BORDER_CARD,
+                    color: StudioTheme::border_card(theme),
                     width: 1.0,
                     radius: Radius::from(6.0),
                 },
                 shadow: iced::Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+                    color: if StudioTheme::is_dark(theme) {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.4)
+                    } else {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.15)
+                    },
                     offset: iced::Vector::new(0.0, 4.0),
                     blur_radius: 12.0,
                 },
@@ -6472,15 +6800,19 @@ impl FerriteStudioApp {
         container(items_col)
             .width(180)
             .padding(4)
-            .style(|_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_ELEVATED)),
+            .style(|theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_elevated(theme))),
                 border: Border {
-                    color: StudioTheme::BORDER_CARD,
+                    color: StudioTheme::border_card(theme),
                     width: 1.0,
                     radius: Radius::from(6.0),
                 },
                 shadow: iced::Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.4),
+                    color: if StudioTheme::is_dark(theme) {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.4)
+                    } else {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.15)
+                    },
                     offset: iced::Vector::new(0.0, 4.0),
                     blur_radius: 12.0,
                 },
@@ -6515,8 +6847,8 @@ impl FerriteStudioApp {
         let base_content: Element<'_, Message> = container(root_col)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_BASE)),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_base(theme))),
                 ..Default::default()
             })
             .into();
@@ -7076,8 +7408,8 @@ impl FerriteStudioApp {
         container(column![header, content].spacing(0))
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_BASE)),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_panel(theme))),
                 ..Default::default()
             })
             .into()
@@ -7169,16 +7501,6 @@ impl FerriteStudioApp {
                 let is_dragging = self.dragging_pou.as_ref() == Some(&p.name) && self.drag_hover_pou.is_some();
                 let is_hovered = self.drag_hover_pou.as_ref() == Some(&p.name);
 
-                let (bg, border_col, border_w) = if is_hovered {
-                    (StudioTheme::BG_HOVER, StudioTheme::ACCENT_CYAN, 1.5)
-                } else if is_dragging {
-                    (StudioTheme::BG_HOVER, StudioTheme::ACCENT_AMBER, 1.0)
-                } else if is_active {
-                    (StudioTheme::BG_SURFACE, StudioTheme::ACCENT_CYAN, 1.5)
-                } else {
-                    (Color::TRANSPARENT, Color::TRANSPARENT, 0.0)
-                };
-
                 let pou_card = container(
                     row![
                         container(text(badge_txt).size(10).color(badge_color))
@@ -7197,14 +7519,34 @@ impl FerriteStudioApp {
                 )
                 .width(Length::Fill)
                 .padding([6, 8])
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(bg)),
-                    border: Border {
-                        color: border_col,
-                        width: border_w,
-                        radius: Radius::from(6.0),
-                    },
-                    ..Default::default()
+                .style(move |theme: &Theme| {
+                    let is_dark = StudioTheme::is_dark(theme);
+                    let (bg, border_col, border_w) = if is_hovered {
+                        (StudioTheme::bg_hover(theme), StudioTheme::ACCENT_CYAN, 1.5)
+                    } else if is_dragging {
+                        (StudioTheme::bg_hover(theme), StudioTheme::ACCENT_AMBER, 1.0)
+                    } else if is_active {
+                        (
+                            StudioTheme::bg_surface(theme),
+                            if is_dark {
+                                StudioTheme::ACCENT_CYAN
+                            } else {
+                                Color::from_rgb(0.008, 0.518, 0.780)
+                            },
+                            1.5,
+                        )
+                    } else {
+                        (Color::TRANSPARENT, Color::TRANSPARENT, 0.0)
+                    };
+                    container::Style {
+                        background: Some(Background::Color(bg)),
+                        border: Border {
+                            color: border_col,
+                            width: border_w,
+                            radius: Radius::from(6.0),
+                        },
+                        ..Default::default()
+                    }
                 });
 
                 let p_drag_start = p.name.clone();
@@ -7268,10 +7610,10 @@ impl FerriteStudioApp {
                     )
                     .padding(6)
                     .width(Length::Fill)
-                    .style(move |_| container::Style {
-                        background: Some(Background::Color(StudioTheme::BG_SURFACE)),
+                    .style(move |theme: &Theme| container::Style {
+                        background: Some(Background::Color(StudioTheme::bg_elevated(theme))),
                         border: Border {
-                            color: StudioTheme::BORDER_CARD,
+                            color: StudioTheme::border_card(theme),
                             width: 1.0,
                             radius: Radius::from(6.0),
                         },
@@ -7412,8 +7754,8 @@ impl FerriteStudioApp {
         container(column![header, content].spacing(0))
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_BASE)),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_panel(theme))),
                 ..Default::default()
             })
             .into()
@@ -7519,7 +7861,15 @@ impl FerriteStudioApp {
                         .into(),
                     _ => {
                         let is_forced = tag.forced.is_some();
-                        let display_val = val.to_string();
+                        let display_val = match &val {
+                            IecValue::Byte(b) => format!("16#{b:02X}"),
+                            IecValue::Word(w) => format!("16#{w:04X}"),
+                            IecValue::Dword(d) => format!("16#{d:08X}"),
+                            IecValue::Lword(l) => format!("16#{l:016X}"),
+                            IecValue::Real(r) => format!("{r:.2}"),
+                            IecValue::Lreal(lr) => format!("{lr:.2}"),
+                            _ => val.to_string(),
+                        };
                         let btn_text = if is_forced {
                             format!("{display_val} {}", crate::icons::icon_lock())
                         } else {
@@ -7700,6 +8050,12 @@ impl FerriteStudioApp {
                     self.bottom_dock_tab == BottomDockTab::Gpio
                 ))
                 .padding([4, 10]),
+            button(text(self.ui_lang.tr("In-Scan Trace", "Trace Synchrone")).size(11))
+                .on_press(Message::SelectBottomTab(BottomDockTab::Trace))
+                .style(StudioTheme::tab_button(
+                    self.bottom_dock_tab == BottomDockTab::Trace
+                ))
+                .padding([4, 10]),
             iced::widget::Space::with_width(Length::Fill),
             detach_btn,
         ]
@@ -7729,8 +8085,8 @@ impl FerriteStudioApp {
             .height(Length::Fill);
 
         container(column![tabs, content,].spacing(10).padding([8, 16]))
-            .style(move |_| container::Style {
-                background: Some(Background::Color(StudioTheme::BG_BASE)),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(StudioTheme::bg_base(theme))),
                 ..Default::default()
             })
             .width(Length::Fill)
@@ -8340,6 +8696,154 @@ impl FerriteStudioApp {
                     .height(Length::Fill);
 
                 column![header_row, pin_map_card].spacing(8).into()
+            }
+            BottomDockTab::Trace => {
+                let tags_input = text_input(
+                    self.ui_lang.tr("Tags (e.g. Tank_Level, Motor_Speed)", "Variables (ex: Tank_Level, Motor_Speed)"),
+                    &self.trace_tags_input,
+                )
+                .on_input(Message::TraceTagsInputChanged)
+                .width(Length::FillPortion(4))
+                .padding([4, 8])
+                .style(StudioTheme::styled_input);
+
+                let cap_input = text_input(
+                    "100",
+                    &self.trace_capacity_input,
+                )
+                .on_input(Message::TraceCapacityInputChanged)
+                .width(Length::Fixed(70.0))
+                .padding([4, 8])
+                .style(StudioTheme::styled_input);
+
+                let toggle_btn = if self.trace_active {
+                    button(text(self.ui_lang.tr("Stop Trace", "Arrêter Trace")).size(11))
+                        .on_press(Message::TraceStop)
+                        .style(StudioTheme::danger_button)
+                        .padding([4, 10])
+                } else {
+                    button(text(self.ui_lang.tr("Start Trace", "Démarrer Trace")).size(11))
+                        .on_press(Message::TraceStart)
+                        .style(StudioTheme::primary_button)
+                        .padding([4, 10])
+                };
+
+                let drain_btn = button(text(self.ui_lang.tr("Drain Samples", "Récupérer Échantillons")).size(11))
+                    .on_press(Message::TraceDrain)
+                    .style(StudioTheme::secondary_button)
+                    .padding([4, 10]);
+
+                let clear_btn = button(text(self.ui_lang.tr("Clear", "Effacer")).size(11))
+                    .on_press(Message::TraceClear)
+                    .style(StudioTheme::secondary_button)
+                    .padding([4, 10]);
+
+                let buffered_in_rt = self.runtime.as_ref().map(|r| r.trace_buffer.samples.len()).unwrap_or(0);
+                let rt_cap = self.runtime.as_ref().map(|r| r.trace_buffer.capacity).unwrap_or(0);
+
+                let status_text = text(format!(
+                    "{} {} | RT: {}/{}",
+                    self.ui_lang.tr("Drained:", "Récupérés :"),
+                    self.trace_drained_samples.len(),
+                    buffered_in_rt,
+                    rt_cap,
+                ))
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED);
+
+                let toolbar = row![
+                    tags_input,
+                    text(self.ui_lang.tr("Cap:", "Cap :")).size(11).color(StudioTheme::TEXT_SECONDARY),
+                    cap_input,
+                    toggle_btn,
+                    drain_btn,
+                    clear_btn,
+                    iced::widget::Space::with_width(Length::Fill),
+                    status_text,
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center);
+
+                let mut sample_rows = column![].spacing(3);
+                sample_rows = sample_rows.push(
+                    row![
+                        text(self.ui_lang.tr("Scan #", "Scan N°"))
+                            .size(11)
+                            .color(StudioTheme::TEXT_MUTED)
+                            .width(Length::Fixed(80.0)),
+                        text(self.ui_lang.tr("Time (ms)", "Temps (ms)"))
+                            .size(11)
+                            .color(StudioTheme::TEXT_MUTED)
+                            .width(Length::Fixed(100.0)),
+                        text(self.ui_lang.tr("Traced Values", "Valeurs Tracées"))
+                            .size(11)
+                            .color(StudioTheme::TEXT_MUTED)
+                            .width(Length::Fill),
+                    ]
+                    .spacing(12)
+                );
+
+                if self.trace_drained_samples.is_empty() {
+                    sample_rows = sample_rows.push(
+                        text(self.ui_lang.tr(
+                            "No trace samples drained yet. Enter tag names, start trace, and click 'Drain Samples'.",
+                            "Aucun échantillon récupéré. Saisissez des variables, démarrez la trace et cliquez sur 'Récupérer Échantillons'."
+                        ))
+                        .size(11)
+                        .color(StudioTheme::TEXT_MUTED)
+                    );
+                } else {
+                    for sample in self.trace_drained_samples.iter().rev().take(50) {
+                        let values_str = if let Some(ref rt) = self.runtime {
+                            sample
+                                .values
+                                .iter()
+                                .map(|(id, v)| {
+                                    let tag_name = rt
+                                        .tags
+                                        .get_tag_by_id(*id)
+                                        .map(|t| t.name.as_str())
+                                        .unwrap_or("?");
+                                    format!("{tag_name} = {v}")
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        } else {
+                            sample
+                                .values
+                                .iter()
+                                .map(|(id, v)| format!("#{}: {v}", id.0))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        };
+
+                        let row_widget = row![
+                            text(format!("#{}", sample.scan_count))
+                                .size(11)
+                                .color(StudioTheme::ACCENT_CYAN)
+                                .width(Length::Fixed(80.0)),
+                            text(format!("{} ms", sample.virtual_time_ms))
+                                .size(11)
+                                .color(StudioTheme::TEXT_SECONDARY)
+                                .width(Length::Fixed(100.0)),
+                            text(values_str)
+                                .size(11)
+                                .width(Length::Fill),
+                        ]
+                        .spacing(12)
+                        .align_y(Alignment::Center);
+
+                        sample_rows = sample_rows.push(row_widget);
+                    }
+                }
+
+                let samples_card = container(scrollable(sample_rows).height(Length::Fill))
+                    .padding([6, 12])
+                    .style(StudioTheme::canvas_container_style)
+                    .width(Length::Fill)
+                    .height(Length::Fill);
+
+                column![toolbar, samples_card].spacing(8).into()
             }
         }
     }

@@ -33,7 +33,7 @@ pub fn icon_close() -> &'static str {
     if crate::is_nerd_font_available() {
         "\u{f00d}" // nf-fa-times
     } else {
-        "✕"
+        "×"
     }
 }
 

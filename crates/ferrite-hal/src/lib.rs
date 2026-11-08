@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use ferrite_core::{CoreError, DirectAddress, IecType, IecValue, MemoryArea, ProcessImage};
@@ -23,6 +23,9 @@ pub enum HalError {
 
     #[error("Driver initialization failed: {0}")]
     InitFailed(String),
+
+    #[error("Driver fault on GPIO pin {pin}: {message}")]
+    DriverFault { pin: u32, message: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,17 +205,43 @@ impl HardwareDriver for MockGpioDriver {
 pub struct LinuxSysfsGpioDriver {
     pub config: GpioHalConfig,
     pub levels: HashMap<u32, bool>,
+    files: HashMap<u32, File>,
 }
 
 impl LinuxSysfsGpioDriver {
     pub fn new(config: GpioHalConfig) -> Result<Self, HalError> {
         let mut levels = HashMap::new();
+        let mut files = HashMap::new();
         for m in &config.mappings {
+            if m.pull != PinPull::None {
+                return Err(HalError::InitFailed(format!(
+                    "Sysfs GPIO driver does not support hardware pull configuration on pin {} (pull: {:?})",
+                    m.bcm_pin, m.pull
+                )));
+            }
             levels.insert(m.bcm_pin, false);
             Self::export_pin(m.bcm_pin)?;
             Self::set_direction(m.bcm_pin, m.direction)?;
+
+            let val_path = format!("/sys/class/gpio/gpio{}/value", m.bcm_pin);
+            let file = match m.direction {
+                PinDirection::Input => OpenOptions::new()
+                    .read(true)
+                    .open(&val_path)
+                    .map_err(|_| HalError::PermissionDenied(m.bcm_pin))?,
+                PinDirection::Output => OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&val_path)
+                    .map_err(|_| HalError::PermissionDenied(m.bcm_pin))?,
+            };
+            files.insert(m.bcm_pin, file);
         }
-        Ok(Self { config, levels })
+        Ok(Self {
+            config,
+            levels,
+            files,
+        })
     }
 
     fn export_pin(pin: u32) -> Result<(), HalError> {
@@ -246,30 +275,24 @@ impl LinuxSysfsGpioDriver {
         Ok(())
     }
 
-    fn read_pin_sysfs(pin: u32) -> Result<bool, HalError> {
-        let val_path = format!("/sys/class/gpio/gpio{pin}/value");
-        if Path::new(&val_path).exists() {
-            let mut buf = String::new();
-            let mut f = OpenOptions::new()
-                .read(true)
-                .open(&val_path)
-                .map_err(|_| HalError::PermissionDenied(pin))?;
-            f.read_to_string(&mut buf)?;
-            Ok(buf.trim() == "1")
-        } else {
-            Ok(false)
+    fn read_pin_from_files(files: &mut HashMap<u32, File>, pin: u32) -> Result<bool, HalError> {
+        let file = files.get_mut(&pin).ok_or(HalError::InvalidPin(pin))?;
+        file.seek(SeekFrom::Start(0))?;
+        let mut buf = [0u8; 8];
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            return Err(HalError::DriverFault {
+                pin,
+                message: "Unexpected EOF reading sysfs GPIO value".to_string(),
+            });
         }
+        Ok(buf[0] == b'1')
     }
 
-    fn write_pin_sysfs(pin: u32, high: bool) -> Result<(), HalError> {
-        let val_path = format!("/sys/class/gpio/gpio{pin}/value");
-        if Path::new(&val_path).exists() {
-            let mut f = OpenOptions::new()
-                .write(true)
-                .open(&val_path)
-                .map_err(|_| HalError::PermissionDenied(pin))?;
-            f.write_all(if high { b"1" } else { b"0" })?;
-        }
+    fn write_pin_to_files(files: &mut HashMap<u32, File>, pin: u32, high: bool) -> Result<(), HalError> {
+        let file = files.get_mut(&pin).ok_or(HalError::InvalidPin(pin))?;
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(if high { b"1" } else { b"0" })?;
         Ok(())
     }
 }
@@ -282,7 +305,7 @@ impl HardwareDriver for LinuxSysfsGpioDriver {
     fn read_inputs(&mut self, pi: &mut ProcessImage) -> Result<(), HalError> {
         for m in &self.config.mappings {
             if m.direction == PinDirection::Input {
-                let raw_high = Self::read_pin_sysfs(m.bcm_pin).unwrap_or(false);
+                let raw_high = Self::read_pin_from_files(&mut self.files, m.bcm_pin)?;
                 self.levels.insert(m.bcm_pin, raw_high);
                 let plc_val = if m.active_low { !raw_high } else { raw_high };
                 pi.set_hw_input(m.address, &IecValue::Bool(plc_val))?;
@@ -299,7 +322,7 @@ impl HardwareDriver for LinuxSysfsGpioDriver {
                     .as_bool()
                     .unwrap_or(false);
                 let raw_high = if m.active_low { !plc_val } else { plc_val };
-                let _ = Self::write_pin_sysfs(m.bcm_pin, raw_high);
+                Self::write_pin_to_files(&mut self.files, m.bcm_pin, raw_high)?;
                 self.levels.insert(m.bcm_pin, raw_high);
             }
         }
@@ -316,20 +339,63 @@ impl HardwareDriver for LinuxSysfsGpioDriver {
     }
 }
 
-/// Creates the appropriate `HardwareDriver` according to `GpioHalConfig`.
-pub fn create_hardware_driver(config: GpioHalConfig) -> Box<dyn HardwareDriver> {
+/// A hardware driver in a faulted error state (e.g. driver initialization failure).
+pub struct FaultedDriver {
+    pub error_message: String,
+}
+
+impl FaultedDriver {
+    pub fn new(error_message: impl Into<String>) -> Self {
+        Self {
+            error_message: error_message.into(),
+        }
+    }
+}
+
+impl HardwareDriver for FaultedDriver {
+    fn name(&self) -> &str {
+        "Faulted Hardware Driver"
+    }
+
+    fn read_inputs(&mut self, _pi: &mut ProcessImage) -> Result<(), HalError> {
+        Err(HalError::InitFailed(self.error_message.clone()))
+    }
+
+    fn write_outputs(&mut self, _pi: &ProcessImage) -> Result<(), HalError> {
+        Err(HalError::InitFailed(self.error_message.clone()))
+    }
+
+    fn pin_levels(&self) -> HashMap<u32, bool> {
+        HashMap::new()
+    }
+
+    fn set_mock_input(&mut self, _bcm: u32, _level: bool) -> Result<(), HalError> {
+        Err(HalError::InitFailed(self.error_message.clone()))
+    }
+}
+
+/// Attempts to create the configured `HardwareDriver`, returning `Err(HalError)` if initialization fails.
+pub fn try_create_hardware_driver(config: GpioHalConfig) -> Result<Box<dyn HardwareDriver>, HalError> {
     match config.driver_kind {
         GpioDriverKind::LinuxSysfs => {
-            if cfg!(target_os = "linux") && Path::new("/sys/class/gpio").exists() {
-                match LinuxSysfsGpioDriver::new(config.clone()) {
-                    Ok(drv) => Box::new(drv),
-                    Err(_) => Box::new(MockGpioDriver::new(config)),
-                }
-            } else {
-                Box::new(MockGpioDriver::new(config))
+            if !cfg!(target_os = "linux") || !Path::new("/sys/class/gpio").exists() {
+                return Err(HalError::InitFailed(
+                    "Linux Sysfs GPIO is only available on Linux with /sys/class/gpio".to_string(),
+                ));
             }
+            let drv = LinuxSysfsGpioDriver::new(config)?;
+            Ok(Box::new(drv))
         }
-        GpioDriverKind::Mock => Box::new(MockGpioDriver::new(config)),
+        GpioDriverKind::Mock => Ok(Box::new(MockGpioDriver::new(config))),
+    }
+}
+
+/// Creates the appropriate `HardwareDriver` according to `GpioHalConfig`.
+/// If an explicit driver fails initialization, a `FaultedDriver` is returned rather than silently falling back to Mock.
+pub fn create_hardware_driver(config: GpioHalConfig) -> Box<dyn HardwareDriver> {
+    match try_create_hardware_driver(config) {
+        Ok(drv) => drv,
+        Err(err) => Box::new(FaultedDriver::new(format!("{err}"))),
     }
 }
 
@@ -571,5 +637,44 @@ mod tests {
         let levels = drv.pin_levels();
         assert_eq!(levels.get(&23).copied(), Some(true));
         Ok(())
+    }
+
+    #[test]
+    fn test_regression_i4_explicit_driver_failure_surfaces_error() {
+        let config = GpioHalConfig {
+            driver_kind: GpioDriverKind::LinuxSysfs,
+            mappings: vec![],
+        };
+
+        // If sysfs is unavailable (e.g. non-Linux or /sys/class/gpio absent),
+        // try_create_hardware_driver must return an explicit Err, NOT Mock.
+        if !cfg!(target_os = "linux") || !Path::new("/sys/class/gpio").exists() {
+            let res = try_create_hardware_driver(config.clone());
+            assert!(matches!(res, Err(HalError::InitFailed(_))));
+
+            // create_hardware_driver must return a FaultedDriver, whose operations fail rather than Mocking
+            let mut drv = create_hardware_driver(config);
+            let mut pi = ProcessImage::default();
+            assert!(matches!(drv.read_inputs(&mut pi), Err(HalError::InitFailed(_))));
+            assert!(matches!(drv.write_outputs(&pi), Err(HalError::InitFailed(_))));
+        }
+    }
+
+    #[test]
+    fn test_regression_i4_m8_sysfs_rejects_unsupported_pull() {
+        let config = GpioHalConfig {
+            driver_kind: GpioDriverKind::LinuxSysfs,
+            mappings: vec![GpioPinMapping {
+                bcm_pin: 17,
+                label: "Button".to_string(),
+                address: DirectAddress::bit(MemoryArea::Input, 0, 0),
+                direction: PinDirection::Input,
+                active_low: false,
+                pull: PinPull::PullUp, // Unsupported in sysfs!
+            }],
+        };
+
+        let res = LinuxSysfsGpioDriver::new(config);
+        assert!(matches!(res, Err(HalError::InitFailed(_))));
     }
 }

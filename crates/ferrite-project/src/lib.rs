@@ -133,7 +133,105 @@ pub struct FbInstancesFile {
     pub instances: Vec<FbInstance>,
 }
 
+/// Comparison operators for scenario assertions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AssertOp {
+    #[default]
+    #[serde(rename = "==", alias = "=", alias = "eq", alias = "Equal")]
+    Equal,
+    #[serde(rename = "!=", alias = "ne", alias = "NotEqual")]
+    NotEqual,
+    #[serde(rename = "<", alias = "lt", alias = "LessThan")]
+    LessThan,
+    #[serde(rename = "<=", alias = "le", alias = "LessEqual")]
+    LessEqual,
+    #[serde(rename = ">", alias = "gt", alias = "GreaterThan")]
+    GreaterThan,
+    #[serde(rename = ">=", alias = "ge", alias = "GreaterEqual")]
+    GreaterEqual,
+    #[serde(rename = "in_range", alias = "range", alias = "between")]
+    InRange,
+}
+
+impl std::fmt::Display for AssertOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Equal => write!(f, "=="),
+            Self::NotEqual => write!(f, "!="),
+            Self::LessThan => write!(f, "<"),
+            Self::LessEqual => write!(f, "<="),
+            Self::GreaterThan => write!(f, ">"),
+            Self::GreaterEqual => write!(f, ">="),
+            Self::InRange => write!(f, "in_range"),
+        }
+    }
+}
+
+/// Structured assertion targeting shared FB instances or SFC step states in simulation scenarios.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScenarioAssert {
+    /// Shared FB instance name (e.g. "Timer_1") or composite path (e.g. "Timer_1.CV")
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub fb: String,
+    /// Field or pin name on the FB (e.g. "CV", "Q", "ET")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    /// Comparison operator: ==, !=, <, <=, >, >=, in_range (defaults to ==)
+    #[serde(default)]
+    pub op: AssertOp,
+    /// Expected value for binary comparison operators
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<IecValue>,
+    /// Range-gate minimum value
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<IecValue>,
+    /// Range-gate maximum value
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<IecValue>,
+    /// Optional SFC step assert target (e.g. "batch_seq.X0")
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "step")]
+    pub sfc_step: Option<String>,
+}
+
+impl ScenarioAssert {
+    /// Resolves the FB instance name and pin/field name.
+    /// Handles both `fb = "Timer_1", field = "CV"` and composite `fb = "Timer_1.CV"`.
+    pub fn target_fb_and_field(&self) -> Option<(&str, &str)> {
+        if self.fb.is_empty() {
+            return None;
+        }
+        if let Some((fb, pin)) = self.fb.split_once('.') {
+            let field = self.field.as_deref().unwrap_or(pin);
+            Some((fb, field))
+        } else if let Some(field) = self.field.as_deref() {
+            Some((&self.fb, field))
+        } else {
+            None
+        }
+    }
+}
+
+fn deserialize_scenario_asserts<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<ScenarioAssert>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(ScenarioAssert),
+        Many(Vec<ScenarioAssert>),
+    }
+
+    match Option::<OneOrMany>::deserialize(deserializer)? {
+        Some(OneOrMany::One(a)) => Ok(vec![a]),
+        Some(OneOrMany::Many(vec)) => Ok(vec),
+        None => Ok(Vec::new()),
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SimStep {
     pub scan: u64,
     #[serde(default)]
@@ -144,9 +242,18 @@ pub struct SimStep {
     /// Map of symbol to expected value after scan
     #[serde(default)]
     pub expect: HashMap<String, IecValue>,
+    /// Structured FB assertions and range-gates
+    #[serde(
+        default,
+        deserialize_with = "deserialize_scenario_asserts",
+        alias = "assert",
+        alias = "assertions",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub asserts: Vec<ScenarioAssert>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SimScenario {
     pub name: String,
     #[serde(default)]
@@ -154,6 +261,15 @@ pub struct SimScenario {
     pub total_scans: u64,
     #[serde(default)]
     pub steps: Vec<SimStep>,
+    /// Scenario-level assertions and range-gates
+    #[serde(
+        default,
+        deserialize_with = "deserialize_scenario_asserts",
+        alias = "assert",
+        alias = "assertions",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub asserts: Vec<ScenarioAssert>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -215,14 +331,31 @@ impl Project {
             .and_then(|n| n.to_str())
             .unwrap_or("ferrite.tmp");
         let tmp_path = dest.with_file_name(format!(".{file_name}.tmp"));
-        fs::write(&tmp_path, content.as_bytes()).map_err(|source| ProjectError::Io {
-            path: tmp_path.clone(),
-            source,
-        })?;
-        fs::rename(&tmp_path, dest).map_err(|source| ProjectError::Io {
-            path: dest.to_path_buf(),
-            source,
-        })?;
+
+        let write_and_sync = || -> std::io::Result<()> {
+            let mut file = fs::File::create(&tmp_path)?;
+            use std::io::Write;
+            file.write_all(content.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            Ok(())
+        };
+
+        if let Err(source) = write_and_sync() {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(ProjectError::Io {
+                path: tmp_path,
+                source,
+            });
+        }
+
+        if let Err(source) = fs::rename(&tmp_path, dest) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(ProjectError::Io {
+                path: dest.to_path_buf(),
+                source,
+            });
+        }
         Ok(())
     }
 
@@ -1023,50 +1156,59 @@ END_PROGRAM
                         description: "Scan 1: Safety interlocks healthy -> Permissive_OK, batch_seq.X0 & cip_clean.X0 initialized".to_string(),
                         set: step1_set,
                         expect: step1_expect,
+                        asserts: Vec::new(),
                     },
                     SimStep {
                         scan: 2,
                         description: "Scan 2: Start_Button rising edge |P| -> T1_AndDiv splits into parallel Step 1 (Water) & Step 2 (Reagent)".to_string(),
                         set: step2_set,
                         expect: step2_expect,
+                        asserts: Vec::new(),
                     },
                     SimStep {
                         scan: 3,
                         description: "Scan 3: Start_Pulse clears after 1 scan while Cycle_Latched stays SET; Tank_Level reaches 50%".to_string(),
                         set: step3_set,
                         expect: step3_expect,
+                        asserts: Vec::new(),
                     },
                     SimStep {
                         scan: 4,
                         description: "Scan 4: T2_AndConv synchronizes Step 1 & Step 2 into Step 3 (Recipe Selection)".to_string(),
                         set: HashMap::new(),
                         expect: step4_expect,
+                        asserts: Vec::new(),
                     },
                     SimStep {
                         scan: 5,
                         description: "Scan 5: T3_Or_Fast (OR Divergence) selects Step 4 (Alt_Fast_Mix) based on Fast_Recipe_Mode".to_string(),
                         set: HashMap::new(),
                         expect: step5_expect,
+                        asserts: Vec::new(),
                     },
                     SimStep {
                         scan: 6,
                         description: "Scan 6: T5a_Merge_Fast / T5b_Merge_Slow (OR Convergence) merges into Step 6 -> triggers subordinate cip_clean.X1 via cross-SFC transition".to_string(),
                         set: HashMap::new(),
                         expect: step6_expect,
+                        asserts: Vec::new(),
                     },
                     SimStep {
                         scan: 7,
                         description: "Scan 7: cip_clean advances to X2 (CIP_Complete); Stop_Button falling edge |N| unlatches Cycle_Latched".to_string(),
                         set: step7_set,
                         expect: step7_expect,
+                        asserts: Vec::new(),
                     },
                     SimStep {
                         scan: 8,
                         description: "Scan 8: batch_seq sees cip_clean.X2.state -> returns to X0 and resets cip_clean to X0 via S/R actions".to_string(),
                         set: HashMap::new(),
                         expect: step8_expect,
+                        asserts: Vec::new(),
                     },
                 ],
+                asserts: Vec::new(),
             }],
         };
 
@@ -1162,11 +1304,38 @@ END_PROGRAM
             ScenariosFile::default()
         };
 
+        let canonical_root = root_dir.canonicalize().map_err(|source| ProjectError::Io {
+            path: root_dir.clone(),
+            source,
+        })?;
+
         let mut pous = HashMap::new();
         for entry in &manifest.pous {
+            let rel = Path::new(&entry.path);
+            if rel.is_absolute()
+                || rel.components().any(|c| {
+                    matches!(
+                        c,
+                        std::path::Component::ParentDir
+                            | std::path::Component::Prefix(_)
+                            | std::path::Component::RootDir
+                    )
+                })
+            {
+                return Err(ProjectError::ValidationFailed(1));
+            }
+
             let pou_path = root_dir.join(&entry.path);
-            let raw = fs::read_to_string(&pou_path).map_err(|source| ProjectError::Io {
+            let canonical_pou = pou_path.canonicalize().map_err(|source| ProjectError::Io {
                 path: pou_path.clone(),
+                source,
+            })?;
+            if !canonical_pou.starts_with(&canonical_root) {
+                return Err(ProjectError::ValidationFailed(1));
+            }
+
+            let raw = fs::read_to_string(&canonical_pou).map_err(|source| ProjectError::Io {
+                path: canonical_pou,
                 source,
             })?;
             let src = match entry.language {
@@ -1216,6 +1385,17 @@ END_PROGRAM
             .pous
             .get(pou_name)
             .ok_or(ProjectError::ValidationFailed(1))?;
+
+        let pou_lang = match pou {
+            PouSource::Ld(_) => LanguageKind::Ld,
+            PouSource::Sfc(_) => LanguageKind::Sfc,
+            PouSource::St(_) => LanguageKind::St,
+            PouSource::Fbd(_) => LanguageKind::Fbd,
+        };
+        if entry.language != pou_lang {
+            return Err(ProjectError::ValidationFailed(1));
+        }
+
         let pou_path = target_dir.join(&entry.path);
         let serialized = match pou {
             PouSource::Ld(p) => p.to_json_pretty()?,
@@ -1250,38 +1430,127 @@ END_PROGRAM
         Self::atomic_write_str(&target_dir.join("sim").join("scenarios.toml"), &sim_toml)?;
 
         for entry in &self.manifest.pous {
-            if self.pous.contains_key(&entry.name) {
-                self.save_pou(target_dir, &entry.name)?;
-            }
+            self.save_pou(target_dir, &entry.name)?;
         }
 
         Ok(())
     }
+}
 
+fn validate_pou_name(name: &str) -> Result<&str, ProjectError> {
+    let clean = name.trim();
+    if clean.is_empty()
+        || clean.contains(['/', '\\', ':', '.', '\0'])
+        || !clean.chars().all(|c| c.is_alphanumeric() || c == '_')
+    {
+        return Err(ProjectError::ValidationFailed(1));
+    }
+    Ok(clean)
+}
+
+fn rewrite_qualified_symbol(text: &str, old_prefix: &str, new_prefix: &str) -> String {
+    let old_needle = format!("{old_prefix}.");
+    let new_replacement = format!("{new_prefix}.");
+    let mut result = String::with_capacity(text.len());
+    let mut cursor = 0;
+
+    while let Some(rel_pos) = text[cursor..].find(&old_needle) {
+        let match_start = cursor + rel_pos;
+        let is_prev_ident = if match_start == 0 {
+            false
+        } else {
+            text[..match_start]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        };
+
+        if !is_prev_ident {
+            result.push_str(&text[cursor..match_start]);
+            result.push_str(&new_replacement);
+            cursor = match_start + old_needle.len();
+        } else {
+            result.push_str(&text[cursor..match_start + old_needle.len()]);
+            cursor = match_start + old_needle.len();
+        }
+    }
+    result.push_str(&text[cursor..]);
+    result
+}
+
+fn rewrite_ld_element(elem: &mut LdElement, old_name: &str, new_name: &str) {
+    match elem {
+        LdElement::Contact { symbol, .. } => {
+            *symbol = rewrite_qualified_symbol(symbol, old_name, new_name);
+        }
+        LdElement::Branch { paths } => {
+            for path in paths {
+                for el in path {
+                    rewrite_ld_element(el, old_name, new_name);
+                }
+            }
+        }
+        LdElement::InlineFb {
+            enable_pin,
+            inputs,
+            outputs,
+            ..
+        } => {
+            if let Some(ep) = enable_pin {
+                *ep = rewrite_qualified_symbol(ep, old_name, new_name);
+            }
+            for (_pin, sym) in inputs {
+                *sym = rewrite_qualified_symbol(sym, old_name, new_name);
+            }
+            for (_pin, sym) in outputs {
+                *sym = rewrite_qualified_symbol(sym, old_name, new_name);
+            }
+        }
+        LdElement::Compare { left, right, .. } => {
+            *left = rewrite_qualified_symbol(left, old_name, new_name);
+            *right = rewrite_qualified_symbol(right, old_name, new_name);
+        }
+        LdElement::MathMove {
+            input1,
+            input2,
+            dest,
+            ..
+        } => {
+            *input1 = rewrite_qualified_symbol(input1, old_name, new_name);
+            if let Some(i2) = input2 {
+                *i2 = rewrite_qualified_symbol(i2, old_name, new_name);
+            }
+            *dest = rewrite_qualified_symbol(dest, old_name, new_name);
+        }
+    }
+}
+
+impl Project {
     /// Adds a new POU in `pous/` and registers it in the manifest and first task's execution order.
     pub fn add_pou(&mut self, name: &str, lang: LanguageKind) -> Result<PathBuf, ProjectError> {
-        if self.pous.contains_key(name) {
-            return Err(ProjectError::DuplicatePou(name.to_string()));
+        let clean_name = validate_pou_name(name)?;
+        if self.pous.contains_key(clean_name) {
+            return Err(ProjectError::DuplicatePou(clean_name.to_string()));
         }
         let rel_path = match lang {
-            LanguageKind::Ld => format!("pous/{name}.ld.json"),
-            LanguageKind::Sfc => format!("pous/{name}.sfc.json"),
-            LanguageKind::St => format!("pous/{name}.st"),
-            LanguageKind::Fbd => format!("pous/{name}.fbd.json"),
+            LanguageKind::Ld => format!("pous/{clean_name}.ld.json"),
+            LanguageKind::Sfc => format!("pous/{clean_name}.sfc.json"),
+            LanguageKind::St => format!("pous/{clean_name}.st"),
+            LanguageKind::Fbd => format!("pous/{clean_name}.fbd.json"),
         };
 
         let pou_src = match lang {
             LanguageKind::Ld => PouSource::Ld(LdProgram {
-                name: name.to_string(),
-                comment: format!("Ladder Diagram POU {name}"),
+                name: clean_name.to_string(),
+                comment: format!("Ladder Diagram POU {clean_name}"),
                 rungs: vec![],
             }),
             LanguageKind::Sfc => PouSource::Sfc(SfcProgram {
-                name: name.to_string(),
-                comment: format!("Grafcet POU {name}"),
+                name: clean_name.to_string(),
+                comment: format!("Grafcet POU {clean_name}"),
                 steps: vec![SfcStep {
                     id: "0".to_string(),
-                    name: format!("{name}_Init"),
+                    name: format!("{clean_name}_Init"),
                     kind: StepKind::Initial,
                     actions: vec![],
                     grid_pos: Some((60, 40)),
@@ -1291,43 +1560,58 @@ END_PROGRAM
             }),
             LanguageKind::St => {
                 let src =
-                    format!("PROGRAM {name}\n    (* Structured Text routine *)\nEND_PROGRAM\n");
-                PouSource::St(StProgram::parse(name, src)?)
+                    format!("PROGRAM {clean_name}\n    (* Structured Text routine *)\nEND_PROGRAM\n");
+                PouSource::St(StProgram::parse(clean_name, src)?)
             }
             LanguageKind::Fbd => PouSource::Fbd(FbdProgram {
-                name: name.to_string(),
-                comment: format!("Function Block Diagram POU {name}"),
+                name: clean_name.to_string(),
+                comment: format!("Function Block Diagram POU {clean_name}"),
                 composites: vec![],
                 blocks: vec![],
             }),
         };
 
+        let root = self.root_dir.clone();
+        let pou_path = root.join(&rel_path);
+        if root.exists() {
+            let serialized = match &pou_src {
+                PouSource::Ld(p) => p.to_json_pretty()?,
+                PouSource::Sfc(p) => p.to_json_pretty()?,
+                PouSource::St(p) => p.source.clone(),
+                PouSource::Fbd(p) => p.to_json_pretty()?,
+            };
+            Self::atomic_write_str(&pou_path, &serialized)?;
+        }
+
+        self.pous.insert(clean_name.to_string(), pou_src);
         self.manifest.pous.push(PouManifestEntry {
-            name: name.to_string(),
+            name: clean_name.to_string(),
             language: lang,
             path: rel_path.clone(),
         });
         if let Some(first_task) = self.manifest.tasks.first_mut()
-            && !first_task.pou_order.contains(&name.to_string())
+            && !first_task.pou_order.contains(&clean_name.to_string())
         {
-            first_task.pou_order.push(name.to_string());
+            first_task.pou_order.push(clean_name.to_string());
         }
-        self.pous.insert(name.to_string(), pou_src);
-        let root = self.root_dir.clone();
-        self.save_manifest(&root)?;
-        self.save_pou(&root, name)?;
+
+        if root.exists()
+            && let Err(err) = self.save_manifest(&root)
+        {
+            let _ = fs::remove_file(&pou_path);
+            self.pous.remove(clean_name);
+            self.manifest.pous.retain(|p| p.name != clean_name);
+            if let Some(first_task) = self.manifest.tasks.first_mut() {
+                first_task.pou_order.retain(|p| p != clean_name);
+            }
+            return Err(err);
+        }
         Ok(root.join(rel_path))
     }
 
     /// Renames a POU across manifest, pous map, task execution orders, and on-disk files.
     pub fn rename_pou(&mut self, old_name: &str, new_name: &str) -> Result<(), ProjectError> {
-        let clean_new = new_name.trim();
-        if clean_new.is_empty()
-            || clean_new.contains(['/', '\\', ':', '.', '\0'])
-            || !clean_new.chars().all(|c| c.is_alphanumeric() || c == '_')
-        {
-            return Err(ProjectError::ValidationFailed(1));
-        }
+        let clean_new = validate_pou_name(new_name)?;
         if old_name == clean_new {
             return Ok(());
         }
@@ -1343,8 +1627,128 @@ END_PROGRAM
         match &mut pou_src {
             PouSource::Ld(ld) => ld.name = clean_new.to_string(),
             PouSource::Sfc(sfc) => sfc.name = clean_new.to_string(),
-            PouSource::St(st) => st.name = clean_new.to_string(),
+            PouSource::St(st) => {
+                st.name = clean_new.to_string();
+                let old_prog = format!("PROGRAM {old_name}");
+                let new_prog = format!("PROGRAM {clean_new}");
+                if st.source.contains(&old_prog) {
+                    st.source = st.source.replace(&old_prog, &new_prog);
+                    *st = StProgram::parse(clean_new, &st.source)?;
+                }
+            }
             PouSource::Fbd(fbd) => fbd.name = clean_new.to_string(),
+        }
+
+        // Rewrite qualified references across all other POUs
+        for pou in self.pous.values_mut() {
+            match pou {
+                PouSource::Ld(ld) => {
+                    ld.comment = rewrite_qualified_symbol(&ld.comment, old_name, clean_new);
+                    for rung in &mut ld.rungs {
+                        rung.comment = rewrite_qualified_symbol(&rung.comment, old_name, clean_new);
+                        for el in &mut rung.elements {
+                            rewrite_ld_element(el, old_name, clean_new);
+                        }
+                        for coil in &mut rung.coils {
+                            coil.symbol =
+                                rewrite_qualified_symbol(&coil.symbol, old_name, clean_new);
+                        }
+                    }
+                }
+                PouSource::Sfc(sfc) => {
+                    sfc.comment = rewrite_qualified_symbol(&sfc.comment, old_name, clean_new);
+                    for step in &mut sfc.steps {
+                        for action in &mut step.actions {
+                            action.target =
+                                rewrite_qualified_symbol(&action.target, old_name, clean_new);
+                        }
+                    }
+                    for trans in &mut sfc.transitions {
+                        trans.receptivity =
+                            rewrite_qualified_symbol(&trans.receptivity, old_name, clean_new);
+                    }
+                }
+                PouSource::Fbd(fbd) => {
+                    fbd.comment = rewrite_qualified_symbol(&fbd.comment, old_name, clean_new);
+                    for block in &mut fbd.blocks {
+                        for input in block.inputs.values_mut() {
+                            if let FbdInputSource::Value { expr } = input {
+                                *expr = rewrite_qualified_symbol(expr, old_name, clean_new);
+                            }
+                        }
+                        for target in block.outputs.values_mut() {
+                            *target = rewrite_qualified_symbol(target, old_name, clean_new);
+                        }
+                    }
+                    for comp in &mut fbd.composites {
+                        for block in &mut comp.blocks {
+                            for input in block.inputs.values_mut() {
+                                if let FbdInputSource::Value { expr } = input {
+                                    *expr = rewrite_qualified_symbol(expr, old_name, clean_new);
+                                }
+                            }
+                            for target in block.outputs.values_mut() {
+                                *target = rewrite_qualified_symbol(target, old_name, clean_new);
+                            }
+                        }
+                    }
+                }
+                PouSource::St(st) => {
+                    st.source = rewrite_qualified_symbol(&st.source, old_name, clean_new);
+                    *st = StProgram::parse(&st.name, &st.source)?;
+                }
+            }
+        }
+
+        // Rewrite in scenarios
+        for sc in &mut self.scenarios.scenarios {
+            for a in &mut sc.asserts {
+                if let Some(ref mut step) = a.sfc_step {
+                    *step = rewrite_qualified_symbol(step, old_name, clean_new);
+                }
+            }
+            for step in &mut sc.steps {
+                for a in &mut step.asserts {
+                    if let Some(ref mut step) = a.sfc_step {
+                        *step = rewrite_qualified_symbol(step, old_name, clean_new);
+                    }
+                }
+                step.set = std::mem::take(&mut step.set)
+                    .into_iter()
+                    .map(|(k, v)| (rewrite_qualified_symbol(&k, old_name, clean_new), v))
+                    .collect();
+                step.expect = std::mem::take(&mut step.expect)
+                    .into_iter()
+                    .map(|(k, v)| (rewrite_qualified_symbol(&k, old_name, clean_new), v))
+                    .collect();
+            }
+        }
+
+        // Rewrite trigger_symbol in tasks
+        for task in &mut self.manifest.tasks {
+            if let Some(ref mut sym) = task.trigger_symbol {
+                *sym = rewrite_qualified_symbol(sym, old_name, clean_new);
+            }
+        }
+
+        // Check if any old qualified references remain in any POU
+        let needle = format!("{old_name}.");
+        for pou in self.pous.values() {
+            let has_ref = match pou {
+                PouSource::Ld(ld) => {
+                    serde_json::to_string(ld).map(|s| s.contains(&needle)).unwrap_or(false)
+                }
+                PouSource::Sfc(sfc) => {
+                    serde_json::to_string(sfc).map(|s| s.contains(&needle)).unwrap_or(false)
+                }
+                PouSource::St(st) => st.source.contains(&needle),
+                PouSource::Fbd(fbd) => {
+                    serde_json::to_string(fbd).map(|s| s.contains(&needle)).unwrap_or(false)
+                }
+            };
+            if has_ref {
+                return Err(ProjectError::ValidationFailed(1));
+            }
         }
 
         // Locate manifest entry
@@ -1368,17 +1772,14 @@ END_PROGRAM
             }
         }
 
-        // Rename the on-disk file if it exists
+        // Rename or remove old on-disk file
         if let (Some(old_path), Some(new_path)) = (old_file_path, new_file_path)
             && old_path.exists()
         {
-            if new_path.exists() {
+            if new_path.exists() && old_path != new_path {
                 return Err(ProjectError::DuplicatePou(clean_new.to_string()));
             }
-            std::fs::rename(&old_path, &new_path).map_err(|source| ProjectError::Io {
-                path: new_path,
-                source,
-            })?;
+            let _ = std::fs::remove_file(&old_path);
         }
 
         // Update tasks pou_order
@@ -1392,11 +1793,10 @@ END_PROGRAM
 
         self.pous.insert(clean_new.to_string(), pou_src);
 
-        // Save manifest and renamed POU to disk if root_dir exists
+        // Save entire project to disk if root_dir exists (persisting all updated cross-references)
         if self.root_dir.exists() {
             let root = self.root_dir.clone();
-            self.save_manifest(&root)?;
-            self.save_pou(&root, clean_new)?;
+            self.save(&root)?;
         }
         Ok(())
     }
@@ -1474,7 +1874,20 @@ END_PROGRAM
 
         if self.root_dir.exists() {
             let root = self.root_dir.clone();
-            let _ = self.save_manifest(&root);
+            if self.save_manifest(&root).is_err() {
+                // Revert in-memory changes on save error
+                let item = self.manifest.pous.remove(to_idx);
+                self.manifest.pous.insert(from_idx, item);
+                for task in &mut self.manifest.tasks {
+                    if let Some(t_to) = task.pou_order.iter().position(|p| p == from_name)
+                        && let Some(t_from) = task.pou_order.iter().position(|p| p == to_name)
+                    {
+                        let t_item = task.pou_order.remove(t_to);
+                        task.pou_order.insert(t_from, t_item);
+                    }
+                }
+                return false;
+            }
         }
 
         true
@@ -1488,7 +1901,10 @@ END_PROGRAM
             if self.root_dir.exists() {
                 let file_path = self.root_dir.join(&entry.path);
                 if file_path.exists() {
-                    let _ = std::fs::remove_file(file_path);
+                    std::fs::remove_file(&file_path).map_err(|source| ProjectError::Io {
+                        path: file_path,
+                        source,
+                    })?;
                 }
             }
         }
@@ -1568,6 +1984,83 @@ END_PROGRAM
                     severity: DiagnosticSeverity::Error,
                     message: msg,
                 });
+            }
+        }
+
+        // Scenario assertions validation
+        for sc in &self.scenarios.scenarios {
+            let mut check_assert = |assert: &ScenarioAssert| {
+                if let Some((fb_name, pin_name)) = assert.target_fb_and_field() {
+                    if let Some(fb_inst) = tags.get_fb(fb_name) {
+                        if !pin_name.is_empty() && fb_inst.read_pin(pin_name).is_err() {
+                            diagnostics.push(ValidationDiagnostic {
+                                pou: sc.name.clone(),
+                                language: LanguageKind::St,
+                                severity: DiagnosticSeverity::Error,
+                                message: format!(
+                                    "Scenario '{}': unknown pin/field '{}' for FB instance '{}'",
+                                    sc.name, pin_name, fb_name
+                                ),
+                            });
+                        }
+                    } else {
+                        diagnostics.push(ValidationDiagnostic {
+                            pou: sc.name.clone(),
+                            language: LanguageKind::St,
+                            severity: DiagnosticSeverity::Error,
+                            message: format!(
+                                "Scenario '{}': unknown Function Block instance '{}'",
+                                sc.name, fb_name
+                            ),
+                        });
+                    }
+                } else if !assert.fb.is_empty() && assert.sfc_step.is_none() {
+                    diagnostics.push(ValidationDiagnostic {
+                        pou: sc.name.clone(),
+                        language: LanguageKind::St,
+                        severity: DiagnosticSeverity::Error,
+                        message: format!(
+                            "Scenario '{}': assertion on FB '{}' missing field/pin",
+                            sc.name, assert.fb
+                        ),
+                    });
+                }
+
+                if let Some(ref sfc_step) = assert.sfc_step
+                    && let Some((pou_name, _)) = sfc_step.split_once('.')
+                    && !self.pous.contains_key(pou_name)
+                {
+                    diagnostics.push(ValidationDiagnostic {
+                        pou: sc.name.clone(),
+                        language: LanguageKind::Sfc,
+                        severity: DiagnosticSeverity::Error,
+                        message: format!(
+                            "Scenario '{}': SFC step assertion targets unknown POU '{}'",
+                            sc.name, pou_name
+                        ),
+                    });
+                }
+
+                if assert.op == AssertOp::InRange && assert.min.is_none() && assert.max.is_none() {
+                    diagnostics.push(ValidationDiagnostic {
+                        pou: sc.name.clone(),
+                        language: LanguageKind::St,
+                        severity: DiagnosticSeverity::Error,
+                        message: format!(
+                            "Scenario '{}': in_range assertion requires min or max",
+                            sc.name
+                        ),
+                    });
+                }
+            };
+
+            for a in &sc.asserts {
+                check_assert(a);
+            }
+            for step in &sc.steps {
+                for a in &step.asserts {
+                    check_assert(a);
+                }
             }
         }
 
@@ -1915,6 +2408,450 @@ mod tests {
 
         // Reorder unknown POU returns false
         assert!(!proj.reorder_pou("non_existent", &orig_first));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cr2_plcopen_collision_and_parse_failure() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join(format!(
+            "ferrite_test_cr2_collision_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let bad_dir = env::temp_dir().join(format!(
+            "ferrite_test_cr2_bad_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+
+        // Colliding POU: batch_seq in scaffold is SFC, but imported XML defines it as ST
+        let colliding_xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+  <fileHeader companyName="FerritePLC" productName="Test"/>
+  <contentHeader name="collision_plant"/>
+  <types>
+    <pous>
+      <pou name="batch_seq" pouType="program">
+        <body>
+          <ST>
+            <xhtml xmlns="http://www.w3.org/1999/xhtml"><![CDATA[PROGRAM batch_seq
+    (* Replaced batch_seq as ST *)
+END_PROGRAM
+]]></xhtml>
+          </ST>
+        </body>
+      </pou>
+    </pous>
+  </types>
+  <instances>
+    <configurations/>
+  </instances>
+</project>"#;
+
+        let imported = Project::import_plcopen_xml(colliding_xml, &temp_dir)?;
+        let entry = imported
+            .manifest
+            .pous
+            .iter()
+            .find(|p| p.name == "batch_seq")
+            .ok_or("batch_seq entry not found")?;
+        assert_eq!(entry.language, LanguageKind::St);
+        assert_eq!(entry.path, "pous/batch_seq.st");
+
+        // Old SFC file must not exist on disk, ST file must exist
+        assert!(!temp_dir.join("pous/batch_seq.sfc.json").exists());
+        assert!(temp_dir.join("pous/batch_seq.st").exists());
+
+        // Reload from disk must succeed
+        let reloaded = Project::load(&temp_dir)?;
+        let pou = reloaded.pous.get("batch_seq").ok_or("batch_seq missing")?;
+        assert!(matches!(pou, PouSource::St(_)));
+
+        // Unparseable POU must fail import
+        let bad_xml = r#"<?xml version="1.0" encoding="utf-8"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+  <fileHeader companyName="FerritePLC" productName="Test"/>
+  <contentHeader name="bad_plant"/>
+  <types>
+    <pous>
+      <pou name="broken_pou" pouType="program">
+        <body>
+          <ST>
+            <xhtml xmlns="http://www.w3.org/1999/xhtml"><![CDATA[NOT VALID ST CODE ??? &&&]]></xhtml>
+          </ST>
+        </body>
+      </pou>
+    </pous>
+  </types>
+  <instances>
+    <configurations/>
+  </instances>
+</project>"#;
+
+        let err = Project::import_plcopen_xml(bad_xml, &bad_dir);
+        assert!(err.is_err(), "Unparseable POU must fail import");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::remove_dir_all(&bad_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_i19_i20_atomic_write_and_add_pou_validation() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join(format!(
+            "ferrite_test_i19_i20_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let mut proj = Project::scaffold(&temp_dir, "test_add_pou")?;
+
+        // I-20: Test validation of invalid names
+        assert!(proj.add_pou("fo:o", LanguageKind::St).is_err());
+        assert!(proj.add_pou("../evil", LanguageKind::St).is_err());
+        assert!(proj.add_pou("", LanguageKind::St).is_err());
+        assert!(proj.add_pou("   ", LanguageKind::St).is_err());
+        assert!(proj.add_pou("invalid name", LanguageKind::St).is_err());
+        assert!(proj.add_pou("evil/nested", LanguageKind::St).is_err());
+        assert!(proj.add_pou("evil\\nested", LanguageKind::St).is_err());
+
+        // Ensure no files created outside pous/
+        assert!(!temp_dir.join("evil.st").exists());
+        if let Some(parent) = temp_dir.parent() {
+            assert!(!parent.join("evil.st").exists());
+        }
+
+        // Valid add_pou creates file before manifest entry
+        let pou_path = proj.add_pou("safety_gate", LanguageKind::St)?;
+        assert!(pou_path.exists());
+        assert!(proj.manifest.pous.iter().any(|p| p.name == "safety_gate"));
+
+        // Reload project
+        let reloaded = Project::load(&temp_dir)?;
+        assert!(reloaded.pous.contains_key("safety_gate"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_i21_rename_pou_rewrites_cross_references() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join(format!(
+            "ferrite_test_i21_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let mut proj = Project::scaffold(&temp_dir, "test_rename_refs")?;
+
+        // Before rename, project check passes
+        assert!(proj.check()?.is_empty());
+
+        // Rename cip_clean to cip_clean_renamed
+        proj.rename_pou("cip_clean", "cip_clean_renamed")?;
+
+        // Check that batch_seq (SFC) references to cip_clean were rewritten
+        let batch_sfc = match proj.pous.get("batch_seq") {
+            Some(PouSource::Sfc(s)) => s,
+            _ => return Err("batch_seq missing or not SFC".into()),
+        };
+        // Check action target
+        let has_renamed_action = batch_sfc.steps.iter().any(|s| {
+            s.actions
+                .iter()
+                .any(|a| a.target.contains("cip_clean_renamed.X2.state"))
+        });
+        assert!(has_renamed_action, "batch_seq action target not rewritten");
+
+        // Check transition receptivity
+        let has_renamed_trans = batch_sfc
+            .transitions
+            .iter()
+            .any(|t| t.receptivity.contains("cip_clean_renamed.X2.state"));
+        assert!(has_renamed_trans, "batch_seq transition not rewritten");
+
+        // Check that math_pid (ST) reference was rewritten
+        let math_st = match proj.pous.get("math_pid") {
+            Some(PouSource::St(s)) => s,
+            _ => return Err("math_pid missing or not ST".into()),
+        };
+        assert!(
+            math_st.source.contains("cip_clean_renamed.X1.state"),
+            "math_pid ST source not rewritten: {}",
+            math_st.source
+        );
+
+        // Check scenarios rewritten
+        let sc = &proj.scenarios.scenarios[0];
+        let has_renamed_sc = sc.steps.iter().any(|s| {
+            s.expect
+                .keys()
+                .any(|k| k.starts_with("cip_clean_renamed."))
+        });
+        assert!(has_renamed_sc, "scenarios not rewritten");
+
+        // Check project validation passes with 0 errors!
+        let diags = proj.check()?;
+        assert!(diags.is_empty(), "Project check failed after rename: {diags:?}");
+
+        // Reload from disk and verify disk files were updated
+        let reloaded = Project::load(&temp_dir)?;
+        let reloaded_diags = reloaded.check()?;
+        assert!(reloaded_diags.is_empty(), "Reloaded check failed: {reloaded_diags:?}");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_c15_manifest_path_sandboxing() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join(format!(
+            "ferrite_test_c15_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let proj = Project::scaffold(&temp_dir, "test_c15")?;
+        drop(proj);
+
+        // Tamper with manifest to have a path with traversal
+        let manifest_path = temp_dir.join(MANIFEST_FILE_NAME);
+        let raw = fs::read_to_string(&manifest_path)?;
+        let tampered = raw.replace("pous/math_pid.st", "../math_pid.st");
+        fs::write(&manifest_path, tampered)?;
+
+        // Project::load must fail sandboxing check
+        let res = Project::load(&temp_dir);
+        assert!(res.is_err(), "Project::load must reject traversal path in manifest");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_c16_swallowed_errors_save_manifest_pou_missing() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join(format!(
+            "ferrite_test_c16_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let mut proj = Project::scaffold(&temp_dir, "test_c16")?;
+
+        // Remove a POU from in-memory map without updating manifest
+        proj.pous.remove("pump_ctrl");
+
+        // proj.save must fail instead of silently skipping
+        let res = proj.save(&temp_dir);
+        assert!(res.is_err(), "save() must fail when manifest POU is missing from map");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_c17_plcopen_rejects_byte_word() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = env::temp_dir().join(format!(
+            "ferrite_test_c17_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+
+        let xml_byte = r#"<?xml version="1.0" encoding="utf-8"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+  <fileHeader companyName="FerritePLC" productName="Test"/>
+  <contentHeader name="byte_plant"/>
+  <types><pous/></types>
+  <instances>
+    <configurations>
+      <configuration name="Config">
+        <resource name="Res">
+          <globalVars>
+            <variable name="ByteVar">
+              <type><BYTE/></type>
+            </variable>
+          </globalVars>
+        </resource>
+      </configuration>
+    </configurations>
+  </instances>
+</project>"#;
+
+        let res = Project::import_plcopen_xml(xml_byte, &temp_dir);
+        assert!(res.is_err(), "importing BYTE must fail with unsupported type error");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_scenario_fb_assertions_schema_and_validation() -> Result<(), Box<dyn std::error::Error>> {
+        // 1. Legacy scenarios TOML parses without error
+        let legacy_toml = r#"
+[[scenarios]]
+name = "legacy_test"
+total_scans = 5
+
+[[scenarios.steps]]
+scan = 1
+description = "Legacy step"
+[scenarios.steps.set]
+Start_Button = true
+[scenarios.steps.expect]
+Permissive_OK = true
+"#;
+        let file: ScenariosFile = toml::from_str(legacy_toml)?;
+        assert_eq!(file.scenarios.len(), 1);
+        assert_eq!(file.scenarios[0].steps.len(), 1);
+        assert!(file.scenarios[0].steps[0].asserts.is_empty());
+        assert_eq!(
+            file.scenarios[0].steps[0].expect.get("Permissive_OK"),
+            Some(&IecValue::Bool(true))
+        );
+
+        // 2. New FB assert with fb, field, op, value
+        let fb_assert_toml = r#"
+[[scenarios]]
+name = "fb_test"
+total_scans = 10
+
+[[scenarios.steps]]
+scan = 2
+description = "Check timer CV"
+assert = { fb = "Timer_1", field = "CV", op = ">=", value = 50 }
+"#;
+        let file_fb: ScenariosFile = toml::from_str(fb_assert_toml)?;
+        assert_eq!(file_fb.scenarios[0].steps[0].asserts.len(), 1);
+        let a = &file_fb.scenarios[0].steps[0].asserts[0];
+        assert_eq!(a.fb, "Timer_1");
+        assert_eq!(a.field.as_deref(), Some("CV"));
+        assert_eq!(a.op, AssertOp::GreaterEqual);
+        assert_eq!(a.value, Some(IecValue::Int(50)));
+        assert_eq!(a.target_fb_and_field(), Some(("Timer_1", "CV")));
+
+        // 3. Composite fb notation "Timer_1.CV"
+        let composite_toml = r#"
+[[scenarios]]
+name = "composite_test"
+total_scans = 3
+
+[[scenarios.steps]]
+scan = 1
+assert = { fb = "Timer_1.CV", op = ">=", value = 100 }
+"#;
+        let file_comp: ScenariosFile = toml::from_str(composite_toml)?;
+        let a_comp = &file_comp.scenarios[0].steps[0].asserts[0];
+        assert_eq!(a_comp.target_fb_and_field(), Some(("Timer_1", "CV")));
+
+        // 4. Range-gate assertion
+        let range_toml = r#"
+[[scenarios]]
+name = "range_test"
+total_scans = 3
+
+[[scenarios.steps]]
+scan = 1
+assert = { fb = "Level_PID.OUT", op = "in_range", min = 10.0, max = 90.0 }
+"#;
+        let file_range: ScenariosFile = toml::from_str(range_toml)?;
+        let a_range = &file_range.scenarios[0].steps[0].asserts[0];
+        assert_eq!(a_range.op, AssertOp::InRange);
+        assert_eq!(a_range.min, Some(IecValue::Real(10.0)));
+        assert_eq!(a_range.max, Some(IecValue::Real(90.0)));
+
+        // 5. Multiple assertions list
+        let multi_toml = r#"
+[[scenarios]]
+name = "multi_test"
+total_scans = 2
+
+[[scenarios.steps]]
+scan = 1
+assert = [
+    { fb = "Timer_1", field = "CV", op = ">=", value = 10 },
+    { fb = "Timer_1", field = "Q", op = "==", value = false },
+    { sfc_step = "batch_seq.X0", op = "==", value = true }
+]
+"#;
+        let file_multi: ScenariosFile = toml::from_str(multi_toml)?;
+        assert_eq!(file_multi.scenarios[0].steps[0].asserts.len(), 3);
+
+        // 6. Project::check() validates FB instance existence and pin names
+        let temp_dir = env::temp_dir().join(format!(
+            "ferrite_test_fb_asserts_{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let mut proj = Project::scaffold(&temp_dir, "test_fb_check")?;
+
+        // Valid scenario assert on Fill_Timer.ET (which is a TON instance in scaffold)
+        let valid_step = SimStep {
+            scan: 1,
+            asserts: vec![ScenarioAssert {
+                fb: "Fill_Timer".to_string(),
+                field: Some("ET".to_string()),
+                op: AssertOp::GreaterEqual,
+                value: Some(IecValue::Time(100)),
+                min: None,
+                max: None,
+                sfc_step: None,
+            }],
+            ..Default::default()
+        };
+        proj.scenarios.scenarios.push(SimScenario {
+            name: "valid_fb_scenario".to_string(),
+            description: "valid".to_string(),
+            total_scans: 1,
+            steps: vec![valid_step],
+            asserts: Vec::new(),
+        });
+        let diags = proj.check()?;
+        assert!(diags.is_empty(), "Valid FB assert should produce 0 diagnostics, got {diags:?}");
+
+        // Invalid scenario assert on unknown FB instance
+        let bad_step = SimStep {
+            scan: 1,
+            asserts: vec![ScenarioAssert {
+                fb: "NonExistent_FB".to_string(),
+                field: Some("CV".to_string()),
+                op: AssertOp::Equal,
+                value: Some(IecValue::Int(0)),
+                min: None,
+                max: None,
+                sfc_step: None,
+            }],
+            ..Default::default()
+        };
+        proj.scenarios.scenarios.push(SimScenario {
+            name: "bad_fb_scenario".to_string(),
+            description: "bad fb".to_string(),
+            total_scans: 1,
+            steps: vec![bad_step],
+            asserts: Vec::new(),
+        });
+        let diags_bad_fb = proj.check()?;
+        assert!(
+            diags_bad_fb.iter().any(|d| d.message.contains("unknown Function Block instance 'NonExistent_FB'")),
+            "Expected unknown FB error, got {diags_bad_fb:?}"
+        );
+
+        // Invalid scenario assert on unknown pin for valid FB
+        proj.scenarios.scenarios.pop();
+        let bad_pin_step = SimStep {
+            scan: 1,
+            asserts: vec![ScenarioAssert {
+                fb: "Fill_Timer.UNKNOWN_PIN".to_string(),
+                field: None,
+                op: AssertOp::Equal,
+                value: Some(IecValue::Bool(true)),
+                min: None,
+                max: None,
+                sfc_step: None,
+            }],
+            ..Default::default()
+        };
+        proj.scenarios.scenarios.push(SimScenario {
+            name: "bad_pin_scenario".to_string(),
+            description: "bad pin".to_string(),
+            total_scans: 1,
+            steps: vec![bad_pin_step],
+            asserts: Vec::new(),
+        });
+        let diags_bad_pin = proj.check()?;
+        assert!(
+            diags_bad_pin.iter().any(|d| d.message.contains("unknown pin/field 'UNKNOWN_PIN'")),
+            "Expected unknown pin error, got {diags_bad_pin:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())

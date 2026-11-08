@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use egui::{Color32, Pos2, Rect, pos2, vec2};
 use ferrite_core::types::{IecType, IecValue};
 use serde::{Deserialize, Serialize};
 
@@ -135,7 +136,16 @@ pub enum AccessMode {
 pub struct BlinkConfig {
     pub enabled: bool,
     pub trigger_state: bool,
+    /// Blink half-period in ms; clamped to >= 1 on load to avoid divide-by-zero.
+    #[serde(deserialize_with = "deserialize_interval_ms")]
     pub interval_ms: u64,
+}
+
+fn deserialize_interval_ms<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(<u64 as Deserialize>::deserialize(deserializer)?.max(1))
 }
 
 impl Default for BlinkConfig {
@@ -159,12 +169,12 @@ pub struct VariableBinding {
 }
 
 impl VariableBinding {
-    pub fn new_digital(variable_id: impl Into<String>, active: [u8; 4], inactive: [u8; 4]) -> Self {
+    pub fn new_digital(variable_id: impl Into<String>, active: Color32, inactive: Color32) -> Self {
         Self {
             variable_id: variable_id.into(),
             access_mode: AccessMode::ReadOnly,
-            active_color: active,
-            inactive_color: inactive,
+            active_color: active.to_array(),
+            inactive_color: inactive.to_array(),
             blink: None,
         }
     }
@@ -179,12 +189,21 @@ pub enum ResizeHandle {
     BottomRight,
 }
 
+impl ResizeHandle {
+    pub fn cursor(self) -> egui::CursorIcon {
+        match self {
+            Self::TopLeft | Self::BottomRight => egui::CursorIcon::ResizeNwSe,
+            Self::TopRight | Self::BottomLeft => egui::CursorIcon::ResizeNeSw,
+        }
+    }
+}
+
 /// State tracking an ongoing corner resize drag operation.
 #[derive(Debug, Clone, Copy)]
 pub struct ActiveResize {
     pub elem_id: u64,
     pub handle: ResizeHandle,
-    pub start_mouse: (f32, f32),
+    pub start_mouse: Pos2,
     pub start_pos: (f32, f32),
     pub start_size: (f32, f32),
 }
@@ -249,25 +268,43 @@ impl CanvasElement {
         (dx * dx + dy * dy) <= (radius * radius)
     }
 
-    /// Returns the center positions of the 4 corner resize handles.
-    pub fn corner_handles(&self) -> [(ResizeHandle, (f32, f32)); 4] {
-        let (x, y) = self.position;
-        let (w, h) = self.size;
-        [
-            (ResizeHandle::TopLeft, (x, y)),
-            (ResizeHandle::TopRight, (x + w, y)),
-            (ResizeHandle::BottomLeft, (x, y + h)),
-            (ResizeHandle::BottomRight, (x + w, y + h)),
-        ]
+    pub fn rect(&self) -> Rect {
+        Rect::from_min_size(
+            pos2(self.position.0, self.position.1),
+            vec2(self.size.0, self.size.1),
+        )
+    }
+
+    pub fn base_color32(&self) -> Color32 {
+        Color32::from_rgba_premultiplied(
+            self.base_color[0],
+            self.base_color[1],
+            self.base_color[2],
+            self.base_color[3],
+        )
+    }
+
+    /// Returns the center positions and bounding rects of the 4 corner resize handles.
+    pub fn corner_handles(&self, handle_radius: f32) -> [(ResizeHandle, Pos2, Rect); 4] {
+        let r = self.rect();
+        let pts = [
+            (ResizeHandle::TopLeft, r.left_top()),
+            (ResizeHandle::TopRight, r.right_top()),
+            (ResizeHandle::BottomLeft, r.left_bottom()),
+            (ResizeHandle::BottomRight, r.right_bottom()),
+        ];
+        pts.map(|(handle, pt)| {
+            let handle_rect =
+                Rect::from_center_size(pt, vec2(handle_radius * 2.0, handle_radius * 2.0));
+            (handle, pt, handle_rect)
+        })
     }
 
     /// Hit-tests whether a given mouse position is over one of the 4 corner resize handles.
-    pub fn hit_test_handle(&self, (mx, my): (f32, f32), handle_radius: f32) -> Option<ResizeHandle> {
-        let handles = self.corner_handles();
-        for (handle, (hx, hy)) in handles {
-            let dx = mx - hx;
-            let dy = my - hy;
-            if (dx * dx + dy * dy) <= (handle_radius * handle_radius) {
+    pub fn hit_test_handle(&self, pos: Pos2, handle_radius: f32) -> Option<ResizeHandle> {
+        let handles = self.corner_handles(handle_radius);
+        for (handle, _, rect) in handles {
+            if rect.contains(pos) {
                 return Some(handle);
             }
         }

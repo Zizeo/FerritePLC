@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use ferrite_core::{DirectAddress, IecType, IecValue, TagEntry};
+use ferrite_core::{DirectAddress, IecType, TagEntry};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::reader::Reader;
 use quick_xml::writer::Writer;
@@ -339,12 +339,21 @@ impl PlcOpenTc6 {
                         let ty_name = String::from_utf8_lossy(other).to_uppercase();
                         current_var_type = match ty_name.as_str() {
                             "BOOL" => Some(IecType::Bool),
-                            "BYTE" | "WORD" | "INT" => Some(IecType::Int),
-                            "DWORD" | "DINT" => Some(IecType::Dint),
+                            "INT" => Some(IecType::Int),
+                            "DINT" => Some(IecType::Dint),
                             "REAL" => Some(IecType::Real),
                             "TIME" => Some(IecType::Time),
                             "STRING" => Some(IecType::String),
-                            _ => Some(IecType::Int),
+                            "BYTE" | "WORD" | "DWORD" => {
+                                return Err(ProjectError::Xml(format!(
+                                    "Unsupported PLCopen variable data type '{ty_name}': FerritePLC IEC types currently support BOOL, INT, DINT, REAL, TIME, STRING"
+                                )));
+                            }
+                            other_ty => {
+                                return Err(ProjectError::Xml(format!(
+                                    "Unsupported or unknown PLCopen variable data type '{other_ty}'"
+                                )));
+                            }
                         };
                     }
                     _ => {}
@@ -354,12 +363,21 @@ impl PlcOpenTc6 {
                         let ty_name = String::from_utf8_lossy(e.name().as_ref()).to_uppercase();
                         current_var_type = match ty_name.as_str() {
                             "BOOL" => Some(IecType::Bool),
-                            "BYTE" | "WORD" | "INT" => Some(IecType::Int),
-                            "DWORD" | "DINT" => Some(IecType::Dint),
+                            "INT" => Some(IecType::Int),
+                            "DINT" => Some(IecType::Dint),
                             "REAL" => Some(IecType::Real),
                             "TIME" => Some(IecType::Time),
                             "STRING" => Some(IecType::String),
-                            _ => Some(IecType::Int),
+                            "BYTE" | "WORD" | "DWORD" => {
+                                return Err(ProjectError::Xml(format!(
+                                    "Unsupported PLCopen variable data type '{ty_name}': FerritePLC IEC types currently support BOOL, INT, DINT, REAL, TIME, STRING"
+                                )));
+                            }
+                            other_ty => {
+                                return Err(ProjectError::Xml(format!(
+                                    "Unsupported or unknown PLCopen variable data type '{other_ty}'"
+                                )));
+                            }
                         };
                     }
                 }
@@ -418,14 +436,7 @@ impl PlcOpenTc6 {
                     b"variable" => {
                         if let Some(name) = current_var_name.take() {
                             let ty = current_var_type.unwrap_or(IecType::Bool);
-                            let init_val = match ty {
-                                IecType::Bool => IecValue::Bool(false),
-                                IecType::Int => IecValue::Int(0),
-                                IecType::Dint => IecValue::Dint(0),
-                                IecType::Real => IecValue::Real(0.0),
-                                IecType::Time => IecValue::Time(0),
-                                IecType::String => IecValue::String(String::new()),
-                            };
+                            let init_val = ty.default_value();
                             global_tags.push(TagEntry::new(
                                 name,
                                 ty,
@@ -454,48 +465,65 @@ impl PlcOpenTc6 {
 
         // Write imported POUs into project
         for (pou_name, kind, content) in imported_pous {
+            let pou_src = match kind {
+                LanguageKind::St => {
+                    let st = ferrite_lang_st::StProgram::parse(&pou_name, &content)
+                        .map_err(|e| ProjectError::Xml(format!("Failed to parse imported ST POU '{pou_name}': {e}")))?;
+                    PouSource::St(st)
+                }
+                LanguageKind::Ld => {
+                    let ld: ferrite_lang_ld::LdProgram = serde_json::from_str(&content)
+                        .map_err(|e| ProjectError::Xml(format!("Failed to parse imported LD POU '{pou_name}': {e}")))?;
+                    PouSource::Ld(ld)
+                }
+                LanguageKind::Sfc => {
+                    let mut sfc: ferrite_lang_sfc::SfcProgram = serde_json::from_str(&content)
+                        .map_err(|e| ProjectError::Xml(format!("Failed to parse imported SFC POU '{pou_name}': {e}")))?;
+                    if sfc.steps.iter().any(|s| s.grid_pos.is_none())
+                        || sfc.transitions.iter().any(|t| t.grid_pos.is_none())
+                    {
+                        sfc.assign_default_grid_positions();
+                    }
+                    PouSource::Sfc(sfc)
+                }
+                LanguageKind::Fbd => {
+                    let fbd: ferrite_lang_fbd::FbdProgram = serde_json::from_str(&content)
+                        .map_err(|e| ProjectError::Xml(format!("Failed to parse imported FBD POU '{pou_name}': {e}")))?;
+                    PouSource::Fbd(fbd)
+                }
+            };
+
             let rel_path = match kind {
                 LanguageKind::St => format!("pous/{pou_name}.st"),
                 LanguageKind::Ld => format!("pous/{pou_name}.ld.json"),
                 LanguageKind::Sfc => format!("pous/{pou_name}.sfc.json"),
                 LanguageKind::Fbd => format!("pous/{pou_name}.fbd.json"),
             };
-            let abs_path = target_dir.join(&rel_path);
-            std::fs::write(&abs_path, &content).map_err(|source| ProjectError::Io {
-                path: abs_path.clone(),
-                source,
-            })?;
 
-            match kind {
-                LanguageKind::St => {
-                    if let Ok(st) = ferrite_lang_st::StProgram::parse(&pou_name, &content) {
-                        proj.pous.insert(pou_name.clone(), PouSource::St(st));
+            // If a POU with this name already exists in scaffold, clean up old file if extension/path differs
+            if let Some(existing_entry) = proj.manifest.pous.iter_mut().find(|p| p.name == pou_name) {
+                if existing_entry.path != rel_path {
+                    let old_path = target_dir.join(&existing_entry.path);
+                    if old_path.exists() {
+                        let _ = std::fs::remove_file(old_path);
                     }
                 }
-                LanguageKind::Ld => {
-                    if let Ok(ld) = serde_json::from_str(&content) {
-                        proj.pous.insert(pou_name.clone(), PouSource::Ld(ld));
-                    }
-                }
-                LanguageKind::Sfc => {
-                    if let Ok(sfc) = serde_json::from_str(&content) {
-                        proj.pous.insert(pou_name.clone(), PouSource::Sfc(sfc));
-                    }
-                }
-                LanguageKind::Fbd => {
-                    if let Ok(fbd) = serde_json::from_str(&content) {
-                        proj.pous.insert(pou_name.clone(), PouSource::Fbd(fbd));
-                    }
-                }
-            }
-
-            if !proj.manifest.pous.iter().any(|p| p.name == pou_name) {
+                existing_entry.language = kind;
+                existing_entry.path = rel_path.clone();
+            } else {
                 proj.manifest.pous.push(PouManifestEntry {
                     name: pou_name.clone(),
                     language: kind,
-                    path: rel_path,
+                    path: rel_path.clone(),
                 });
+                if let Some(first_task) = proj.manifest.tasks.first_mut()
+                    && !first_task.pou_order.contains(&pou_name)
+                {
+                    first_task.pou_order.push(pou_name.clone());
+                }
             }
+
+            proj.pous.insert(pou_name.clone(), pou_src);
         }
 
         proj.save(target_dir)?;

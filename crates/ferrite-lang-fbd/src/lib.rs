@@ -197,29 +197,126 @@ impl FbdProgram {
         let mut block_ids: HashMap<String, &FbdBlock> = HashMap::new();
         let mut graph = PouGraph::new();
         for blk in &self.blocks {
-            block_ids.insert(blk.id.clone(), blk);
+            if block_ids.insert(blk.id.clone(), blk).is_some() {
+                return Err(FbdError::DuplicateBlockId(blk.id.clone()));
+            }
             graph.add_node(blk.id.clone());
         }
 
-        for blk in &self.blocks {
-            if let FbdBlockKind::StandardFb { instance, .. } = &blk.kind
-                && tags.get_fb(instance).is_none()
-            {
-                return Err(FbdError::Ir {
-                    pou: self.name.clone(),
-                    source: IrError::Core {
-                        pou: self.name.clone(),
-                        source: CoreError::UnknownFbInstance(instance.clone()),
-                    },
-                });
+        // I-9: Reject composite FBs with sub-network blocks if st_code is not provided
+        for comp in &self.composites {
+            if comp.st_code.is_none() && !comp.blocks.is_empty() {
+                return Err(FbdError::Validation(format!(
+                    "Composite FB '{}': graphical sub-network execution is not supported; provide st_code implementation",
+                    comp.name
+                )));
             }
-            if let FbdBlockKind::Composite { type_name } = &blk.kind
-                && !self.composites.iter().any(|c| &c.name == type_name)
-            {
-                return Err(FbdError::UnknownCompositeFb {
-                    pou: self.name.clone(),
-                    name: type_name.clone(),
-                });
+        }
+
+        for blk in &self.blocks {
+            match &blk.kind {
+                FbdBlockKind::Not => {
+                    if blk.inputs.len() != 1 {
+                        return Err(FbdError::Validation(format!(
+                            "NOT block '{}' expects exactly 1 input, found {}",
+                            blk.id,
+                            blk.inputs.len()
+                        )));
+                    }
+                }
+                FbdBlockKind::And
+                | FbdBlockKind::Or
+                | FbdBlockKind::Xor
+                | FbdBlockKind::Add
+                | FbdBlockKind::Sub
+                | FbdBlockKind::Mul
+                | FbdBlockKind::Div
+                | FbdBlockKind::Gt
+                | FbdBlockKind::Ge
+                | FbdBlockKind::Lt
+                | FbdBlockKind::Le
+                | FbdBlockKind::Eq
+                | FbdBlockKind::Ne => {
+                    if blk.inputs.len() < 2 {
+                        return Err(FbdError::Validation(format!(
+                            "Binary operation block '{}' ({:?}) expects at least 2 inputs, found {}",
+                            blk.id,
+                            blk.kind,
+                            blk.inputs.len()
+                        )));
+                    }
+                }
+                FbdBlockKind::StandardFb { instance, .. } => {
+                    let Some(fb) = tags.get_fb(instance) else {
+                        return Err(FbdError::Ir {
+                            pou: self.name.clone(),
+                            source: IrError::Core {
+                                pou: self.name.clone(),
+                                source: CoreError::UnknownFbInstance(instance.clone()),
+                            },
+                        });
+                    };
+                    let has_pin = |pin: &str| {
+                        blk.inputs.keys().any(|k| k.eq_ignore_ascii_case(pin))
+                    };
+                    let missing = match fb.kind {
+                        StandardFbKind::Ton | StandardFbKind::Tof | StandardFbKind::Tp => {
+                            if !has_pin("IN") { Some("IN") } else { None }
+                        }
+                        StandardFbKind::Ctu => {
+                            if !has_pin("CU") { Some("CU") } else { None }
+                        }
+                        StandardFbKind::Ctd => {
+                            if !has_pin("CD") { Some("CD") } else { None }
+                        }
+                        StandardFbKind::Ctud => {
+                            if !has_pin("CU") {
+                                Some("CU")
+                            } else if !has_pin("CD") {
+                                Some("CD")
+                            } else {
+                                None
+                            }
+                        }
+                        StandardFbKind::RTrig | StandardFbKind::FTrig => {
+                            if !has_pin("CLK") && !has_pin("IN") { Some("CLK") } else { None }
+                        }
+                        StandardFbKind::Sr => {
+                            if !has_pin("S1") && !has_pin("S") {
+                                Some("S1")
+                            } else if !has_pin("R") {
+                                Some("R")
+                            } else {
+                                None
+                            }
+                        }
+                        StandardFbKind::Rs => {
+                            if !has_pin("S") {
+                                Some("S")
+                            } else if !has_pin("R1") && !has_pin("R") {
+                                Some("R1")
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some(missing_pin) = missing {
+                        return Err(FbdError::Validation(format!(
+                            "Block '{}' ({}) missing required input pin '{missing_pin}'",
+                            blk.id,
+                            fb.kind.label()
+                        )));
+                    }
+                }
+                FbdBlockKind::Composite { type_name } => {
+                    if !self.composites.iter().any(|c| &c.name == type_name) {
+                        return Err(FbdError::UnknownCompositeFb {
+                            pou: self.name.clone(),
+                            name: type_name.clone(),
+                        });
+                    }
+                }
             }
 
             for src in blk.inputs.values() {
@@ -246,13 +343,53 @@ impl FbdProgram {
                 }
             }
 
-            for target_sym in blk.outputs.values() {
+            for (pin_name, target_sym) in &blk.outputs {
+                let pin_upper = pin_name.to_ascii_uppercase();
+                let is_valid_pin = match &blk.kind {
+                    FbdBlockKind::Not
+                    | FbdBlockKind::And
+                    | FbdBlockKind::Or
+                    | FbdBlockKind::Xor
+                    | FbdBlockKind::Add
+                    | FbdBlockKind::Sub
+                    | FbdBlockKind::Mul
+                    | FbdBlockKind::Div
+                    | FbdBlockKind::Gt
+                    | FbdBlockKind::Ge
+                    | FbdBlockKind::Lt
+                    | FbdBlockKind::Le
+                    | FbdBlockKind::Eq
+                    | FbdBlockKind::Ne => {
+                        matches!(pin_upper.as_str(), "OUT" | "Q" | "Q1")
+                    }
+                    FbdBlockKind::StandardFb { instance, .. } => {
+                        if let Some(fb) = tags.get_fb(instance) {
+                            fb.kind.pin_type(&pin_upper).is_some()
+                        } else {
+                            false
+                        }
+                    }
+                    FbdBlockKind::Composite { type_name } => {
+                        if let Some(comp) = self.composites.iter().find(|c| &c.name == type_name) {
+                            comp.output_pins.iter().any(|p| p.eq_ignore_ascii_case(&pin_upper))
+                        } else {
+                            false
+                        }
+                    }
+                };
+                if !is_valid_pin {
+                    return Err(FbdError::Validation(format!(
+                        "Block '{}' has unknown or invalid output pin '{pin_name}'",
+                        blk.id
+                    )));
+                }
+
                 let _ =
                     SymbolResolver::validate_writable_symbol(tags, target_sym, &self.name, false)
                         .map_err(|source| FbdError::Ir {
-                        pou: self.name.clone(),
-                        source,
-                    })?;
+                            pou: self.name.clone(),
+                            source,
+                        })?;
             }
         }
 
@@ -354,6 +491,7 @@ impl FbdProgram {
                 slot_cv: IecValue::Int(0),
                 slot_err: IecValue::Real(0.0),
                 custom_slots: HashMap::new(),
+                composite_env: HashMap::new(),
             });
         }
 
@@ -413,6 +551,7 @@ struct CompiledFbdBlock {
     slot_cv: IecValue,
     slot_err: IecValue,
     custom_slots: HashMap<String, IecValue>,
+    composite_env: HashMap<String, IecValue>,
 }
 
 impl CompiledFbdBlock {
@@ -426,9 +565,8 @@ impl CompiledFbdBlock {
             PinSlot::CountValue => self.slot_cv.clone(),
             PinSlot::ErrorOut => self.slot_err.clone(),
             PinSlot::Named(name) => {
-                let upper = name.to_ascii_uppercase();
                 for (k, v) in &self.custom_slots {
-                    if k.to_ascii_uppercase() == upper {
+                    if k.eq_ignore_ascii_case(name) {
                         return v.clone();
                     }
                 }
@@ -473,16 +611,19 @@ impl ExecutablePou for CompiledFbdPou {
         let len = self.blocks.len();
 
         for idx in 0..len {
-            let kind = self.blocks[idx].kind.clone();
-            match kind {
+            let (prev_blocks, rest) = self.blocks.split_at_mut(idx);
+            let Some(current_block) = rest.first_mut() else {
+                continue;
+            };
+            match &current_block.kind {
                 FbdBlockKind::Not => {
-                    let v = if let Some((_, src)) = self.blocks[idx].inputs.first() {
-                        Self::read_input(&self.blocks, src, ctx)?.as_bool()?
+                    let v = if let Some((_, src)) = current_block.inputs.first() {
+                        Self::read_input(prev_blocks, src, ctx)?.as_bool()?
                     } else {
                         false
                     };
-                    self.blocks[idx].slot_out = IecValue::Bool(!v);
-                    self.blocks[idx].slot_q = IecValue::Bool(!v);
+                    current_block.slot_out = IecValue::Bool(!v);
+                    current_block.slot_q = IecValue::Bool(!v);
                 }
                 FbdBlockKind::And
                 | FbdBlockKind::Or
@@ -497,7 +638,7 @@ impl ExecutablePou for CompiledFbdPou {
                 | FbdBlockKind::Le
                 | FbdBlockKind::Eq
                 | FbdBlockKind::Ne => {
-                    let bin_op = match kind {
+                    let bin_op = match current_block.kind {
                         FbdBlockKind::And => IrBinaryOp::And,
                         FbdBlockKind::Or => IrBinaryOp::Or,
                         FbdBlockKind::Xor => IrBinaryOp::Xor,
@@ -512,32 +653,32 @@ impl ExecutablePou for CompiledFbdPou {
                         FbdBlockKind::Eq => IrBinaryOp::Eq,
                         _ => IrBinaryOp::Ne,
                     };
-                    let in_len = self.blocks[idx].inputs.len();
+                    let in_len = current_block.inputs.len();
                     if in_len >= 2 {
                         let v1 =
-                            Self::read_input(&self.blocks, &self.blocks[idx].inputs[0].1, ctx)?;
+                            Self::read_input(prev_blocks, &current_block.inputs[0].1, ctx)?;
                         let mut acc = v1;
                         for inp_idx in 1..in_len {
                             let vn = Self::read_input(
-                                &self.blocks,
-                                &self.blocks[idx].inputs[inp_idx].1,
+                                prev_blocks,
+                                &current_block.inputs[inp_idx].1,
                                 ctx,
                             )?;
                             acc = eval_binary_op(bin_op, &acc, &vn, pou_name)?;
                         }
-                        self.blocks[idx].slot_q = acc.clone();
-                        self.blocks[idx].slot_out = acc;
+                        current_block.slot_q = acc.clone();
+                        current_block.slot_out = acc;
                     }
                 }
-                FbdBlockKind::StandardFb { ref instance, .. } => {
-                    let in_len = self.blocks[idx].inputs.len();
+                FbdBlockKind::StandardFb { instance, .. } => {
+                    let in_len = current_block.inputs.len();
                     for inp_idx in 0..in_len {
                         let val = Self::read_input(
-                            &self.blocks,
-                            &self.blocks[idx].inputs[inp_idx].1,
+                            prev_blocks,
+                            &current_block.inputs[inp_idx].1,
                             ctx,
                         )?;
-                        let pin_name = &self.blocks[idx].inputs[inp_idx].0;
+                        let pin_name = &current_block.inputs[inp_idx].0;
                         if let Some(fb) = ctx.tags.get_fb_mut(instance) {
                             fb.write_pin(pin_name, &val)?;
                         }
@@ -550,16 +691,16 @@ impl ExecutablePou for CompiledFbdPou {
                                 StandardFbKind::RampReal | StandardFbKind::ScaleLin
                             )
                         {
-                            self.blocks[idx].slot_out = IecValue::Real(fb.out_real);
+                            current_block.slot_out = IecValue::Real(fb.out_real);
                         } else {
-                            self.blocks[idx].slot_out = IecValue::Bool(fb.q);
+                            current_block.slot_out = IecValue::Bool(fb.q);
                         }
-                        self.blocks[idx].slot_q = IecValue::Bool(fb.q);
-                        self.blocks[idx].slot_qu = IecValue::Bool(fb.qu);
-                        self.blocks[idx].slot_qd = IecValue::Bool(fb.qd);
-                        self.blocks[idx].slot_et = IecValue::Time(fb.et_ms);
-                        self.blocks[idx].slot_cv = IecValue::Int(fb.cv);
-                        self.blocks[idx].slot_err = if fb.kind == StandardFbKind::ScaleLin {
+                        current_block.slot_q = IecValue::Bool(fb.q);
+                        current_block.slot_qu = IecValue::Bool(fb.qu);
+                        current_block.slot_qd = IecValue::Bool(fb.qd);
+                        current_block.slot_et = IecValue::Time(fb.et_ms);
+                        current_block.slot_cv = IecValue::Int(fb.cv);
+                        current_block.slot_err = if fb.kind == StandardFbKind::ScaleLin {
                             IecValue::Bool(fb.q)
                         } else {
                             IecValue::Real(fb.err_real)
@@ -567,83 +708,84 @@ impl ExecutablePou for CompiledFbdPou {
                     }
                 }
                 FbdBlockKind::Composite { .. } => {
-                    if let Some(ref st_stmts) = self.blocks[idx].compiled_st_stmts {
-                        let mut env = HashMap::new();
-                        let in_len = self.blocks[idx].inputs.len();
+                    if let Some(ref st_stmts) = current_block.compiled_st_stmts {
+                        current_block.composite_env.clear();
+                        let in_len = current_block.inputs.len();
                         for inp_idx in 0..in_len {
-                            let (ref pin_name, ref src) = self.blocks[idx].inputs[inp_idx];
-                            let val = Self::read_input(&self.blocks, src, ctx)?;
-                            env.insert(pin_name.clone(), val);
+                            let (ref pin_name, ref src) = current_block.inputs[inp_idx];
+                            let val = Self::read_input(prev_blocks, src, ctx)?;
+                            current_block.composite_env.insert(pin_name.clone(), val);
                         }
-                        let output_pins = self.blocks[idx]
+                        let output_pins = current_block
                             .composite_def
                             .as_ref()
                             .map(|d| d.output_pins.clone())
                             .unwrap_or_default();
                         for out_pin in &output_pins {
-                            env.entry(out_pin.clone()).or_insert(IecValue::Bool(false));
+                            current_block
+                                .composite_env
+                                .entry(out_pin.clone())
+                                .or_insert(IecValue::Bool(false));
                         }
                         for stmt in st_stmts {
-                            stmt.execute_with_env(ctx, &mut env, pou_name)?;
+                            stmt.execute_with_env(ctx, &mut current_block.composite_env, pou_name)?;
                         }
                         let mut primary_set = false;
                         let out_count = output_pins.len();
                         for out_pin in &output_pins {
-                            let upper = out_pin.to_ascii_uppercase();
                             let mut out_val = None;
-                            for (k, v) in &env {
-                                if k.to_ascii_uppercase() == upper {
+                            for (k, v) in &current_block.composite_env {
+                                if k.eq_ignore_ascii_case(out_pin) {
                                     out_val = Some(v.clone());
                                     break;
                                 }
                             }
                             if let Some(v) = out_val {
-                                self.blocks[idx].custom_slots.insert(out_pin.clone(), v.clone());
-                                if upper == "OUT" || (!primary_set && out_count == 1) {
-                                    self.blocks[idx].slot_out = v.clone();
+                                current_block.custom_slots.insert(out_pin.clone(), v.clone());
+                                if out_pin.eq_ignore_ascii_case("OUT")
+                                    || (!primary_set && out_count == 1)
+                                {
+                                    current_block.slot_out = v.clone();
                                     primary_set = true;
                                 }
-                                if upper == "Q" {
-                                    self.blocks[idx].slot_q = v.clone();
+                                if out_pin.eq_ignore_ascii_case("Q") {
+                                    current_block.slot_q = v.clone();
                                 }
                             }
                         }
                         if !primary_set {
-                            if let Some(v) = env.get("OUT") {
-                                self.blocks[idx].slot_out = v.clone();
-                            } else if let Some(v) = env.get("Q") {
-                                self.blocks[idx].slot_out = v.clone();
-                                self.blocks[idx].slot_q = v.clone();
+                            if let Some(v) = current_block.composite_env.get("OUT") {
+                                current_block.slot_out = v.clone();
+                            } else if let Some(v) = current_block.composite_env.get("Q") {
+                                current_block.slot_out = v.clone();
+                                current_block.slot_q = v.clone();
                             }
                         }
                     } else {
                         // Evaluate composite FB as boolean AND/OR reducer or custom sub-network
-                        if let Some(ref def) = self.blocks[idx].composite_def {
+                        if let Some(ref def) = current_block.composite_def {
                             let _ = FbInstance::new(&def.name, StandardFbKind::Sr);
                         }
                         let mut result = true;
-                        let in_len = self.blocks[idx].inputs.len();
+                        let in_len = current_block.inputs.len();
                         for inp_idx in 0..in_len {
                             let v = Self::read_input(
-                                &self.blocks,
-                                &self.blocks[idx].inputs[inp_idx].1,
+                                prev_blocks,
+                                &current_block.inputs[inp_idx].1,
                                 ctx,
                             )?
                             .as_bool()?;
                             result = result && v;
                         }
-                        self.blocks[idx].slot_out = IecValue::Bool(result);
-                        self.blocks[idx].slot_q = IecValue::Bool(result);
+                        current_block.slot_out = IecValue::Bool(result);
+                        current_block.slot_q = IecValue::Bool(result);
                     }
                 }
             }
 
-            let out_len = self.blocks[idx].outputs.len();
-            for out_idx in 0..out_len {
-                let (ref slot, ref target_sym) = self.blocks[idx].outputs[out_idx];
-                let val = self.blocks[idx].read_slot(slot);
-                let sym = target_sym.clone();
-                ctx.write_symbol(&sym, val)?;
+            for (slot, target_sym) in &current_block.outputs {
+                let val = current_block.read_slot(slot);
+                ctx.write_symbol(target_sym, val)?;
             }
         }
 
@@ -1107,5 +1249,122 @@ mod tests {
         assert_eq!(ctx.read_symbol("Safety_Status")?, IecValue::Bool(false));
 
         Ok(())
+    }
+
+    #[test]
+    fn test_i8_fbd_duplicate_block_id_rejected() {
+        let tags = TagTable::new();
+        let mut inp1 = HashMap::new();
+        inp1.insert("IN".to_string(), FbdInputSource::Value { expr: "TRUE".to_string() });
+        let mut inp2 = HashMap::new();
+        inp2.insert("IN".to_string(), FbdInputSource::Value { expr: "FALSE".to_string() });
+
+        let prog = FbdProgram {
+            name: "dup_test".to_string(),
+            comment: "".to_string(),
+            composites: vec![],
+            blocks: vec![
+                FbdBlock {
+                    id: "BLK1".to_string(),
+                    kind: FbdBlockKind::Not,
+                    inputs: inp1,
+                    outputs: HashMap::new(),
+                },
+                FbdBlock {
+                    id: "BLK1".to_string(),
+                    kind: FbdBlockKind::Not,
+                    inputs: inp2,
+                    outputs: HashMap::new(),
+                },
+            ],
+        };
+        assert_eq!(prog.validate(&tags), Err(FbdError::DuplicateBlockId("BLK1".to_string())));
+    }
+
+    #[test]
+    fn test_i9_composite_subnetwork_without_st_code_rejected() {
+        let tags = TagTable::new();
+        let composite = CompositeFbDef {
+            name: "SubNetComp".to_string(),
+            description: "".to_string(),
+            input_pins: vec!["IN1".to_string()],
+            output_pins: vec!["OUT".to_string()],
+            st_code: None,
+            blocks: vec![
+                FbdBlock {
+                    id: "SUB1".to_string(),
+                    kind: FbdBlockKind::Not,
+                    inputs: HashMap::new(),
+                    outputs: HashMap::new(),
+                },
+            ],
+        };
+        let prog = FbdProgram {
+            name: "comp_test".to_string(),
+            comment: "".to_string(),
+            composites: vec![composite],
+            blocks: vec![],
+        };
+        let res = prog.validate(&tags);
+        assert!(matches!(res, Err(FbdError::Validation(msg)) if msg.contains("graphical sub-network execution is not supported")));
+    }
+
+    #[test]
+    fn test_fbd_arity_and_pin_validation() {
+        let tags = TagTable::new();
+
+        // NOT block with 0 inputs
+        let not_zero = FbdProgram {
+            name: "test_not".to_string(),
+            comment: "".to_string(),
+            composites: vec![],
+            blocks: vec![
+                FbdBlock {
+                    id: "N1".to_string(),
+                    kind: FbdBlockKind::Not,
+                    inputs: HashMap::new(),
+                    outputs: HashMap::new(),
+                },
+            ],
+        };
+        assert!(matches!(not_zero.validate(&tags), Err(FbdError::Validation(msg)) if msg.contains("expects exactly 1 input")));
+
+        // AND block with 1 input
+        let mut and_inputs = HashMap::new();
+        and_inputs.insert("IN1".to_string(), FbdInputSource::Value { expr: "TRUE".to_string() });
+        let and_one = FbdProgram {
+            name: "test_and".to_string(),
+            comment: "".to_string(),
+            composites: vec![],
+            blocks: vec![
+                FbdBlock {
+                    id: "A1".to_string(),
+                    kind: FbdBlockKind::And,
+                    inputs: and_inputs,
+                    outputs: HashMap::new(),
+                },
+            ],
+        };
+        assert!(matches!(and_one.validate(&tags), Err(FbdError::Validation(msg)) if msg.contains("expects at least 2 inputs")));
+
+        // Block with unknown output pin
+        let mut not_valid_in = HashMap::new();
+        not_valid_in.insert("IN".to_string(), FbdInputSource::Value { expr: "TRUE".to_string() });
+        let mut bad_out = HashMap::new();
+        bad_out.insert("INVALID_OUT_PIN".to_string(), "Some_Tag".to_string());
+        let bad_out_prog = FbdProgram {
+            name: "test_bad_out".to_string(),
+            comment: "".to_string(),
+            composites: vec![],
+            blocks: vec![
+                FbdBlock {
+                    id: "N2".to_string(),
+                    kind: FbdBlockKind::Not,
+                    inputs: not_valid_in,
+                    outputs: bad_out,
+                },
+            ],
+        };
+        assert!(matches!(bad_out_prog.validate(&tags), Err(FbdError::Validation(msg)) if msg.contains("unknown or invalid output pin")));
     }
 }

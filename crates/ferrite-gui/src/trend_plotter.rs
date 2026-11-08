@@ -135,11 +135,22 @@ impl TrendPlotter {
                             0.0
                         }
                     }
+                    IecValue::Sint(i) => i as f64,
                     IecValue::Int(i) => i as f64,
                     IecValue::Dint(d) => d as f64,
+                    IecValue::Lint(l) => l as f64,
+                    IecValue::Usint(u) => u as f64,
+                    IecValue::Uint(u) => u as f64,
+                    IecValue::Udint(u) => u as f64,
+                    IecValue::Ulint(u) => u as f64,
+                    IecValue::Byte(b) => b as f64,
+                    IecValue::Word(w) => w as f64,
+                    IecValue::Dword(d) => d as f64,
+                    IecValue::Lword(l) => l as f64,
                     IecValue::Real(r) => r as f64,
+                    IecValue::Lreal(lr) => lr,
                     IecValue::Time(ms) => ms as f64,
-                    _ => 0.0,
+                    IecValue::String(_) => 0.0,
                 };
                 ch.push(now_s, numeric_val, max_age);
             }
@@ -167,7 +178,7 @@ impl<'a, Message> canvas::Program<Message> for TrendCanvas<'a> {
         &self,
         _state: &Self::State,
         renderer: &Renderer,
-        _theme: &Theme,
+        theme: &Theme,
         bounds: Rectangle,
         _cursor: iced::mouse::Cursor,
     ) -> Vec<Geometry> {
@@ -175,11 +186,11 @@ impl<'a, Message> canvas::Program<Message> for TrendCanvas<'a> {
         let width = bounds.width;
         let height = bounds.height;
 
-        // 1. Draw canvas dark background
+        // 1. Draw canvas background
         frame.fill_rectangle(
             Point::ORIGIN,
             Size::new(width, height),
-            StudioTheme::BG_BASE,
+            StudioTheme::bg_base(theme),
         );
 
         let now_s = self.start_time.elapsed().as_secs_f64();
@@ -215,8 +226,13 @@ impl<'a, Message> canvas::Program<Message> for TrendCanvas<'a> {
         let plot_h = (height - pad_top - pad_bottom).max(10.0);
 
         // 2. Draw Grid Lines
+        let grid_color = if StudioTheme::is_dark(theme) {
+            Color::from_rgba(1.0, 1.0, 1.0, 0.05)
+        } else {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.08)
+        };
         let grid_stroke = Stroke::default()
-            .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.05))
+            .with_color(grid_color)
             .with_width(1.0);
 
         for step in 0..=4 {

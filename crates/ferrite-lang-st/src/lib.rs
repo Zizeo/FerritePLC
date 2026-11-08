@@ -1,8 +1,13 @@
+use std::collections::HashMap;
+
 use ferrite_core::{
-    ExecutablePou, IecValue, LanguageKind, PouId, RuntimeError, ScanContext, TagTable,
+    ExecutablePou, IecType, IecValue, LanguageKind, PouId, RuntimeError, ScanContext, TagTable,
     parse_iec_time_literal,
 };
-use ferrite_ir::{IrBinaryOp, IrError, IrExpr, IrStmt, IrUnaryOp};
+use ferrite_ir::{
+    FunctionParam, IrBinaryOp, IrError, IrExpr, IrStmt, IrUnaryOp, UserFunction, VarScope,
+    VariableDecl,
+};
 use logos::Logos;
 use thiserror::Error;
 
@@ -36,6 +41,20 @@ pub enum Token {
     Program,
     #[regex(r"(?i)END_PROGRAM")]
     EndProgram,
+    #[regex(r"(?i)VAR_INPUT")]
+    VarInput,
+    #[regex(r"(?i)VAR_OUTPUT")]
+    VarOutput,
+    #[regex(r"(?i)VAR_TEMP")]
+    VarTemp,
+    #[regex(r"(?i)END_VAR")]
+    EndVar,
+    #[regex(r"(?i)VAR")]
+    Var,
+    #[regex(r"(?i)FUNCTION")]
+    Function,
+    #[regex(r"(?i)END_FUNCTION")]
+    EndFunction,
     #[regex(r"(?i)IF")]
     If,
     #[regex(r"(?i)THEN")]
@@ -93,7 +112,7 @@ pub enum Token {
     #[regex(r"(?i)FALSE")]
     False,
 
-    #[regex(r"(?i)(TIME|T)#[0-9]+(\.[0-9]+)?(ms|s|m)", |lex| lex.slice().to_string())]
+    #[regex(r"(?i)(TIME|T)#[0-9]+(\.[0-9]+)?(ms|s|m|h|d)", |lex| lex.slice().to_string())]
     TimeLiteral(String),
 
     #[regex(r"%[IQMigm][XBWDxbwd][0-9]+(\.[0-7])?", |lex| lex.slice().to_ascii_uppercase())]
@@ -196,11 +215,50 @@ pub fn tokenize(src: &str, pou_name: &str) -> Result<Vec<Token>, StError> {
     Ok(tokens)
 }
 
+const MAX_RECURSION_DEPTH: usize = 64;
+
+fn parse_time_literal_extended(raw: &str) -> Option<u64> {
+    let trimmed = raw.trim();
+    let upper = trimmed.to_ascii_uppercase();
+    let body = upper
+        .strip_prefix("TIME#")
+        .or_else(|| upper.strip_prefix("T#"))
+        .unwrap_or(&upper);
+
+    if let Some(h_str) = body.strip_suffix('H')
+        && let Ok(hours) = h_str.trim().parse::<f64>()
+        && hours >= 0.0
+    {
+        return Some((hours * 3_600_000.0).round() as u64);
+    }
+    if let Some(d_str) = body.strip_suffix('D')
+        && let Ok(days) = d_str.trim().parse::<f64>()
+        && days >= 0.0
+    {
+        return Some((days * 86_400_000.0).round() as u64);
+    }
+    None
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParsedUnitKind {
+    Program { name: Option<String> },
+    Function { name: String, return_type: IecType },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedUnit {
+    pub kind: ParsedUnitKind,
+    pub variables: Vec<VariableDecl>,
+    pub statements: Vec<IrStmt>,
+}
+
 struct Parser<'a> {
     tokens: &'a [Token],
     spans: &'a [std::ops::Range<usize>],
     src: &'a str,
     pos: usize,
+    depth: usize,
     pou_name: &'a str,
 }
 
@@ -216,6 +274,7 @@ impl<'a> Parser<'a> {
             spans,
             src,
             pos: 0,
+            depth: 0,
             pou_name,
         }
     }
@@ -271,16 +330,115 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_program(&mut self) -> Result<Vec<IrStmt>, StError> {
-        if self.peek() == Some(&Token::Program) {
+    fn parse_var_blocks(&mut self) -> Result<Vec<VariableDecl>, StError> {
+        let mut decls = Vec::new();
+        loop {
+            let scope = match self.peek() {
+                Some(Token::Var) => VarScope::Local,
+                Some(Token::VarInput) => VarScope::Input,
+                Some(Token::VarOutput) => VarScope::Output,
+                Some(Token::VarTemp) => VarScope::Temp,
+                _ => break,
+            };
+            self.next(); // consume VAR / VAR_INPUT / etc.
+            while let Some(tok) = self.peek() {
+                if *tok == Token::EndVar {
+                    self.next();
+                    if self.peek() == Some(&Token::Semi) {
+                        self.next();
+                    }
+                    break;
+                }
+                if *tok == Token::Semi {
+                    self.next();
+                    continue;
+                }
+                let mut names = vec![self.expect_ident()?];
+                while self.peek() == Some(&Token::Comma) {
+                    self.next();
+                    names.push(self.expect_ident()?);
+                }
+                self.expect(&Token::Colon)?;
+                let type_err_pos = self.pos;
+                let type_str = self.expect_ident()?;
+                let data_type = type_str.parse::<IecType>().map_err(|_| {
+                    self.syntax_error(type_err_pos, format!("unknown type '{type_str}'"))
+                })?;
+                let initial_value = if self.peek() == Some(&Token::Assign) {
+                    self.next();
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
+                if self.peek() == Some(&Token::Semi) {
+                    self.next();
+                }
+                for name in names {
+                    decls.push(VariableDecl {
+                        name,
+                        data_type,
+                        scope,
+                        initial_value: initial_value.clone(),
+                    });
+                }
+            }
+        }
+        Ok(decls)
+    }
+
+    fn parse_full(&mut self) -> Result<ParsedUnit, StError> {
+        if self.peek() == Some(&Token::Function) {
             self.next();
-            let _prog_name = self.expect_ident()?;
+            let name = self.expect_ident()?;
+            self.expect(&Token::Colon)?;
+            let type_pos = self.pos;
+            let ret_str = self.expect_ident()?;
+            let return_type = ret_str.parse::<IecType>().map_err(|_| {
+                self.syntax_error(type_pos, format!("unknown return type '{ret_str}'"))
+            })?;
             if self.peek() == Some(&Token::Semi) {
                 self.next();
             }
+            let variables = self.parse_var_blocks()?;
+            let statements = self.parse_stmt_list(&[Token::EndFunction])?;
+            if self.peek() == Some(&Token::EndFunction) {
+                self.next();
+                if self.peek() == Some(&Token::Semi) {
+                    self.next();
+                }
+            }
+            if let Some(rem) = self.peek() {
+                return Err(self.syntax_error(
+                    self.pos,
+                    format!("unexpected token {rem:?} after END_FUNCTION"),
+                ));
+            }
+            return Ok(ParsedUnit {
+                kind: ParsedUnitKind::Function { name, return_type },
+                variables,
+                statements,
+            });
         }
-        let stmts = self.parse_stmt_list(&[Token::EndProgram])?;
-        if self.peek() == Some(&Token::EndProgram) {
+
+        let prog_name = if self.peek() == Some(&Token::Program) {
+            self.next();
+            let name = self.expect_ident()?;
+            if self.peek() == Some(&Token::Semi) {
+                self.next();
+            }
+            Some(name)
+        } else {
+            None
+        };
+
+        let variables = self.parse_var_blocks()?;
+        let terminators = if prog_name.is_some() {
+            vec![Token::EndProgram]
+        } else {
+            Vec::new()
+        };
+        let statements = self.parse_stmt_list(&terminators)?;
+        if prog_name.is_some() && self.peek() == Some(&Token::EndProgram) {
             self.next();
             if self.peek() == Some(&Token::Semi) {
                 self.next();
@@ -292,7 +450,16 @@ impl<'a> Parser<'a> {
                 format!("unexpected token {rem:?} after statements"),
             ));
         }
-        Ok(stmts)
+        Ok(ParsedUnit {
+            kind: ParsedUnitKind::Program { name: prog_name },
+            variables,
+            statements,
+        })
+    }
+
+    fn parse_program(&mut self) -> Result<Vec<IrStmt>, StError> {
+        let unit = self.parse_full()?;
+        Ok(unit.statements)
     }
 
     fn parse_stmt_list(&mut self, terminators: &[Token]) -> Result<Vec<IrStmt>, StError> {
@@ -542,7 +709,16 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr(&mut self) -> Result<IrExpr, StError> {
-        self.parse_or()
+        if self.depth >= MAX_RECURSION_DEPTH {
+            return Err(self.syntax_error(
+                self.pos,
+                "recursion limit exceeded while parsing expression",
+            ));
+        }
+        self.depth += 1;
+        let res = self.parse_or();
+        self.depth -= 1;
+        res
     }
 
     fn parse_or(&mut self) -> Result<IrExpr, StError> {
@@ -650,10 +826,19 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unary(&mut self) -> Result<IrExpr, StError> {
+        if self.depth >= MAX_RECURSION_DEPTH {
+            return Err(self.syntax_error(
+                self.pos,
+                "recursion limit exceeded while parsing expression",
+            ));
+        }
         match self.peek() {
             Some(Token::Not) => {
                 self.next();
-                let expr = self.parse_unary()?;
+                self.depth += 1;
+                let res = self.parse_unary();
+                self.depth -= 1;
+                let expr = res?;
                 Ok(IrExpr::Unary {
                     op: IrUnaryOp::Not,
                     expr: Box::new(expr),
@@ -661,7 +846,10 @@ impl<'a> Parser<'a> {
             }
             Some(Token::Minus) => {
                 self.next();
-                let expr = self.parse_unary()?;
+                self.depth += 1;
+                let res = self.parse_unary();
+                self.depth -= 1;
+                let expr = res?;
                 Ok(IrExpr::Unary {
                     op: IrUnaryOp::Neg,
                     expr: Box::new(expr),
@@ -676,10 +864,12 @@ impl<'a> Parser<'a> {
             Some(Token::True) => Ok(IrExpr::Literal(IecValue::Bool(true))),
             Some(Token::False) => Ok(IrExpr::Literal(IecValue::Bool(false))),
             Some(Token::TimeLiteral(s)) => {
-                let ms = parse_iec_time_literal(s).ok_or_else(|| StError::SyntaxError {
-                    pou: self.pou_name.to_string(),
-                    message: format!("invalid time literal '{s}'"),
-                })?;
+                let ms = parse_iec_time_literal(s)
+                    .or_else(|| parse_time_literal_extended(s))
+                    .ok_or_else(|| StError::SyntaxError {
+                        pou: self.pou_name.to_string(),
+                        message: format!("invalid time literal '{s}'"),
+                    })?;
                 Ok(IrExpr::Literal(IecValue::Time(ms)))
             }
             Some(Token::RealLiteral(s)) => {
@@ -702,26 +892,7 @@ impl<'a> Parser<'a> {
                 }
             }
             Some(Token::StringLiteral(s)) => Ok(IrExpr::Literal(IecValue::String(s.clone()))),
-            Some(Token::Ident(s)) => {
-                if self.peek() == Some(&Token::LParen) {
-                    self.next();
-                    let mut args = Vec::new();
-                    if self.peek() != Some(&Token::RParen) {
-                        args.push(self.parse_expr()?);
-                        while self.peek() == Some(&Token::Comma) {
-                            self.next();
-                            args.push(self.parse_expr()?);
-                        }
-                    }
-                    self.expect(&Token::RParen)?;
-                    Ok(IrExpr::Call {
-                        function_name: s.clone(),
-                        args,
-                    })
-                } else {
-                    Ok(IrExpr::Symbol(s.clone()))
-                }
-            }
+            Some(Token::Ident(s)) => self.parse_ident_or_call(s.clone()),
             Some(Token::DirectAddress(s)) => Ok(IrExpr::Symbol(s.clone())),
             Some(Token::LParen) => {
                 let expr = self.parse_expr()?;
@@ -732,6 +903,62 @@ impl<'a> Parser<'a> {
                 pou: self.pou_name.to_string(),
                 message: format!("expected expression, found {other:?}"),
             }),
+        }
+    }
+
+    fn parse_ident_or_call(&mut self, s: String) -> Result<IrExpr, StError> {
+        if self.peek() == Some(&Token::LParen) {
+            self.next();
+            let mut positional_args = Vec::new();
+            let mut named_args = Vec::new();
+            let mut is_named = false;
+
+            if self.peek() != Some(&Token::RParen) {
+                loop {
+                    let is_current_named = if let Some(Token::Ident(_)) = self.peek() {
+                        self.tokens.get(self.pos + 1) == Some(&Token::Assign)
+                    } else {
+                        false
+                    };
+
+                    if is_current_named {
+                        is_named = true;
+                        let param_name = self.expect_ident()?;
+                        self.expect(&Token::Assign)?;
+                        let expr = self.parse_expr()?;
+                        named_args.push((param_name, expr));
+                    } else {
+                        if is_named {
+                            return Err(self.syntax_error(
+                                self.pos,
+                                "positional arguments cannot follow named arguments",
+                            ));
+                        }
+                        let expr = self.parse_expr()?;
+                        positional_args.push(expr);
+                    }
+
+                    if self.peek() == Some(&Token::Comma) {
+                        self.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            self.expect(&Token::RParen)?;
+            if is_named {
+                Ok(IrExpr::NamedCall {
+                    function_name: s,
+                    args: named_args,
+                })
+            } else {
+                Ok(IrExpr::Call {
+                    function_name: s,
+                    args: positional_args,
+                })
+            }
+        } else {
+            Ok(IrExpr::Symbol(s))
         }
     }
 }
@@ -761,24 +988,42 @@ pub fn parse_st_statements(src: &str, pou_name: &str) -> Result<Vec<IrStmt>, StE
 pub struct StProgram {
     pub name: String,
     pub source: String,
+    pub variables: Vec<VariableDecl>,
     pub statements: Vec<IrStmt>,
+    pub return_type: Option<IecType>,
 }
 
 impl StProgram {
     pub fn parse(name: impl Into<String>, source: impl Into<String>) -> Result<Self, StError> {
-        let name = name.into();
-        let source = source.into();
-        let statements = parse_st_statements(&source, &name)?;
+        let default_name = name.into();
+        let source_str = source.into();
+        let (tokens, spans) = tokenize_with_spans(&source_str, &default_name)?;
+        let mut parser = Parser::new(&tokens, &spans, &source_str, &default_name);
+        let unit = parser.parse_full()?;
+        let (name, return_type) = match unit.kind {
+            ParsedUnitKind::Function { name, return_type } => (name, Some(return_type)),
+            ParsedUnitKind::Program { name: Some(n) } => (n, None),
+            ParsedUnitKind::Program { name: None } => (default_name, None),
+        };
         Ok(Self {
             name,
-            source,
-            statements,
+            source: source_str,
+            variables: unit.variables,
+            statements: unit.statements,
+            return_type,
         })
     }
 
     pub fn validate(&self, tags: &TagTable) -> Result<(), StError> {
+        let mut locals = HashMap::new();
+        for var in &self.variables {
+            locals.insert(var.name.clone(), var.data_type);
+        }
+        if let Some(ret_ty) = self.return_type {
+            locals.insert(self.name.clone(), ret_ty);
+        }
         for stmt in &self.statements {
-            stmt.validate(tags, &self.name, false)
+            stmt.validate_with_locals(tags, &locals, &self.name, false)
                 .map_err(|source| StError::Ir {
                     pou: self.name.clone(),
                     source,
@@ -789,10 +1034,128 @@ impl StProgram {
 
     pub fn compile(&self, tags: &TagTable) -> Result<CompiledStPou, StError> {
         self.validate(tags)?;
+
+        if let Some(ret_ty) = self.return_type {
+            let mut inputs = Vec::new();
+            let mut locals = Vec::new();
+            for v in &self.variables {
+                let init_val = evaluate_const_initial_expr(v.initial_value.as_ref(), v.data_type);
+                let param = FunctionParam {
+                    name: v.name.clone(),
+                    data_type: v.data_type,
+                    default_value: Some(init_val),
+                };
+                match v.scope {
+                    VarScope::Input => inputs.push(param),
+                    VarScope::Local | VarScope::Temp | VarScope::Output => locals.push(param),
+                }
+            }
+            let user_fn = UserFunction::new(
+                self.name.clone(),
+                ret_ty,
+                inputs,
+                locals,
+                self.statements.clone(),
+            );
+            ferrite_ir::register_user_function(user_fn);
+        }
+
+        let mut env = HashMap::new();
+        let mut temp_resets = Vec::new();
+
+        for v in &self.variables {
+            let init_val = evaluate_const_initial_expr(v.initial_value.as_ref(), v.data_type);
+            if v.scope == VarScope::Temp {
+                temp_resets.push((v.name.clone(), init_val.clone()));
+            }
+            env.insert(v.name.clone(), init_val);
+        }
+
         Ok(CompiledStPou {
             id: PouId::new(self.name.clone()),
             statements: self.statements.clone(),
+            variables: self.variables.clone(),
+            env,
+            temp_resets,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StFunction {
+    pub name: String,
+    pub return_type: IecType,
+    pub variables: Vec<VariableDecl>,
+    pub statements: Vec<IrStmt>,
+    pub source: String,
+}
+
+impl StFunction {
+    pub fn parse(source: impl Into<String>, default_name: &str) -> Result<Self, StError> {
+        let source_str = source.into();
+        let (tokens, spans) = tokenize_with_spans(&source_str, default_name)?;
+        let mut parser = Parser::new(&tokens, &spans, &source_str, default_name);
+        let unit = parser.parse_full()?;
+        match unit.kind {
+            ParsedUnitKind::Function { name, return_type } => Ok(Self {
+                name,
+                return_type,
+                variables: unit.variables,
+                statements: unit.statements,
+                source: source_str,
+            }),
+            _ => Err(StError::SyntaxError {
+                pou: default_name.to_string(),
+                message: "expected FUNCTION definition".to_string(),
+            }),
+        }
+    }
+
+    pub fn validate(&self, tags: &TagTable) -> Result<(), StError> {
+        let mut locals = HashMap::new();
+        for var in &self.variables {
+            locals.insert(var.name.clone(), var.data_type);
+        }
+        locals.insert(self.name.clone(), self.return_type);
+        for stmt in &self.statements {
+            stmt.validate_with_locals(tags, &locals, &self.name, false)
+                .map_err(|source| StError::Ir {
+                    pou: self.name.clone(),
+                    source,
+                })?;
+        }
+        Ok(())
+    }
+
+    pub fn compile(&self, tags: &TagTable) -> Result<UserFunction, StError> {
+        self.validate(tags)?;
+        let mut inputs = Vec::new();
+        let mut locals = Vec::new();
+        for v in &self.variables {
+            let init_val = evaluate_const_initial_expr(v.initial_value.as_ref(), v.data_type);
+            let param = FunctionParam {
+                name: v.name.clone(),
+                data_type: v.data_type,
+                default_value: Some(init_val),
+            };
+            match v.scope {
+                VarScope::Input => inputs.push(param),
+                VarScope::Local | VarScope::Temp | VarScope::Output => locals.push(param),
+            }
+        }
+        Ok(UserFunction::new(
+            self.name.clone(),
+            self.return_type,
+            inputs,
+            locals,
+            self.statements.clone(),
+        ))
+    }
+
+    pub fn register(&self, tags: &TagTable) -> Result<UserFunction, StError> {
+        let user_fn = self.compile(tags)?;
+        ferrite_ir::register_user_function(user_fn.clone());
+        Ok(user_fn)
     }
 }
 
@@ -800,6 +1163,41 @@ impl StProgram {
 pub struct CompiledStPou {
     id: PouId,
     statements: Vec<IrStmt>,
+    variables: Vec<VariableDecl>,
+    env: HashMap<String, IecValue>,
+    temp_resets: Vec<(String, IecValue)>,
+}
+
+impl CompiledStPou {
+    pub fn get_variable(&self, name: &str) -> Option<&IecValue> {
+        self.env.get(name).or_else(|| {
+            for (k, v) in &self.env {
+                if k.eq_ignore_ascii_case(name) {
+                    return Some(v);
+                }
+            }
+            None
+        })
+    }
+
+    pub fn set_variable(&mut self, name: &str, value: IecValue) {
+        let mut matched = None;
+        for k in self.env.keys() {
+            if k.eq_ignore_ascii_case(name) {
+                matched = Some(k.clone());
+                break;
+            }
+        }
+        if let Some(k) = matched {
+            self.env.insert(k, value);
+        } else {
+            self.env.insert(name.to_string(), value);
+        }
+    }
+
+    pub fn env(&self) -> &HashMap<String, IecValue> {
+        &self.env
+    }
 }
 
 impl ExecutablePou for CompiledStPou {
@@ -813,9 +1211,33 @@ impl ExecutablePou for CompiledStPou {
 
     fn execute(&mut self, ctx: &mut ScanContext<'_>) -> Result<(), RuntimeError> {
         let pou_name = self.id.as_str();
-        let _ = IrStmt::execute_block(&self.statements, ctx, pou_name)?;
+        if self.variables.is_empty() {
+            self.env.clear();
+        } else {
+            for (name, init_val) in &self.temp_resets {
+                self.env.insert(name.clone(), init_val.clone());
+            }
+        }
+        let _ = IrStmt::execute_block_with_env(&self.statements, ctx, &mut self.env, pou_name)?;
         Ok(())
     }
+}
+
+fn evaluate_const_initial_expr(expr: Option<&IrExpr>, data_type: IecType) -> IecValue {
+    if let Some(e) = expr {
+        let dummy = |sym: &str| {
+            Err(RuntimeError::ExecutionError {
+                pou: "init".to_string(),
+                message: format!("Unknown symbol '{sym}' in constant initial expression"),
+            })
+        };
+        if let Ok(val) = e.evaluate_with_resolver(&dummy, "init")
+            && let Ok(coerced) = val.coerce_to(data_type)
+        {
+            return coerced;
+        }
+    }
+    data_type.default_value()
 }
 
 #[cfg(test)]
@@ -1050,6 +1472,349 @@ mod tests {
         if let Some(StError::SyntaxError { message, .. }) = err {
             assert!(message.contains("line 4"));
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_st_time_literals_hours_and_days() -> Result<(), Box<dyn std::error::Error>> {
+        let expr_h = parse_st_expression("T#1.5h", "test_pou")?;
+        assert_eq!(expr_h, IrExpr::Literal(IecValue::Time(5_400_000)));
+
+        let expr_d = parse_st_expression("TIME#2d", "test_pou")?;
+        assert_eq!(expr_d, IrExpr::Literal(IecValue::Time(172_800_000)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_st_parser_recursion_depth_limit() {
+        // Deeply nested parentheses: 150 levels exceeds limit of 128
+        let mut deeply_nested = String::new();
+        for _ in 0..150 {
+            deeply_nested.push('(');
+        }
+        deeply_nested.push('1');
+        for _ in 0..150 {
+            deeply_nested.push(')');
+        }
+
+        let res = parse_st_expression(&deeply_nested, "test_pou");
+        assert!(matches!(
+            res,
+            Err(StError::SyntaxError { message, .. }) if message.contains("recursion limit exceeded")
+        ));
+    }
+
+    #[test]
+    fn test_st_local_variables_scoping_retention_and_temp_reset(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+
+        // Register a global tag that has the SAME name as the local variable to test shadowing
+        tags.register_tag(TagEntry::new(
+            "my_local_counter",
+            IecType::Dint,
+            None,
+            IecValue::Dint(999),
+            "Global tag to be shadowed",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "global_output",
+            IecType::Dint,
+            None,
+            IecValue::Dint(0),
+            "Global target",
+        ))?;
+
+        let st_src = r#"
+        PROGRAM MyProg
+        VAR
+            my_local_counter : DINT := 0;
+            step_limit : INT;
+        END_VAR
+        VAR_INPUT
+            run_cmd : BOOL;
+        END_VAR
+        VAR_TEMP
+            temp_scratch : DINT := 10;
+        END_VAR
+            IF run_cmd THEN
+                my_local_counter := my_local_counter + 1;
+                temp_scratch := temp_scratch + 5;
+            END_IF;
+            global_output := my_local_counter;
+        END_PROGRAM
+        "#;
+
+        let prog = StProgram::parse("MyProg", st_src)?;
+        assert_eq!(prog.variables.len(), 4);
+        assert_eq!(prog.variables[0].name, "my_local_counter");
+        assert_eq!(prog.variables[0].scope, VarScope::Local);
+        assert_eq!(prog.variables[2].name, "run_cmd");
+        assert_eq!(prog.variables[2].scope, VarScope::Input);
+        assert_eq!(prog.variables[3].name, "temp_scratch");
+        assert_eq!(prog.variables[3].scope, VarScope::Temp);
+
+        let mut compiled = prog.compile(&tags)?;
+        compiled.set_variable("run_cmd", IecValue::Bool(true));
+
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+
+        // Scan 1
+        compiled.execute(&mut ctx)?;
+        assert_eq!(
+            compiled.get_variable("my_local_counter"),
+            Some(&IecValue::Dint(1))
+        );
+        assert_eq!(
+            compiled.get_variable("temp_scratch"),
+            Some(&IecValue::Dint(15))
+        );
+        assert_eq!(ctx.read_symbol("global_output")?, IecValue::Dint(1));
+        // Verify global tag was shadowed and NOT modified
+        assert_eq!(ctx.read_symbol("my_local_counter")?, IecValue::Dint(999));
+
+        // Scan 2: VAR retains (1 -> 2), VAR_TEMP resets back to 10 then + 5 = 15
+        compiled.execute(&mut ctx)?;
+        assert_eq!(
+            compiled.get_variable("my_local_counter"),
+            Some(&IecValue::Dint(2))
+        );
+        assert_eq!(
+            compiled.get_variable("temp_scratch"),
+            Some(&IecValue::Dint(15))
+        );
+        assert_eq!(ctx.read_symbol("global_output")?, IecValue::Dint(2));
+
+        // Scan 3: VAR retains (2 -> 3)
+        compiled.execute(&mut ctx)?;
+        assert_eq!(
+            compiled.get_variable("my_local_counter"),
+            Some(&IecValue::Dint(3))
+        );
+        assert_eq!(
+            compiled.get_variable("temp_scratch"),
+            Some(&IecValue::Dint(15))
+        );
+        assert_eq!(ctx.read_symbol("global_output")?, IecValue::Dint(3));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_st_raw_var_block_outside_program() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+
+        let raw_src = r#"
+        VAR
+            temp_val : REAL := 10.5;
+        END_VAR
+        temp_val := temp_val + 1.0;
+        "#;
+
+        let prog = StProgram::parse("RawProg", raw_src)?;
+        assert_eq!(prog.variables.len(), 1);
+        assert_eq!(prog.variables[0].name, "temp_val");
+
+        let mut compiled = prog.compile(&tags)?;
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+
+        compiled.execute(&mut ctx)?;
+        assert_eq!(
+            compiled.get_variable("temp_val"),
+            Some(&IecValue::Real(11.5))
+        );
+
+        // Scan 2 retains
+        compiled.execute(&mut ctx)?;
+        assert_eq!(
+            compiled.get_variable("temp_val"),
+            Some(&IecValue::Real(12.5))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_st_multiple_variables_single_line() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+
+        let src = r#"
+        VAR
+            x, y : DINT := 20;
+        END_VAR
+            x := x + y;
+        "#;
+
+        let prog = StProgram::parse("MultiLine", src)?;
+        assert_eq!(prog.variables.len(), 2);
+        assert_eq!(prog.variables[0].name, "x");
+        assert_eq!(prog.variables[1].name, "y");
+
+        let mut compiled = prog.compile(&tags)?;
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+
+        compiled.execute(&mut ctx)?;
+        assert_eq!(compiled.get_variable("x"), Some(&IecValue::Dint(40)));
+        assert_eq!(compiled.get_variable("y"), Some(&IecValue::Dint(20)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_st_user_defined_function_parsing_and_call() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+
+        tags.register_tag(TagEntry::new(
+            "Total_Area",
+            IecType::Real,
+            None,
+            IecValue::Real(0.0),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Named_Area",
+            IecType::Real,
+            None,
+            IecValue::Real(0.0),
+            "",
+        ))?;
+
+        let func_src = r#"
+        FUNCTION CalcArea : REAL
+        VAR_INPUT
+            length : REAL;
+            width : REAL;
+        END_VAR
+        VAR
+            res : REAL;
+        END_VAR
+            res := length * width;
+            CalcArea := res;
+        END_FUNCTION
+        "#;
+
+        let func = StFunction::parse(func_src, "CalcArea")?;
+        assert_eq!(func.name, "CalcArea");
+        assert_eq!(func.return_type, IecType::Real);
+        assert_eq!(func.variables.len(), 3);
+        func.register(&tags)?;
+
+        let prog_src = r#"
+        PROGRAM MainApp
+            Total_Area := CalcArea(10.0, 5.5);
+        END_PROGRAM
+        "#;
+
+        let named_prog_src = r#"
+        PROGRAM NamedApp
+            Named_Area := CalcArea(width := 4.0, length := 12.0);
+        END_PROGRAM
+        "#;
+
+        let prog = StProgram::parse("MainApp", prog_src)?;
+        let mut compiled = prog.compile(&tags)?;
+
+        let named_prog = StProgram::parse("NamedApp", named_prog_src)?;
+        let mut compiled_named = named_prog.compile(&tags)?;
+
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+
+        compiled.execute(&mut ctx)?;
+        assert_eq!(ctx.read_symbol("Total_Area")?, IecValue::Real(55.0));
+
+        compiled_named.execute(&mut ctx)?;
+        assert_eq!(ctx.read_symbol("Named_Area")?, IecValue::Real(48.0));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_st_pou_local_variable_isolation() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+
+        let src_a = r#"
+        PROGRAM PouA
+        VAR
+            acc : INT := 100;
+        END_VAR
+            acc := acc + 1;
+        END_PROGRAM
+        "#;
+
+        let src_b = r#"
+        PROGRAM PouB
+        VAR
+            acc : INT := 200;
+        END_VAR
+            acc := acc + 10;
+        END_PROGRAM
+        "#;
+
+        let prog_a = StProgram::parse("PouA", src_a)?;
+        let prog_b = StProgram::parse("PouB", src_b)?;
+
+        let mut compiled_a = prog_a.compile(&tags)?;
+        let mut compiled_b = prog_b.compile(&tags)?;
+
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+
+        compiled_a.execute(&mut ctx)?;
+        assert_eq!(compiled_a.get_variable("acc"), Some(&IecValue::Int(101)));
+        assert_eq!(compiled_b.get_variable("acc"), Some(&IecValue::Int(200)));
+
+        compiled_b.execute(&mut ctx)?;
+        assert_eq!(compiled_a.get_variable("acc"), Some(&IecValue::Int(101)));
+        assert_eq!(compiled_b.get_variable("acc"), Some(&IecValue::Int(210)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_st_user_function_invoked_in_sfc_receptivity() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+
+        tags.register_tag(TagEntry::new(
+            "Sensor_A",
+            IecType::Real,
+            None,
+            IecValue::Real(25.0),
+            "",
+        ))?;
+
+        let func_src = r#"
+        FUNCTION CheckThreshold : BOOL
+        VAR_INPUT
+            val : REAL;
+            threshold : REAL;
+        END_VAR
+            CheckThreshold := val >= threshold;
+        END_FUNCTION
+        "#;
+        let func = StFunction::parse(func_src, "CheckThreshold")?;
+        func.register(&tags)?;
+
+        // Grafcet transition receptivity expression
+        let receptivity_src = "CheckThreshold(Sensor_A, 20.0)";
+        let expr = parse_st_expression(receptivity_src, "sfc_trans")?;
+        let inferred = expr.infer_type(&tags, "sfc_trans")?;
+        assert_eq!(inferred, IecType::Bool);
+
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+        let eval_res = expr.evaluate(&ctx, "sfc_trans")?;
+        assert_eq!(eval_res, IecValue::Bool(true));
+
+        // Now lower Sensor_A to 15.0 -> evaluates to false
+        ctx.write_symbol("Sensor_A", IecValue::Real(15.0))?;
+        let eval_res2 = expr.evaluate(&ctx, "sfc_trans")?;
+        assert_eq!(eval_res2, IecValue::Bool(false));
 
         Ok(())
     }

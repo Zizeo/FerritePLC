@@ -53,6 +53,21 @@ pub enum SfcError {
         pou: String,
         errors: Vec<SfcValidationError>,
     },
+
+    #[error(
+        "Unsupported action target in SFC POU '{pou}': qualifier {qualifier:?} cannot use statement target '{target}' ({reason})"
+    )]
+    UnsupportedActionTarget {
+        pou: String,
+        qualifier: ActionQualifier,
+        target: String,
+        reason: String,
+    },
+
+    #[error(
+        "Macro step '{step}' in SFC POU '{pou}' declares a macro_body, but macro-step expansion is not supported by the runtime; remove the macro_body or model the sub-sequence as ordinary steps"
+    )]
+    MacroStepUnsupported { pou: String, step: String },
 }
 
 fn format_sfc_validation_errors(errors: &[SfcValidationError]) -> String {
@@ -259,11 +274,39 @@ pub enum SfcValidationError {
         element_id: String,
         reason: String,
     },
+    DuplicateStepId {
+        step_id: String,
+        other_step_id: String,
+    },
+    AmbiguousStepName {
+        step_id: String,
+        name: String,
+        conflicts_with: String,
+    },
 }
 
 impl std::fmt::Display for SfcValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::DuplicateStepId {
+                step_id,
+                other_step_id,
+            } => {
+                write!(
+                    f,
+                    "Step id '{step_id}' is ambiguous with step id '{other_step_id}' (same normalized X<n> identifier)"
+                )
+            }
+            Self::AmbiguousStepName {
+                step_id,
+                name,
+                conflicts_with,
+            } => {
+                write!(
+                    f,
+                    "Step '{step_id}' name '{name}' collides with an identifier of step '{conflicts_with}'"
+                )
+            }
             Self::MissingInitialStepInTree { tree_id, step_ids } => {
                 write!(
                     f,
@@ -358,17 +401,65 @@ pub fn validate_sfc_topology(program: &SfcProgram) -> SfcValidationReport {
         };
     }
 
-    // 1. Build step lookup map
+    // 1. Validate step IDs and step names for duplicates/ambiguities (I-16)
+    for i in 0..program.steps.len() {
+        let s_i = &program.steps[i];
+        let norm_i = ferrite_core::normalize_sfc_step_prefix(&s_i.id);
+        for j in (i + 1)..program.steps.len() {
+            let s_j = &program.steps[j];
+            let norm_j = ferrite_core::normalize_sfc_step_prefix(&s_j.id);
+            if s_i.id == s_j.id || norm_i == norm_j {
+                errors.push(SfcValidationError::DuplicateStepId {
+                    step_id: s_j.id.clone(),
+                    other_step_id: s_i.id.clone(),
+                });
+            }
+        }
+    }
+
+    for (i, s_i) in program.steps.iter().enumerate() {
+        let name_i = s_i.name.trim();
+        if name_i.is_empty() {
+            continue;
+        }
+        let norm_name_i = ferrite_core::normalize_sfc_step_prefix(name_i);
+        for (j, s_j) in program.steps.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let norm_j = ferrite_core::normalize_sfc_step_prefix(&s_j.id);
+            let stripped_j = s_j.id.trim().trim_start_matches(['X', 'x']);
+            if name_i == s_j.id.trim()
+                || norm_name_i == norm_j
+                || name_i == stripped_j
+                || (!s_j.name.trim().is_empty() && name_i == s_j.name.trim())
+            {
+                errors.push(SfcValidationError::AmbiguousStepName {
+                    step_id: s_i.id.clone(),
+                    name: s_i.name.clone(),
+                    conflicts_with: s_j.id.clone(),
+                });
+                break;
+            }
+        }
+    }
+
+    // 1b. Build step lookup map with strict ID precedence (I-16)
     let mut step_map: HashMap<String, usize> = HashMap::new();
     for (idx, step) in program.steps.iter().enumerate() {
         step_map.insert(step.id.clone(), idx);
-        step_map.insert(step.name.clone(), idx);
         let trimmed = step.id.trim();
         let stripped = trimmed
             .strip_prefix('X')
             .or_else(|| trimmed.strip_prefix('x'))
             .unwrap_or(trimmed);
         step_map.insert(stripped.to_string(), idx);
+        step_map.insert(ferrite_core::normalize_sfc_step_prefix(&step.id), idx);
+    }
+    for (idx, step) in program.steps.iter().enumerate() {
+        if !step.name.trim().is_empty() {
+            step_map.entry(step.name.clone()).or_insert(idx);
+        }
     }
 
     // 2. Validate step references in transitions
@@ -451,6 +542,39 @@ pub fn validate_sfc_topology(program: &SfcProgram) -> SfcValidationReport {
                 element_id: tr.id.clone(),
                 reason: "IEC 60848: OR convergence cannot merge multiple steps into a single transition; each alternative branch must end in its own transition into the destination step".to_string(),
             });
+        }
+    }
+
+    // 2c. Validate IEC 60848 Alternation exclusivity (I-17):
+    // If multiple transitions share an upstream step, they represent an alternative choice (OR divergence).
+    // They must use DivergenceKind::Or, not DivergenceKind::And.
+    for (i, tr_a) in program.transitions.iter().enumerate() {
+        for tr_b in program.transitions.iter().skip(i + 1) {
+            let shared_step = tr_a.from_steps.iter().find(|fs_a| {
+                let trimmed_a = fs_a.trim();
+                let norm_a = ferrite_core::normalize_sfc_step_prefix(trimmed_a);
+                tr_b.from_steps.iter().any(|fs_b| {
+                    let trimmed_b = fs_b.trim();
+                    let norm_b = ferrite_core::normalize_sfc_step_prefix(trimmed_b);
+                    trimmed_a == trimmed_b || norm_a == norm_b
+                })
+            });
+            if let Some(shared) = shared_step
+                && (tr_a.divergence == DivergenceKind::And || tr_b.divergence == DivergenceKind::And)
+            {
+                let offending_id = if tr_a.divergence == DivergenceKind::And {
+                    &tr_a.id
+                } else {
+                    &tr_b.id
+                };
+                errors.push(SfcValidationError::InvalidAlternation {
+                    element_id: offending_id.clone(),
+                    reason: format!(
+                        "IEC 60848: Transitions '{}' and '{}' share upstream step '{}', but transition '{}' has DivergenceKind::And; multiple transitions exiting the same step must be alternative branches with DivergenceKind::Or",
+                        tr_a.id, tr_b.id, shared, offending_id
+                    ),
+                });
+            }
         }
     }
 
@@ -544,6 +668,52 @@ pub fn validate_sfc_topology(program: &SfcProgram) -> SfcValidationReport {
                 tree_id,
                 step_ids: step_ids.clone(),
             });
+        }
+
+        // Directed reachability check from initial steps (C12):
+        if !comp_trans.is_empty() && !initial_step_ids.is_empty() {
+            let mut reachable_from_init = HashSet::new();
+            let mut q = VecDeque::new();
+            for &s_idx in &comp_steps {
+                if program.steps[s_idx].kind == StepKind::Initial {
+                    reachable_from_init.insert(s_idx);
+                    q.push_back(s_idx);
+                }
+            }
+            while let Some(s_idx) = q.pop_front() {
+                let s_id = &program.steps[s_idx].id;
+                let s_name = &program.steps[s_idx].name;
+                let s_norm = ferrite_core::normalize_sfc_step_prefix(s_id);
+                for &t_idx in &comp_trans {
+                    let tr = &program.transitions[t_idx];
+                    let connects_from = tr.from_steps.iter().any(|fs| {
+                        let trimmed = fs.trim();
+                        trimmed == s_id
+                            || (!s_name.is_empty() && trimmed == s_name)
+                            || ferrite_core::normalize_sfc_step_prefix(trimmed) == s_norm
+                    });
+                    if connects_from {
+                        for ts in &tr.to_steps {
+                            let trimmed = ts.trim();
+                            let stripped = trimmed.trim_start_matches(['X', 'x']);
+                            if let Some(&tgt_idx) = step_map.get(trimmed).or_else(|| step_map.get(stripped))
+                                && comp_steps.contains(&tgt_idx)
+                                && reachable_from_init.insert(tgt_idx)
+                            {
+                                q.push_back(tgt_idx);
+                            }
+                        }
+                    }
+                }
+            }
+            for &s_idx in &comp_steps {
+                if !reachable_from_init.contains(&s_idx) {
+                    warnings.push(format!(
+                        "Step '{}' in tree #{tree_id} is unreachable from any initial step",
+                        program.steps[s_idx].id
+                    ));
+                }
+            }
         }
 
         // Check orphan step (isolated from any transitions)
@@ -672,6 +842,110 @@ pub struct SfcProgram {
     pub comment: String,
     pub steps: Vec<SfcStep>,
     pub transitions: Vec<SfcTransition>,
+}
+
+fn qualify_ir_expr(expr: &mut IrExpr, map: &HashMap<String, String>) {
+    match expr {
+        IrExpr::Literal(_) => {}
+        IrExpr::Symbol(sym) => {
+            if let Some(target) = map.get(sym.as_str()) {
+                *sym = target.clone();
+            }
+        }
+        IrExpr::Unary { expr, .. } => qualify_ir_expr(expr, map),
+        IrExpr::Binary { left, right, .. } => {
+            qualify_ir_expr(left, map);
+            qualify_ir_expr(right, map);
+        }
+        IrExpr::Call { args, .. } => {
+            for arg in args {
+                qualify_ir_expr(arg, map);
+            }
+        }
+        IrExpr::NamedCall { args, .. } => {
+            for (_, arg) in args {
+                qualify_ir_expr(arg, map);
+            }
+        }
+    }
+}
+
+fn qualify_ir_stmt(stmt: &mut IrStmt, map: &HashMap<String, String>) {
+    match stmt {
+        IrStmt::Assign { target, expr } => {
+            if let Some(mapped) = map.get(target.as_str()) {
+                *target = mapped.clone();
+            }
+            qualify_ir_expr(expr, map);
+        }
+        IrStmt::If { branches, else_body } => {
+            for (cond, body) in branches {
+                qualify_ir_expr(cond, map);
+                for s in body {
+                    qualify_ir_stmt(s, map);
+                }
+            }
+            for s in else_body {
+                qualify_ir_stmt(s, map);
+            }
+        }
+        IrStmt::Case {
+            selector,
+            arms,
+            else_body,
+        } => {
+            qualify_ir_expr(selector, map);
+            for (_, body) in arms {
+                for s in body {
+                    qualify_ir_stmt(s, map);
+                }
+            }
+            for s in else_body {
+                qualify_ir_stmt(s, map);
+            }
+        }
+        IrStmt::For {
+            start,
+            end,
+            step,
+            body,
+            ..
+        } => {
+            qualify_ir_expr(start, map);
+            qualify_ir_expr(end, map);
+            if let Some(st) = step {
+                qualify_ir_expr(st, map);
+            }
+            for s in body {
+                qualify_ir_stmt(s, map);
+            }
+        }
+        IrStmt::While { cond, body } => {
+            qualify_ir_expr(cond, map);
+            for s in body {
+                qualify_ir_stmt(s, map);
+            }
+        }
+        IrStmt::Repeat { body, until_cond } => {
+            for s in body {
+                qualify_ir_stmt(s, map);
+            }
+            qualify_ir_expr(until_cond, map);
+        }
+        IrStmt::Exit | IrStmt::Continue | IrStmt::Return => {}
+        IrStmt::FbCall {
+            inputs, outputs, ..
+        } => {
+            for (_, expr) in inputs {
+                qualify_ir_expr(expr, map);
+            }
+            for (_, out_var) in outputs {
+                if let Some(mapped) = map.get(out_var.as_str()) {
+                    *out_var = mapped.clone();
+                }
+            }
+        }
+    }
 }
 
 impl SfcProgram {
@@ -900,6 +1174,16 @@ impl SfcProgram {
     }
 
     pub fn compile(&self, tags: &TagTable) -> Result<CompiledSfcPou, SfcError> {
+        // Macro steps with macro_body / StepKind::Macro are unsupported by runtime (I-18)
+        for step in &self.steps {
+            if step.kind == StepKind::Macro || !step.macro_body.is_empty() {
+                return Err(SfcError::MacroStepUnsupported {
+                    pou: self.name.clone(),
+                    step: step.id.clone(),
+                });
+            }
+        }
+
         let report = validate_sfc_topology(self);
         if !report.is_valid {
             // Check if entirely missing initial step (preserves exact SfcError::MissingInitialStep)
@@ -924,12 +1208,51 @@ impl SfcProgram {
             });
         }
 
+        // Build step lookup map with strict ID precedence (I-16)
         let mut step_map: HashMap<String, usize> = HashMap::new();
         for (idx, step) in self.steps.iter().enumerate() {
             step_map.insert(step.id.clone(), idx);
+            let trimmed = step.id.trim();
+            let stripped = trimmed
+                .strip_prefix('X')
+                .or_else(|| trimmed.strip_prefix('x'))
+                .unwrap_or(trimmed);
+            step_map.insert(stripped.to_string(), idx);
             step_map.insert(ferrite_core::normalize_sfc_step_prefix(&step.id), idx);
-            if !step.name.is_empty() {
-                step_map.insert(step.name.clone(), idx);
+        }
+        for (idx, step) in self.steps.iter().enumerate() {
+            if !step.name.trim().is_empty() {
+                step_map.entry(step.name.clone()).or_insert(idx);
+            }
+        }
+
+        // Map bare step references to own-POU canonical tags (I-15)
+        let mut own_symbol_map: HashMap<String, String> = HashMap::new();
+        if !self.name.is_empty() {
+            let pou_prefix = self.name.trim();
+            for step in &self.steps {
+                let x_id = ferrite_core::normalize_sfc_step_prefix(&step.id);
+                let state_canonical = format!("{pou_prefix}.{x_id}.state");
+                let time_canonical = format!("{pou_prefix}.{x_id}.t");
+
+                let trimmed_id = step.id.trim();
+                let stripped_id = trimmed_id
+                    .strip_prefix('X')
+                    .or_else(|| trimmed_id.strip_prefix('x'))
+                    .unwrap_or(trimmed_id);
+
+                own_symbol_map.insert(format!("{x_id}.state"), state_canonical.clone());
+                own_symbol_map.insert(format!("{x_id}.t"), time_canonical.clone());
+                own_symbol_map.insert(format!("{trimmed_id}.state"), state_canonical.clone());
+                own_symbol_map.insert(format!("{trimmed_id}.t"), time_canonical.clone());
+                own_symbol_map.insert(format!("{stripped_id}.state"), state_canonical.clone());
+                own_symbol_map.insert(format!("{stripped_id}.t"), time_canonical.clone());
+
+                let trimmed_name = step.name.trim();
+                if !trimmed_name.is_empty() {
+                    own_symbol_map.insert(format!("{trimmed_name}.state"), state_canonical.clone());
+                    own_symbol_map.insert(format!("{trimmed_name}.t"), time_canonical.clone());
+                }
             }
         }
 
@@ -957,15 +1280,39 @@ impl SfcProgram {
                     _ => 0,
                 };
 
+                let is_statement = act.target.contains(":=") || act.target.contains('(');
+                if is_statement {
+                    match act.qualifier {
+                        ActionQualifier::N | ActionQualifier::L | ActionQualifier::D => {
+                            return Err(SfcError::UnsupportedActionTarget {
+                                pou: self.name.clone(),
+                                qualifier: act.qualifier,
+                                target: act.target.clone(),
+                                reason: "qualifiers N, L, and D cannot target statements because statements have no deactivation/reset mechanism; use qualifier P or target a boolean symbol".to_string(),
+                            });
+                        }
+                        ActionQualifier::F | ActionQualifier::FZ => {
+                            return Err(SfcError::UnsupportedActionTarget {
+                                pou: self.name.clone(),
+                                qualifier: act.qualifier,
+                                target: act.target.clone(),
+                                reason: "forcing qualifiers F and FZ must target a boolean symbol or step state, not a statement".to_string(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+
                 // Allow SFC actions (`in_sfc = true`) to set, reset, or force step states of other SFC programs
-                let kind = if act.target.contains(":=") || act.target.contains('(') {
-                    let stmts = parse_st_statements(&act.target, &self.name).map_err(|source| {
+                let kind = if is_statement {
+                    let mut stmts = parse_st_statements(&act.target, &self.name).map_err(|source| {
                         SfcError::St {
                             pou: self.name.clone(),
                             source,
                         }
                     })?;
-                    for s in &stmts {
+                    for s in &mut stmts {
+                        qualify_ir_stmt(s, &own_symbol_map);
                         s.validate(tags, &self.name, true)
                             .map_err(|source| SfcError::Ir {
                                 pou: self.name.clone(),
@@ -974,9 +1321,14 @@ impl SfcProgram {
                     }
                     CompiledActionKind::Statements(stmts)
                 } else {
+                    let raw_target = act.target.trim();
+                    let resolved_target = own_symbol_map
+                        .get(raw_target)
+                        .cloned()
+                        .unwrap_or_else(|| raw_target.to_string());
                     let ty = SymbolResolver::validate_writable_symbol(
                         tags,
-                        &act.target,
+                        &resolved_target,
                         &self.name,
                         true,
                     )
@@ -995,7 +1347,7 @@ impl SfcProgram {
                             },
                         });
                     }
-                    CompiledActionKind::BooleanSymbol(act.target.trim().to_string())
+                    CompiledActionKind::BooleanSymbol(resolved_target)
                 };
 
                 compiled_actions.push(CompiledAction {
@@ -1066,12 +1418,13 @@ impl SfcProgram {
                     })?;
                 to_indices.push(idx);
             }
-            let expr = parse_st_expression(&tr.receptivity, &self.name).map_err(|source| {
+            let mut expr = parse_st_expression(&tr.receptivity, &self.name).map_err(|source| {
                 SfcError::St {
                     pou: self.name.clone(),
                     source,
                 }
             })?;
+            qualify_ir_expr(&mut expr, &own_symbol_map);
             let rty = expr
                 .infer_type(tags, &self.name)
                 .map_err(|source| SfcError::Ir {
@@ -1256,7 +1609,7 @@ impl ExecutablePou for CompiledSfcPou {
 
             // IEC 60848 Phase 1: Evaluate all transition receptivities (supporting AND & OR convergence/divergence)
             self.fired_scratch.fill(false);
-            self.clear_scratch.fill(false); // temporarily tracks steps claimed by an exclusive OR divergence
+            self.clear_scratch.fill(false); // tracks steps claimed by fired transitions
             for (t_idx, tr) in self.transitions.iter().enumerate() {
                 if tr.from_indices.is_empty() {
                     continue;
@@ -1309,7 +1662,6 @@ impl ExecutablePou for CompiledSfcPou {
             }
 
             for (s_idx, step) in self.steps.iter_mut().enumerate() {
-                step.prev_active = step.active;
                 if self.clear_scratch[s_idx] {
                     step.active = false;
                     step.elapsed_ms = 0;
@@ -1370,7 +1722,7 @@ impl ExecutablePou for CompiledSfcPou {
                                 }
                             }
                         },
-                        ActionQualifier::S => match &act.kind {
+                        ActionQualifier::S if rising_edge => match &act.kind {
                             CompiledActionKind::BooleanSymbol(sym) => {
                                 sfc_ctx.write_symbol(sym, IecValue::Bool(true))?;
                             }
@@ -1380,7 +1732,7 @@ impl ExecutablePou for CompiledSfcPou {
                                 }
                             }
                         },
-                        ActionQualifier::R => match &act.kind {
+                        ActionQualifier::R if rising_edge => match &act.kind {
                             CompiledActionKind::BooleanSymbol(sym) => {
                                 sfc_ctx.write_symbol(sym, IecValue::Bool(false))?;
                             }
@@ -1390,6 +1742,7 @@ impl ExecutablePou for CompiledSfcPou {
                                 }
                             }
                         },
+                        ActionQualifier::S | ActionQualifier::R => {}
                         ActionQualifier::F => {
                             if let CompiledActionKind::BooleanSymbol(sym) = &act.kind {
                                 sfc_ctx.force_symbol(sym, IecValue::Bool(true))?;
@@ -1444,6 +1797,10 @@ impl ExecutablePou for CompiledSfcPou {
             }
             Ok(())
         })?;
+
+        for step in &mut self.steps {
+            step.prev_active = step.active;
+        }
 
         Ok(())
     }
@@ -2587,5 +2944,551 @@ mod tests {
         assert!(ctx.read_bool("or_conv_run.X3.state")?, "State MUST pass to Step 3 through OR convergence!");
 
         Ok(())
+    }
+
+    #[test]
+    fn test_i12_external_step_override_edge_preservation() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+
+        tags.register_tag(TagEntry::new(
+            "Pump_Cmd",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "Driven by slave Step 1 N action",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Pulse_Count",
+            IecType::Int,
+            None,
+            IecValue::Int(0),
+            "Incremented by slave Step 1 P action",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Start_Slave",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "Starts slave sequence",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Do_Reset",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "Commands master to reset slave step",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Do_Set",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "Commands master to set slave step",
+        ))?;
+
+        let slave = SfcProgram {
+            name: "slave_seq".to_string(),
+            comment: "Slave sequence with N and P actions".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Init", StepKind::Initial),
+                SfcStep {
+                    id: "1".to_string(),
+                    name: "Run".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![
+                        SfcAction {
+                            qualifier: ActionQualifier::N,
+                            target: "Pump_Cmd".to_string(),
+                            duration: None,
+                        },
+                        SfcAction {
+                            qualifier: ActionQualifier::P,
+                            target: "Pulse_Count := Pulse_Count + 1;".to_string(),
+                            duration: None,
+                        },
+                    ],
+                    ..Default::default()
+                },
+            ],
+            transitions: vec![SfcTransition {
+                id: "TS0".to_string(),
+                from_steps: vec!["0".to_string()],
+                to_steps: vec!["1".to_string()],
+                receptivity: "Start_Slave".to_string(),
+                ..Default::default()
+            }],
+        };
+
+        let master = SfcProgram {
+            name: "master_seq".to_string(),
+            comment: "Master sequence overriding slave step state".to_string(),
+            steps: vec![
+                SfcStep::new("0", "M_Idle", StepKind::Initial),
+                SfcStep {
+                    id: "1".to_string(),
+                    name: "M_Reset_Slave".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![SfcAction {
+                        qualifier: ActionQualifier::R,
+                        target: "slave_seq.X1.state".to_string(),
+                        duration: None,
+                    }],
+                    ..Default::default()
+                },
+                SfcStep {
+                    id: "2".to_string(),
+                    name: "M_Set_Slave".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![SfcAction {
+                        qualifier: ActionQualifier::S,
+                        target: "slave_seq.X1.state".to_string(),
+                        duration: None,
+                    }],
+                    ..Default::default()
+                },
+            ],
+            transitions: vec![
+                SfcTransition {
+                    id: "TM1".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["1".to_string()],
+                    receptivity: "Do_Reset".to_string(),
+                    ..Default::default()
+                },
+                SfcTransition {
+                    id: "TM2".to_string(),
+                    from_steps: vec!["1".to_string()],
+                    to_steps: vec!["2".to_string()],
+                    receptivity: "Do_Set".to_string(),
+                    ..Default::default()
+                },
+            ],
+        };
+
+        slave.register_introspection_symbols(&mut tags)?;
+        master.register_introspection_symbols(&mut tags)?;
+
+        let mut compiled_slave = slave.compile(&tags)?;
+        let mut compiled_master = master.compile(&tags)?;
+
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 50, 1);
+
+        // Scan 1: Initialize both POUs
+        compiled_slave.execute(&mut ctx)?;
+        compiled_master.execute(&mut ctx)?;
+        assert!(!ctx.read_bool("Pump_Cmd")?);
+        assert_eq!(ctx.read_symbol("Pulse_Count")?, IecValue::Int(0));
+
+        // Scan 2: Start slave sequence -> Step 1 activates (rising edge)
+        ctx.write_symbol("Start_Slave", IecValue::Bool(true))?;
+        compiled_slave.execute(&mut ctx)?;
+        compiled_master.execute(&mut ctx)?;
+        assert!(ctx.read_bool("slave_seq.X1.state")?);
+        assert!(ctx.read_bool("Pump_Cmd")?);
+        assert_eq!(ctx.read_symbol("Pulse_Count")?, IecValue::Int(1));
+
+        // Scan 3: Steady state -> Pump_Cmd remains true, P does not re-fire
+        compiled_slave.execute(&mut ctx)?;
+        compiled_master.execute(&mut ctx)?;
+        assert!(ctx.read_bool("Pump_Cmd")?);
+        assert_eq!(ctx.read_symbol("Pulse_Count")?, IecValue::Int(1));
+
+        // Scan 4: Master applies [R] on slave_seq.X1.state
+        ctx.write_symbol("Do_Reset", IecValue::Bool(true))?;
+        compiled_master.execute(&mut ctx)?;
+        // Master executed [R] slave_seq.X1.state
+        compiled_slave.execute(&mut ctx)?;
+        assert!(!ctx.read_bool("slave_seq.X1.state")?);
+        // Assert Pump_Cmd returns false on deactivation!
+        assert!(!ctx.read_bool("Pump_Cmd")?, "Pump_Cmd must return false after external reset [R]");
+        assert_eq!(ctx.read_symbol("Pulse_Count")?, IecValue::Int(1));
+
+        // Scan 5: Master applies [S] on slave_seq.X1.state
+        ctx.write_symbol("Do_Reset", IecValue::Bool(false))?;
+        ctx.write_symbol("Do_Set", IecValue::Bool(true))?;
+        compiled_master.execute(&mut ctx)?;
+        // Master executed [S] slave_seq.X1.state
+        compiled_slave.execute(&mut ctx)?;
+        assert!(ctx.read_bool("slave_seq.X1.state")?);
+        assert!(ctx.read_bool("Pump_Cmd")?, "Pump_Cmd must activate TRUE after external set [S]");
+        // Assert P fires once on activation edge!
+        assert_eq!(ctx.read_symbol("Pulse_Count")?, IecValue::Int(2), "P action must fire once on rising edge after external [S]");
+
+        // Scan 6: Steady state after [S]
+        compiled_slave.execute(&mut ctx)?;
+        assert!(ctx.read_bool("Pump_Cmd")?);
+        assert_eq!(ctx.read_symbol("Pulse_Count")?, IecValue::Int(2), "P action must NOT re-fire in steady state");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_i13_c13_reject_invalid_action_qualifier_statement_targets() -> Result<(), Box<dyn std::error::Error>> {
+        let mut tags = TagTable::new();
+
+        let make_prog = |qualifier: ActionQualifier| -> SfcProgram {
+            SfcProgram {
+                name: "test_invalid_act".to_string(),
+                comment: "".to_string(),
+                steps: vec![
+                    SfcStep::new("0", "Init", StepKind::Initial),
+                    SfcStep {
+                        id: "1".to_string(),
+                        name: "Run".to_string(),
+                        kind: StepKind::Normal,
+                        actions: vec![SfcAction {
+                            qualifier,
+                            target: "Setpoint := 100;".to_string(),
+                            duration: if matches!(qualifier, ActionQualifier::L | ActionQualifier::D) {
+                                Some("T#100ms".to_string())
+                            } else {
+                                None
+                            },
+                        }],
+                        ..Default::default()
+                    },
+                ],
+                transitions: vec![SfcTransition {
+                    id: "T0".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["1".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    ..Default::default()
+                }],
+            }
+        };
+
+        // I-13: N, L, D cannot target statements
+        for q in [ActionQualifier::N, ActionQualifier::L, ActionQualifier::D] {
+            let prog = make_prog(q);
+            prog.register_introspection_symbols(&mut tags)?;
+            let res = prog.compile(&tags);
+            assert!(
+                matches!(res, Err(SfcError::UnsupportedActionTarget { qualifier, .. }) if qualifier == q),
+                "Expected UnsupportedActionTarget for qualifier {:?}", q
+            );
+        }
+
+        // C13: F, FZ cannot target statements
+        for q in [ActionQualifier::F, ActionQualifier::FZ] {
+            let prog = make_prog(q);
+            prog.register_introspection_symbols(&mut tags)?;
+            let res = prog.compile(&tags);
+            assert!(
+                matches!(res, Err(SfcError::UnsupportedActionTarget { qualifier, .. }) if qualifier == q),
+                "Expected UnsupportedActionTarget for qualifier {:?}", q
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_i14_sr_actions_execute_only_on_activation_edge() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+
+        tags.register_tag(TagEntry::new(
+            "Latched_Out",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "Stored set flag",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Start_Run",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+
+        let prog = SfcProgram {
+            name: "sr_edge_test".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Init", StepKind::Initial),
+                SfcStep {
+                    id: "1".to_string(),
+                    name: "Run".to_string(),
+                    kind: StepKind::Normal,
+                    actions: vec![SfcAction {
+                        qualifier: ActionQualifier::S,
+                        target: "Latched_Out".to_string(),
+                        duration: None,
+                    }],
+                    ..Default::default()
+                },
+            ],
+            transitions: vec![SfcTransition {
+                id: "T0".to_string(),
+                from_steps: vec!["0".to_string()],
+                to_steps: vec!["1".to_string()],
+                receptivity: "Start_Run".to_string(),
+                ..Default::default()
+            }],
+        };
+
+        prog.register_introspection_symbols(&mut tags)?;
+        let mut compiled = prog.compile(&tags)?;
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 50, 1);
+
+        // Scan 1: Init
+        compiled.execute(&mut ctx)?;
+        assert!(!ctx.read_bool("Latched_Out")?);
+
+        // Scan 2: Step 1 activates (rising edge) -> Latched_Out becomes true
+        ctx.write_symbol("Start_Run", IecValue::Bool(true))?;
+        compiled.execute(&mut ctx)?;
+        assert!(ctx.read_bool("Latched_Out")?);
+
+        // Scan 3: External logic resets Latched_Out to false while Step 1 is still active
+        ctx.write_symbol("Latched_Out", IecValue::Bool(false))?;
+        compiled.execute(&mut ctx)?;
+        // Step 1 is active, but NOT on rising edge: S action must not re-latch Latched_Out!
+        assert!(!ctx.read_bool("Latched_Out")?, "S action must execute only on activation edge, not every scan");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_i15_bare_x_refs_bind_to_own_pou() -> Result<(), Box<dyn std::error::Error>> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+
+        // POU A: X0 -> T0 -> X1
+        let pou_a = SfcProgram {
+            name: "chart_a".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "A0", StepKind::Initial),
+                SfcStep::new("1", "A1", StepKind::Normal),
+            ],
+            transitions: vec![SfcTransition {
+                id: "TA0".to_string(),
+                from_steps: vec!["0".to_string()],
+                to_steps: vec!["1".to_string()],
+                receptivity: "TRUE".to_string(),
+                ..Default::default()
+            }],
+        };
+
+        // POU B: X0 -> TB0 (receptivity uses bare "X0.t >= T#100ms") -> X1
+        let pou_b = SfcProgram {
+            name: "chart_b".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "B0", StepKind::Initial),
+                SfcStep::new("1", "B1", StepKind::Normal),
+            ],
+            transitions: vec![SfcTransition {
+                id: "TB0".to_string(),
+                from_steps: vec!["0".to_string()],
+                to_steps: vec!["1".to_string()],
+                receptivity: "X0.t >= T#100ms".to_string(),
+                ..Default::default()
+            }],
+        };
+
+        // Register POU A first: this occupies the bare "X0.state" and "X0.t" symbols in TagTable
+        pou_a.register_introspection_symbols(&mut tags)?;
+        pou_b.register_introspection_symbols(&mut tags)?;
+
+        let mut compiled_a = pou_a.compile(&tags)?;
+        let mut compiled_b = pou_b.compile(&tags)?;
+
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 50, 1);
+
+        // Advance POU A so that its elapsed time increases
+        compiled_a.execute(&mut ctx)?;
+        // Artificially simulate POU A's X0 being active for 200ms
+        ctx.with_sfc_engine(|sfc_ctx| -> Result<(), RuntimeError> {
+            sfc_ctx.write_symbol("chart_a.X0.t", IecValue::Time(200))?;
+            sfc_ctx.write_symbol("X0.t", IecValue::Time(200))?;
+            Ok(())
+        })?;
+
+        // Now execute POU B for Scan 1 (dt = 50ms): POU B's own X0.t is 0ms
+        compiled_b.execute(&mut ctx)?;
+        // If bare "X0.t" bound to POU A, TB0 would have fired immediately!
+        // But because it binds to own POU ("chart_b.X0.t"), TB0 does not fire!
+        assert!(ctx.read_bool("chart_b.X0.state")?, "POU B step 0 should still be active");
+        assert!(!ctx.read_bool("chart_b.X1.state")?, "POU B step 1 should NOT be active yet");
+
+        // Scan 2 (+50ms): POU B's own X0.t is now 50ms (< 100ms)
+        compiled_b.execute(&mut ctx)?;
+        assert!(!ctx.read_bool("chart_b.X1.state")?);
+
+        // Scan 3 (+50ms): POU B's own X0.t reaches 100ms -> TB0 fires!
+        compiled_b.execute(&mut ctx)?;
+        assert!(ctx.read_bool("chart_b.X1.state")?, "POU B step 1 must activate after its own X0.t reaches 100ms");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_i16_duplicate_step_id_and_ambiguous_name_validation() {
+        // 1. Duplicate step IDs
+        let prog_dup_id = SfcProgram {
+            name: "dup_id_prog".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("1", "FirstStep", StepKind::Initial),
+                SfcStep::new("X1", "SecondStep", StepKind::Normal),
+            ],
+            transitions: vec![SfcTransition {
+                id: "T0".to_string(),
+                from_steps: vec!["1".to_string()],
+                to_steps: vec!["X1".to_string()],
+                receptivity: "TRUE".to_string(),
+                ..Default::default()
+            }],
+        };
+        let rep1 = validate_sfc_topology(&prog_dup_id);
+        assert!(!rep1.is_valid);
+        assert!(rep1.errors.iter().any(|e| matches!(e, SfcValidationError::DuplicateStepId { .. })));
+
+        // 2. Ambiguous step name colliding with another step's ID
+        let prog_ambig_name = SfcProgram {
+            name: "ambig_name_prog".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "1", StepKind::Initial), // name is "1", which is Step 1's ID!
+                SfcStep::new("1", "StepOne", StepKind::Normal),
+            ],
+            transitions: vec![SfcTransition {
+                id: "T0".to_string(),
+                from_steps: vec!["0".to_string()],
+                to_steps: vec!["1".to_string()],
+                receptivity: "TRUE".to_string(),
+                ..Default::default()
+            }],
+        };
+        let rep2 = validate_sfc_topology(&prog_ambig_name);
+        assert!(!rep2.is_valid);
+        assert!(rep2.errors.iter().any(|e| matches!(e, SfcValidationError::AmbiguousStepName { .. })));
+
+        // 3. Two steps with duplicate names
+        let prog_dup_name = SfcProgram {
+            name: "dup_name_prog".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "SameName", StepKind::Initial),
+                SfcStep::new("1", "SameName", StepKind::Normal),
+            ],
+            transitions: vec![SfcTransition {
+                id: "T0".to_string(),
+                from_steps: vec!["0".to_string()],
+                to_steps: vec!["1".to_string()],
+                receptivity: "TRUE".to_string(),
+                ..Default::default()
+            }],
+        };
+        let rep3 = validate_sfc_topology(&prog_dup_name);
+        assert!(!rep3.is_valid);
+        assert!(rep3.errors.iter().any(|e| matches!(e, SfcValidationError::AmbiguousStepName { .. })));
+    }
+
+    #[test]
+    fn test_i17_alternation_exclusivity_validation() {
+        // Two transitions sharing from_steps with DivergenceKind::And violates IEC alternation exclusivity
+        let prog = SfcProgram {
+            name: "invalid_alternation".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Init", StepKind::Initial),
+                SfcStep::new("1", "BranchA", StepKind::Normal),
+                SfcStep::new("2", "BranchB", StepKind::Normal),
+            ],
+            transitions: vec![
+                SfcTransition {
+                    id: "T1".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["1".to_string()],
+                    receptivity: "Cond1".to_string(),
+                    divergence: DivergenceKind::And,
+                    ..Default::default()
+                },
+                SfcTransition {
+                    id: "T2".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["2".to_string()],
+                    receptivity: "Cond2".to_string(),
+                    divergence: DivergenceKind::And,
+                    ..Default::default()
+                },
+            ],
+        };
+        let rep = validate_sfc_topology(&prog);
+        assert!(!rep.is_valid);
+        assert!(rep.errors.iter().any(|e| matches!(e, SfcValidationError::InvalidAlternation { .. })));
+    }
+
+    #[test]
+    fn test_i18_macro_step_rejected_at_compile() -> Result<(), Box<dyn std::error::Error>> {
+        let tags = TagTable::new();
+        let prog = SfcProgram {
+            name: "macro_prog".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Init", StepKind::Initial),
+                SfcStep {
+                    id: "1".to_string(),
+                    name: "Macro1".to_string(),
+                    kind: StepKind::Macro,
+                    macro_body: vec!["SubStep1".to_string(), "SubStep2".to_string()],
+                    ..Default::default()
+                },
+            ],
+            transitions: vec![SfcTransition {
+                id: "T0".to_string(),
+                from_steps: vec!["0".to_string()],
+                to_steps: vec!["1".to_string()],
+                receptivity: "TRUE".to_string(),
+                ..Default::default()
+            }],
+        };
+        let res = prog.compile(&tags);
+        assert!(
+            matches!(res, Err(SfcError::MacroStepUnsupported { step, .. }) if step == "1"),
+            "Expected MacroStepUnsupported error for macro step"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_c12_unreachable_step_warning() {
+        let prog = SfcProgram {
+            name: "unreachable_prog".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Init", StepKind::Initial),
+                SfcStep::new("1", "Reachable", StepKind::Normal),
+                SfcStep::new("99", "Unreachable", StepKind::Normal),
+            ],
+            transitions: vec![
+                SfcTransition {
+                    id: "T0".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["1".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    ..Default::default()
+                },
+                // Step 99 feeds into Step 0, but no path leads FROM Step 0 to Step 99
+                SfcTransition {
+                    id: "T99".to_string(),
+                    from_steps: vec!["99".to_string()],
+                    to_steps: vec!["0".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    ..Default::default()
+                },
+            ],
+        };
+        let rep = validate_sfc_topology(&prog);
+        assert!(
+            rep.warnings.iter().any(|w| w.contains("Step '99'") && w.contains("unreachable")),
+            "Expected unreachable step warning for Step 99, warnings: {:?}", rep.warnings
+        );
     }
 }
