@@ -2413,6 +2413,7 @@ mod tests {
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
         let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
+        crate::settings::set_custom_settings_path(Some(temp_dir.join("settings.json")));
         let mut app = FerriteStudioApp::new(proj);
         let win_id = iced::window::Id::unique();
 
@@ -2457,6 +2458,7 @@ mod tests {
             app.sfc_delete_modal = None;
         }
 
+        crate::settings::set_custom_settings_path(None);
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
@@ -2474,6 +2476,9 @@ mod tests {
         // 1. Initial state
         assert_eq!(app.active_menu, None);
         assert_eq!(app.active_submenu, None);
+
+        // Isolate settings so test doesn't mutate user's AppData settings.json
+        crate::settings::set_custom_settings_path(Some(temp_dir.join("settings.json")));
 
         // 2. Open Options menu
         let _ = app.update(Message::ToggleActiveMenu(Some(crate::app::ActiveMenu::Options)));
@@ -2517,6 +2522,7 @@ mod tests {
         assert_eq!(app.active_submenu, None);
         assert_eq!(crate::tr!("menu.file.save_project", app.ui_lang), "Salva progetto");
 
+        crate::settings::set_custom_settings_path(None);
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }

@@ -34,8 +34,8 @@ struct Cli {
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 enum CliUiLang {
     #[default]
-    Fr,
     En,
+    Fr,
     De,
     Es,
     It,
@@ -131,8 +131,8 @@ enum Commands {
         /// Optional project directory (defaults to current directory or examples/my_automation_plant)
         #[arg(short, long)]
         path: Option<PathBuf>,
-        /// Initial UI display language (fr, en, de, es, it)
-        #[arg(short, long, default_value = "fr")]
+        /// Initial UI display language (en, fr, de, es, it)
+        #[arg(short, long, default_value = "en")]
         locale: CliUiLang,
     },
     /// Exports the project to standard PLCopen TC6 XML (IEC 61131-3)
