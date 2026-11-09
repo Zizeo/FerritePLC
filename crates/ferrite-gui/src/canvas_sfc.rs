@@ -503,7 +503,7 @@ impl<'a> SfcCanvasProgram<'a> {
 
     pub fn step_width(&self, step: &SfcStep) -> f32 {
         let name_len = step.name.len().max(6);
-        (name_len as f32 * 8.2 + 50.0).clamp(170.0, 320.0)
+        (name_len as f32 * 8.2 + 60.0).clamp(180.0, 320.0)
     }
 
     pub fn step_name_rect(&self, step: &SfcStep, state: &SfcCanvasState) -> Rectangle {
@@ -511,7 +511,7 @@ impl<'a> SfcCanvasProgram<'a> {
         let w = self.step_width(step);
         Rectangle {
             x: x + 8.0,
-            y: y + 28.0,
+            y: y + 30.0,
             width: w - 16.0,
             height: 24.0,
         }
@@ -520,9 +520,9 @@ impl<'a> SfcCanvasProgram<'a> {
     pub fn step_kind_badge_rect(&self, step: &SfcStep, state: &SfcCanvasState) -> Rectangle {
         let (x, y) = self.step_pos(step, state);
         Rectangle {
-            x: x + 6.0,
-            y: y + 5.0,
-            width: 38.0,
+            x: x + 8.0,
+            y: y + 6.0,
+            width: 44.0,
             height: 18.0,
         }
     }
@@ -531,8 +531,8 @@ impl<'a> SfcCanvasProgram<'a> {
         let (x, y) = self.step_pos(step, state);
         let w = self.step_width(step);
         Rectangle {
-            x: x + w - 46.0,
-            y: y + 5.0,
+            x: x + w - 48.0,
+            y: y + 6.0,
             width: 40.0,
             height: 18.0,
         }
@@ -2415,44 +2415,67 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             // Initial Step: authentic double inner border
             if step.kind == StepKind::Initial {
                 frame.stroke_rectangle(
-                    Point::new(x + 3.0, y + 3.0),
-                    Size::new(s_width - 6.0, STEP_HEIGHT - 6.0),
-                    Stroke::default().with_color(border_color).with_width(1.2),
+                    Point::new(x + 4.0, y + 4.0),
+                    Size::new(s_width - 8.0, STEP_HEIGHT - 8.0),
+                    Stroke::default().with_color(border_color).with_width(1.5),
                 );
             } else if step.kind == StepKind::Macro {
                 // IEC 60848 Macro Step: double horizontal bars at top and bottom of step box
                 frame.stroke(
-                    &Path::line(Point::new(x + 2.0, y + 4.0), Point::new(x + s_width - 2.0, y + 4.0)),
-                    Stroke::default().with_color(StudioTheme::ACCENT_PURPLE).with_width(1.5),
+                    &Path::line(Point::new(x + 2.0, y + 5.0), Point::new(x + s_width - 2.0, y + 5.0)),
+                    Stroke::default().with_color(StudioTheme::ACCENT_PURPLE).with_width(2.0),
                 );
                 frame.stroke(
                     &Path::line(
-                        Point::new(x + 2.0, y + STEP_HEIGHT - 4.0),
-                        Point::new(x + s_width - 2.0, y + STEP_HEIGHT - 4.0),
+                        Point::new(x + 2.0, y + STEP_HEIGHT - 5.0),
+                        Point::new(x + s_width - 2.0, y + STEP_HEIGHT - 5.0),
                     ),
-                    Stroke::default().with_color(StudioTheme::ACCENT_PURPLE).with_width(1.5),
+                    Stroke::default().with_color(StudioTheme::ACCENT_PURPLE).with_width(2.0),
                 );
-                let macro_badge = if step.macro_body.is_empty() {
-                    "MACRO".to_string()
-                } else {
-                    format!("MACRO({})", step.macro_body.len())
+            }
+
+            // Step Kind Badge (Click to toggle Normal -> Initial -> Macro)
+            let k_rect = self.step_kind_badge_rect(step, state);
+            if !is_occluded(k_rect) {
+                let (badge_bg, badge_border, badge_text, badge_color) = match step.kind {
+                    StepKind::Initial => (
+                        Color::from_rgba(0.2, 0.7, 0.4, 0.25),
+                        Color::from_rgba(0.3, 0.85, 0.5, 0.6),
+                        "INIT",
+                        Color::from_rgb(0.4, 0.95, 0.6),
+                    ),
+                    StepKind::Macro => (
+                        Color::from_rgba(0.6, 0.3, 0.9, 0.25),
+                        Color::from_rgba(0.7, 0.45, 1.0, 0.6),
+                        "MACRO",
+                        Color::from_rgb(0.85, 0.6, 1.0),
+                    ),
+                    StepKind::Normal => (
+                        Color::from_rgba(0.3, 0.4, 0.5, 0.2),
+                        Color::from_rgba(0.4, 0.5, 0.6, 0.4),
+                        "STEP",
+                        StudioTheme::TEXT_MUTED,
+                    ),
                 };
-                let macro_rect = Rectangle {
-                    x: x + s_width - 96.0,
-                    y: y + 6.0,
-                    width: 60.0,
-                    height: 16.0,
-                };
-                if !is_occluded(macro_rect) {
-                    frame.fill_text(canvas::Text {
-                        content: macro_badge,
-                        position: Point::new(x + s_width - 96.0, y + 6.0),
-                        color: StudioTheme::ACCENT_PURPLE,
-                        size: iced::Pixels(9.5),
-                        font: iced::Font::MONOSPACE,
-                        ..Default::default()
-                    });
-                }
+
+                frame.fill_rectangle(
+                    Point::new(k_rect.x, k_rect.y),
+                    Size::new(k_rect.width, k_rect.height),
+                    badge_bg,
+                );
+                frame.stroke_rectangle(
+                    Point::new(k_rect.x, k_rect.y),
+                    Size::new(k_rect.width, k_rect.height),
+                    Stroke::default().with_color(badge_border).with_width(1.0),
+                );
+                frame.fill_text(canvas::Text {
+                    content: badge_text.to_string(),
+                    position: Point::new(k_rect.x + 4.0, k_rect.y + 3.0),
+                    color: badge_color,
+                    size: iced::Pixels(9.0),
+                    font: iced::Font::MONOSPACE,
+                    ..Default::default()
+                });
             }
 
             // Step ID text
@@ -2460,7 +2483,7 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             let display_id = format!("X{num_id}");
             frame.fill_text(canvas::Text {
                 content: display_id.clone(),
-                position: Point::new(x + 10.0, y + 8.0),
+                position: Point::new(k_rect.x + k_rect.width + 6.0, y + 8.0),
                 color: if StudioTheme::is_dark(theme) {
                     Color::WHITE
                 } else {
@@ -2474,8 +2497,8 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             // Tree badge or error badge
             if has_error {
                 frame.fill_text(canvas::Text {
-                    content: display_id,
-                    position: Point::new(x + 10.0, y + 7.0),
+                    content: display_id.clone(),
+                    position: Point::new(k_rect.x + k_rect.width + 6.0, y + 7.0),
                     color: Color::WHITE,
                     size: iced::Pixels(12.5),
                     font: iced::Font::MONOSPACE,
@@ -2485,8 +2508,9 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
 
             // Active dot & timer
             if active {
+                let active_x = k_rect.x + k_rect.width + 42.0;
                 let active_rect = Rectangle {
-                    x: x + 48.0,
+                    x: active_x,
                     y: y + 7.0,
                     width: 70.0,
                     height: 16.0,
@@ -2494,16 +2518,16 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 if !is_occluded(active_rect) {
                     frame.fill_text(canvas::Text {
                         content: "●".to_string(),
-                        position: Point::new(x + 48.0, y + 7.0),
+                        position: Point::new(active_x, y + 7.0),
                         color: COLOR_ACTIVE_STEP,
                         size: iced::Pixels(11.0),
                         ..Default::default()
                     });
                     frame.fill_text(canvas::Text {
                         content: format!("T#{}ms", elapsed_ms),
-                        position: Point::new(x + 64.0, y + 8.0),
+                        position: Point::new(active_x + 14.0, y + 8.0),
                         color: COLOR_ACTIVE_STEP,
-                        size: iced::Pixels(10.5),
+                        size: iced::Pixels(10.0),
                         font: iced::Font::MONOSPACE,
                         ..Default::default()
                     });
