@@ -1509,6 +1509,96 @@ fn render_fbd_pid<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
     .into()
 }
 
+fn render_fbd_logic_math<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("FBD Logic, Comparison & Math Blocks", "Blocs Logiques, Comparaisons & Calculs FBD"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+        paragraph(lang.tr(
+            "The FBD canvas includes elementary logic gates, relational comparators, and arithmetic math blocks that evaluate topologically every scan cycle.",
+            "Le canvas FBD comprend des portes logiques élémentaires, des comparateurs relationnels et des blocs de calcul arithmétique évalués par tri topologique à chaque cycle."
+        )),
+        section_title(lang.tr("Boolean Logic Gates", "Portes Logiques Booléennes")),
+        table_card(
+            &[lang.tr("Gate", "Porte"), lang.tr("Inputs -> Output", "Entrées -> Sortie"), lang.tr("Behavior", "Comportement")],
+            &[
+                &["AND", "IN1: BOOL, IN2: BOOL -> OUT: BOOL", lang.tr("Logical Conjunction: TRUE only if all inputs are TRUE.", "Conjonction Logique : VRAI seulement si toutes les entrées sont VRAIES.")],
+                &["OR", "IN1: BOOL, IN2: BOOL -> OUT: BOOL", lang.tr("Logical Disjunction: TRUE if at least one input is TRUE.", "Disjonction Logique : VRAI si au moins une entrée est VRAIE.")],
+                &["XOR", "IN1: BOOL, IN2: BOOL -> OUT: BOOL", lang.tr("Exclusive OR: TRUE if exactly one input is TRUE.", "OU Exclusif : VRAI si exactement une entrée est VRAIE.")],
+                &["NOT", "IN: BOOL -> OUT: BOOL", lang.tr("Logical Inversion: Inverts boolean signal state.", "Inversion Logique : Inverse l'état du signal booléen.")],
+            ]
+        ),
+        section_title(lang.tr("Relational Comparators", "Comparateurs Relationnels")),
+        table_card(
+            &[lang.tr("Comparator", "Comparateur"), lang.tr("Relation", "Relation"), lang.tr("Output Condition", "Condition de Sortie")],
+            &[
+                &["EQ / NE", "IN1 == IN2 / IN1 <> IN2", lang.tr("Tests equality or inequality of numbers or timers.", "Teste l'égalité ou l'inégalité de valeurs numériques ou durées.")],
+                &["GT / GE", "IN1 > IN2 / IN1 >= IN2", lang.tr("Tests if IN1 is strictly greater (GT) or greater/equal (GE) than IN2.", "Teste si IN1 est strictement supérieur (GT) ou supérieur ou égal (GE) à IN2.")],
+                &["LT / LE", "IN1 < IN2 / IN1 <= IN2", lang.tr("Tests if IN1 is strictly less (LT) or less/equal (LE) than IN2.", "Teste si IN1 est strictement inférieur (LT) ou inférieur ou égal (LE) à IN2.")],
+            ]
+        ),
+        section_title(lang.tr("Arithmetic Math Blocks", "Blocs Arithmétiques")),
+        symbol_card(
+            "[ADD / SUB]",
+            lang.tr("Addition / Subtraction Blocks", "Blocs Addition / Soustraction"),
+            "IN1, IN2 -> OUT (INT / REAL)",
+            lang.tr("Computes the sum (ADD) or difference (SUB) of input values.", "Calcule la somme (ADD) ou la différence (SUB) des grandeurs en entrée."),
+            "Analog scaling offset: ADD(Raw_Pressure, Offset_Bar)"
+        ),
+        symbol_card(
+            "[MUL / DIV]",
+            lang.tr("Multiplication / Division Blocks", "Blocs Multiplication / Division"),
+            "IN1, IN2 -> OUT (INT / REAL)",
+            lang.tr("Multiplies or divides signals. Includes safety guards against division by zero (returning 0.0 or saturated bounds).", "Multiplie ou divise les signaux. Protégé contre les divisions par zéro."),
+            "Gain calculation: MUL(Sensor_Voltage, Calibration_Gain)"
+        ),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn render_fbd_custom_composite<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("Custom & Composite User Function Blocks", "Blocs Fonctionnels Utilisateur & Composites"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+        paragraph(lang.tr(
+            "FerritePLC allows engineers to build reusable, encapsulated Composite Function Blocks from existing FBD networks. These composite blocks can be packaged, stored in the Custom FBD Library, and instantiated across any project diagram.",
+            "FerritePLC permet aux automaticiens de concevoir des Blocs Fonctionnels Composites encapsulés et réutilisables à partir de réseaux FBD. Ces blocs peuvent être archivés dans la bibliothèque personnalisée et instanciés à volonté."
+        )),
+        section_title(lang.tr("Composite Block Concepts", "Concepts des Blocs Composites")),
+        symbol_card(
+            "COMPOSITE_FB",
+            lang.tr("Sub-Diagram Encapsulation", "Encapsulation de Sous-Schéma"),
+            lang.tr("Reusable Multi-Block Network", "Réseau Multi-Blocs Réutilisable"),
+            lang.tr(
+                "Encapsulates an entire internal sub-graph of logic, math, and timer blocks into a single block with exposed input and output connector pins.",
+                "Encapsule tout un sous-graphe de logique, calculs et temporisateurs en un bloc unique doté de broches d'entrées et sorties configurables."
+            ),
+            "Instance: LeadLagPumpController(Run_Cmd, Flow_Sens -> Pump1_Start, Pump2_Start)"
+        ),
+        section_title(lang.tr("Custom FBD Library Management", "Gestion de la Bibliothèque Personnalisée")),
+        table_card(
+            &[lang.tr("Feature", "Fonctionnalité"), lang.tr("Capability Description", "Description de la Capacité")],
+            &[
+                &[lang.tr("Library Palette", "Palette Bibliothèque"), lang.tr("Displays all user-authored blocks in a dedicated studio toolbox panel.", "Affiche tous les blocs créés par l'utilisateur dans un panneau dédié du studio.")],
+                &[lang.tr("Pin Configuration", "Configuration des Broches"), lang.tr("Customize names, types (BOOL, REAL, TIME), and descriptions for input/output connectors.", "Personnalise les noms, types (BOOL, REAL, TIME) et infobulles des broches.")],
+                &[lang.tr("Versioned Storage", "Stockage Versionné"), lang.tr("Saved cleanly into the project's symbols and POU registry for seamless Git version control.", "Enregistré de manière lisible dans les registres du projet pour le suivi Git.")],
+            ]
+        ),
+        callout_box(
+            lang.tr("Clean Hierarchy & Debugging", "Hiérarchie Claire & Débogage"),
+            lang.tr(
+                "Double-clicking a composite function block on the canvas opens its internal schematic in an isolated drill-down tab with live signal probes.",
+                "Un double-clic sur un bloc composite ouvre son schéma interne dans un onglet dédié permettant de visualiser les signaux en direct."
+            ),
+            StudioTheme::ACCENT_INDIGO,
+        ),
+    ]
+    .spacing(12)
+    .into()
+}
+
 // ---------------------------------------------------------------------------
 // 6. Memory & Tags
 // ---------------------------------------------------------------------------
@@ -1647,8 +1737,40 @@ fn render_sim_alarms_retain<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Me
     .into()
 }
 
+fn render_sim_trend_plotter<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("Real-Time Trend Plotter & Oscilloscope", "Traceur de Tendances Temps Réel & Oscilloscope"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+        paragraph(lang.tr(
+            "FerritePLC features an integrated high-speed multi-channel trend plotter and software oscilloscope, allowing live visual inspection of analog curves (%IW, %QW, PID variables) and discrete pulses.",
+            "FerritePLC intègre un traceur de tendances multi-voies haute vitesse et un oscilloscope logiciel, permettant d'observer en direct les courbes analogiques (%IW, %QW, variables PID) et signaux tores."
+        )),
+        section_title(lang.tr("Plotter Capabilities & Modes", "Fonctionnalités & Modes du Traceur")),
+        table_card(
+            &[lang.tr("Capability", "Fonctionnalité"), lang.tr("Settings / Range", "Réglages / Plage"), lang.tr("Description", "Description")],
+            &[
+                &[lang.tr("Multi-Channel Tracking", "Suivi Multi-Voies"), "Up to 8 concurrent tags", lang.tr("Color-coded traces with individual scale, offset, and zero-reference lines.", "Tracés avec codes couleurs distincts, échelles individuelles et repères de zéro.")],
+                &[lang.tr("Timebase / Window", "Base de Temps"), "100 ms to 60 s per division", lang.tr("Adjustable horizontal sweep rate with smooth circular buffer streaming.", "Vitesse de balayage horizontal réglable avec défilement fluide par tampon circulaire.")],
+                &[lang.tr("Trigger Modes", "Modes de Déclenchement"), "Auto, Normal, Single Edge", lang.tr("Rising edge, falling edge, or threshold crossing on selected trigger channel.", "Front montant, descendant ou franchissement de seuil sur la voie de référence.")],
+                &[lang.tr("Freeze & Cursors", "Gel & Curseurs de Mesure"), "Pause & Dual Cursors", lang.tr("Freeze live acquisition to inspect delta-time (Δt) and delta-amplitude (ΔV).", "Fige l'acquisition pour mesurer les écarts temporels (Δt) et d'amplitude (ΔV).")],
+            ]
+        ),
+        callout_box(
+            lang.tr("Zero Heap-Allocation Acquisition", "Acquisition sans Allocation Tas"),
+            lang.tr(
+                "Sample buffers use pre-allocated ring buffers. Enabling live plotting incurs negligible scan cycle overhead, preserving real-time deterministic execution.",
+                "Les tampons d'échantillonnage reposent sur des buffers circulaires pré-alloués. L'enregistrement n'induit aucun ralentissement sur le temps de cycle déterministe."
+            ),
+            StudioTheme::ACCENT_CYAN,
+        ),
+    ]
+    .spacing(12)
+    .into()
+}
+
 // ---------------------------------------------------------------------------
-// 8. Fieldbus & Hardware
+// 8. Fieldbus & Protocols
 // ---------------------------------------------------------------------------
 
 fn render_fieldbus_tcp_iot<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
@@ -1657,10 +1779,10 @@ fn render_fieldbus_tcp_iot<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Mes
             .size(18)
             .color(StudioTheme::TEXT_PRIMARY),
         paragraph(lang.tr(
-            "FerritePLC connects natively to industrial networks and SCADA/MES systems via industry-standard open communication protocols.",
-            "FerritePLC communique nativement avec les réseaux industriels et systèmes SCADA/MES via les protocoles ouverts standards du marché."
+            "FerritePLC connects natively to industrial Ethernet networks and SCADA/MES/Cloud systems via open standards.",
+            "FerritePLC communique nativement avec les réseaux industriels Ethernet et les systèmes SCADA/MES/Cloud via des standards ouverts."
         )),
-        section_title(lang.tr("Supported Protocols", "Protocoles Supportés")),
+        section_title(lang.tr("Supported Ethernet & IoT Protocols", "Protocoles Ethernet & IoT Supportés")),
         symbol_card(
             "Modbus",
             "Modbus TCP (Port 502)",
@@ -1695,6 +1817,50 @@ fn render_fieldbus_tcp_iot<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Mes
     .spacing(12)
     .into()
 }
+
+fn render_fieldbus_modbus_rtu<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("Modbus RTU Serial (RS-485 / RS-232)", "Modbus RTU Série (RS-485 / RS-232)"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+        paragraph(lang.tr(
+            "FerritePLC includes a complete industrial-grade Modbus RTU serial engine conforming to the Modbus Serial Line Protocol specification v1.02. It supports both Master and Slave roles over physical UART / RS-485 transceivers.",
+            "FerritePLC intègre un moteur Modbus RTU série complet conforme à la norme Modbus Serial Line v1.02, supportant les rôles Maître et Esclave sur liaisons physiques UART / RS-485 / RS-232."
+        )),
+        section_title(lang.tr("Serial Framing & Frame Delimitation", "Cadrage Série & Délimitation de Trame")),
+        table_card(
+            &[lang.tr("Parameter", "Paramètre"), lang.tr("Standard Requirement", "Spécification"), lang.tr("Role in Communication", "Rôle dans la Liaison")],
+            &[
+                &[lang.tr("Baud Rate", "Vitesse (Bauds)"), "1200 to 115200 bps (default 9600)", lang.tr("Data transmission speed across the serial bus.", "Cadence de modulation des données sur le bus série.")],
+                &[lang.tr("Parity & Framing", "Parité & Format"), "8 Data Bits, Even/None/Odd, 1 or 2 Stop Bits", lang.tr("Configured in SerialPortConfig to match connected field instruments.", "Configurable pour correspondre aux instruments de terrain.")],
+                &[lang.tr("CRC-16 Checksum", "Somme de Contrôle CRC-16"), "Polynom 0xA001 (Table & Bitwise)", lang.tr("Appended to every frame (Low byte, High byte) for high data integrity.", "Calculé sur chaque trame pour garantir l'intégrité face aux parasites industriels.")],
+                &[lang.tr("Inter-character Gap (t1.5)", "Silence Inter-caractères (t1.5)"), "1.5 character times (min 750 µs)", lang.tr("If a gap exceeds t1.5 during message reception, the incomplete frame is aborted.", "Si un silence dépasse t1.5 pendant la réception, la trame est annulée.")],
+                &[lang.tr("Frame Delimiter (t3.5)", "Silence Séparateur (t3.5)"), "3.5 character times (min 1.75 ms)", lang.tr("A silent interval of at least t3.5 marks the end of a message and clears the bus.", "Un silence d'au moins t3.5 marque la fin du message et libère le bus.")],
+            ]
+        ),
+        code_snippet(
+            "+-------------+-------------------+----------------+----------------+\n\
+             | Slave Addr  | Function Code     | Data Field     | CRC-16 Check   |\n\
+             |  (1 Byte)   | (FC 01..16, 1 B)  | (0..252 Bytes) | (2 Bytes, L+H) |\n\
+             +-------------+-------------------+----------------+----------------+\n\
+             |<--------------------------- ADU Frame -------------------------->|"
+        ),
+        callout_box(
+            lang.tr("RS-485 Multi-Drop Topology", "Topologie Multipoint RS-485"),
+            lang.tr(
+                "Up to 247 slave devices can be addressed on a single differential 2-wire RS-485 bus with terminating 120-ohm resistors. FerritePLC handles silent timing deterministically.",
+                "Jusqu'à 247 esclaves peuvent être adressés sur une ligne différentielle 2 fils RS-485 avec résistances de fin de ligne 120 ohms. FerritePLC gère rigoureusement les silences t1.5 et t3.5."
+            ),
+            StudioTheme::ACCENT_AMBER,
+        ),
+    ]
+    .spacing(12)
+    .into()
+}
+
+// ---------------------------------------------------------------------------
+// 9. Hardware & Embedded HAL
+// ---------------------------------------------------------------------------
 
 fn render_hardware_rpi<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
     column![
@@ -1742,7 +1908,7 @@ fn render_hardware_rpi<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message
 }
 
 // ---------------------------------------------------------------------------
-// 9. Digital Twin
+// 10. Digital Twin
 // ---------------------------------------------------------------------------
 
 fn render_digital_twin<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
@@ -1751,37 +1917,44 @@ fn render_digital_twin<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message
             .size(18)
             .color(StudioTheme::TEXT_PRIMARY),
         paragraph(lang.tr(
-            "The 2D Digital Twin simulates realistic industrial plant components in real time. It binds PLC actuator outputs (%Q) to physical component simulations and feeds simulated sensor states back into PLC inputs (%I).",
-            "Le Jumeau Numérique 2D simule en temps réel le comportement physique d'installations industrielles. Il relie les sorties automate (%Q) aux actionneurs et renvoie l'état des capteurs vers les entrées (%I)."
+            "The 2D Digital Twin simulates realistic industrial plant components in real time. It binds PLC actuator outputs (%Q) to physical component simulations and feeds simulated sensor states back into PLC inputs (%I), providing both passive monitoring and interactive manual HMI control.",
+            "Le Jumeau Numérique 2D simule en temps réel le comportement physique d'installations industrielles. Il relie les sorties automate (%Q) aux actionneurs et renvoie l'état des capteurs vers les entrées (%I), assurant à la fois supervision passive et conduite manuelle interactive."
         )),
         section_title(lang.tr("Simulated Physical Components", "Composants Physiques Simulés")),
         symbol_card(
             "[TANK]",
             lang.tr("Liquid Storage Tank", "Cuve de Stockage de Fluide"),
-            lang.tr("Continuously Animated Fluid Level", "Niveau de Fluide Animé en Continu"),
-            lang.tr("Models fluid mass balance: Level(t) += (Inflow - Outflow) * dt. Displays visual liquid animation and high/low level limit switches.", "Modélise le bilan de masse : Niveau(t) += (DébitEntrant - DébitSortant) * dt. Affiche une jauge de niveau et des capteurs de seuil haut/bas."),
+            lang.tr("Continuously Animated Fluid Level & Limit Switches", "Niveau de Fluide Animé & Capteurs de Niveaux"),
+            lang.tr("Models fluid mass balance: Level(t) += (Inflow - Outflow) * dt. Displays visual liquid color/animation and high/low level limit switches.", "Modélise le bilan de masse : Niveau(t) += (DébitEntrant - DébitSortant) * dt. Affiche la jauge de liquide et déclenche les capteurs de seuil haut/bas."),
             "Tag bindings: Inlet_Valve -> Fill Rate, Tank_Full -> %IX0.2"
         ),
         symbol_card(
-            "[PUMP]",
-            lang.tr("Centrifugal Pump", "Pompe Centrifuge"),
-            lang.tr("Dynamic Flow Rate Actuator", "Actionneur de Débit Dynamique"),
-            lang.tr("Generates fluid flow when energized (%QX). Displays running rotation and output pressure.", "Génère un écoulement lorsqu'elle est activée (%QX). Affiche la rotation du rotor et la pression de refoulement."),
-            "Tag binding: Pump_Start -> %QX0.0"
+            "[ACTUATOR]",
+            lang.tr("Industrial Actuators (Motor, Pump, Agitator)", "Actionneurs Industriels (Moteur, Pompe, Agitateur)"),
+            lang.tr("ElectricMotor / CentrifugalPump / AgitatorMixer", "Moteur Électrique / Pompe / Agitateur"),
+            lang.tr("Displays dynamic rotational and fluid flow animations when energized (%QX). Visualizes running, tripped, and standby states.", "Affiche une animation dynamique de rotation et de refoulement dès l'activation (%QX). Visualise les états marche, défaut et arrêt."),
+            "Tag binding: Motor_Start -> %QX0.0"
         ),
         symbol_card(
-            "[VALVE]",
-            lang.tr("Solenoid Valve", "Électrovanne Proportionnelle / Tout-ou-Rien"),
-            lang.tr("Flow Control Valve", "Vanne de Contrôle de Débit"),
-            lang.tr("Controls pipe conductance. Supports binary open/closed solenoids or continuous percentage throttling.", "Pilote la conductance de tuyauterie. Supporte le tout-ou-rien ou la régulation proportionnelle 0-100%."),
+            "[VALVE / PIPE]",
+            lang.tr("Solenoid Valves & Flow Conduits", "Électrovannes & Conduites de Fluide"),
+            lang.tr("Fluid Flow Regulation", "Régulation d'Écoulement de Fluide"),
+            lang.tr("Controls pipe conductance. Supports binary open/closed solenoids or continuous percentage throttling (0..100%). Animates liquid transit inside connected pipes.", "Pilote la conductance de tuyauterie (tout-ou-rien ou vanne proportionnelle 0-100%). Anime le transit de fluide dans les tuyaux connectés."),
             "Tag binding: Solenoid_Valve_1 -> %QX0.1"
         ),
         symbol_card(
-            "[CONVEYOR]",
-            lang.tr("Conveyor Belt & Optical Sensors", "Convoyeur à Bande & Capteurs Optiques"),
-            lang.tr("Part Transport & Presence Detection", "Transport de Pièces & Détection de Présence"),
-            lang.tr("Moves physical parts across the canvas. When a part enters a photo-eye beam, the corresponding discrete input (%I) is asserted.", "Déplace des pièces le long de la ligne. Dès qu'une pièce coupe le faisceau d'une cellule, l'entrée (%I) associée s'active."),
-            "Tag bindings: Conveyor_Run -> %QX1.0, Part_Detect -> %IX1.0"
+            "[HMI CONTROLS]",
+            lang.tr("Interactive HMI (PushButtons & Switches)", "Commandes IHM Interactives (Boutons-Poussoirs & Commutateurs)"),
+            lang.tr("Momentary & Maintained Operator Inputs", "Entrées Opérateur Fugitives & Maintenues"),
+            lang.tr("Pushbuttons (momentary press/release or toggle) and 2-position selector switches allow operators to interact with simulated PLC inputs (%IX) in real time during simulation.", "Boutons-poussoirs (impulsionnels ou bistables) et commutateurs permettant à l'opérateur d'actionner les entrées automate (%IX) en direct."),
+            "Tag binding: Start_PB -> %IX0.0 (Momentary PushButton)"
+        ),
+        symbol_card(
+            "[LED / BLINK]",
+            lang.tr("Indicator LEDs & Alarm Beacons", "Voyants Lumineux & Balises d'Alarme"),
+            lang.tr("Configurable Blinking & Color States", "Clignotements & États Colorés Configurables"),
+            lang.tr("Visual indicator lamps with configurable active/inactive colors and automatic blinking periods (e.g. 500 ms flash on alarm trip).", "Voyants d'état avec couleurs personnalisables et cadence de clignotement paramétrable (ex. flash 500 ms sur déclenchement d'alarme)."),
+            "Tag binding: Alarm_Beacon -> %QX2.0 (Blink 500ms)"
         ),
     ]
     .spacing(12)
@@ -1789,8 +1962,50 @@ fn render_digital_twin<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message
 }
 
 // ---------------------------------------------------------------------------
-// 10. Shortcuts & Navigation
+// 11. Tools & Shortcuts
 // ---------------------------------------------------------------------------
+
+fn render_tools_plcopen_xml<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("PLCopen TC6 XML Export & Import", "Import & Export PLCopen TC6 XML"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+        paragraph(lang.tr(
+            "FerritePLC natively supports the international standard PLCopen TC6 XML schema (IEC 61131-10 / TC6 XML v2.01). This guarantees complete vendor-independent project interchange with major industrial automation platforms such as Codesys, TwinCAT, B&R Automation Studio, and Schneider Machine Expert.",
+            "FerritePLC implémente nativement le schéma d'échange international PLCopen TC6 XML (CEI 61131-10 / TC6 XML v2.01). Cela garantit une interopérabilité totale avec les suites logicielles majeures du marché (Codesys, TwinCAT, B&R, Schneider)."
+        )),
+        section_title(lang.tr("Supported PLCopen TC6 Features", "Fonctionnalités PLCopen TC6 Supportées")),
+        table_card(
+            &[lang.tr("Feature", "Fonctionnalité"), lang.tr("Direction", "Sens"), lang.tr("Interchange Description", "Description de l'Échange")],
+            &[
+                &[lang.tr("Project Header & Info", "En-tête & Métadonnées"), "Import / Export", lang.tr("Transfers project author, organization, creation timestamps, and tool version.", "Transfère l'auteur, l'organisation, l'horodatage et la version de l'outil.")],
+                &[lang.tr("Data Types & Variables", "Types & Variables Globales"), "Import / Export", lang.tr("Converts global tag tables (%I, %Q, %M) and strong IEC types into <globalVars> elements.", "Convertit les variables globales (%I, %Q, %M) et types CEI en balises <globalVars>.")],
+                &[lang.tr("Structured Text POUs", "POUs Structured Text"), "Import / Export", lang.tr("Exports and parses ST algorithmic bodies enclosed in standard <ST> XML containers.", "Exporte et analyse le code source ST encapsulé dans les balises XML <ST>.")],
+                &[lang.tr("Graphical POUs (LD, SFC, FBD)", "POUs Graphiques (LD, SFC, FBD)"), "Import / Export", lang.tr("Translates rungs, contacts, steps, transitions, and function block coordinates seamlessly.", "Convertit les rungs, contacts, étapes, transitions et blocs graphiques avec coordonnées.")],
+            ]
+        ),
+        code_snippet(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n\
+             <project xmlns=\"http://www.plcopen.org/xml/tc6_0201\">\n\
+             \x20 <fileHeader companyName=\"FerritePLC\" productName=\"FerriteStudio\" />\n\
+             \x20 <contentHeader name=\"PlantAutomation\">\n\
+             \x20   <coordinateInfo><fbd><scaling x=\"1\" y=\"1\"/></fbd></coordinateInfo>\n\
+             \x20 </contentHeader>\n\
+             \x20 <types><pous><pou name=\"MainLogic\" pouType=\"program\">...</pou></pous></types>\n\
+             </project>"
+        ),
+        callout_box(
+            lang.tr("Cross-Platform Migration", "Migration Inter-Plateformes"),
+            lang.tr(
+                "Use 'File -> Export PLCopen XML' to share programs with clients using third-party controllers, or 'File -> Import PLCopen XML' to instantly migrate legacy PLC programs into FerritePLC.",
+                "Utilisez 'Fichier -> Exporter PLCopen XML' pour partager vos programmes avec des automates tiers, ou 'Fichier -> Importer PLCopen XML' pour migrer instantanément vos applications vers FerritePLC."
+            ),
+            StudioTheme::ACCENT_CYAN,
+        ),
+    ]
+    .spacing(12)
+    .into()
+}
 
 fn render_canvas_shortcuts<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
     column![
@@ -1827,56 +2042,6 @@ fn render_canvas_shortcuts<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Mes
                 &["F10", lang.tr("Single Step", "Pas Unique"), lang.tr("Executes exactly ONE scan cycle tick.", "Exécute exactement UN cycle de scan de l'automate.")],
             ]
         ),
-    ]
-    .spacing(12)
-    .into()
-}
-
-fn render_fbd_logic_math<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
-    column![
-        text(lang.tr("FBD Logic, Comparison & Math Blocks", "Blocs Logiques, Comparaisons & Calculs FBD"))
-            .size(18)
-            .color(StudioTheme::TEXT_PRIMARY),
-    ]
-    .spacing(12)
-    .into()
-}
-
-fn render_fbd_custom_composite<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
-    column![
-        text(lang.tr("Custom & Composite User Function Blocks", "Blocs Fonctionnels Utilisateur & Composites"))
-            .size(18)
-            .color(StudioTheme::TEXT_PRIMARY),
-    ]
-    .spacing(12)
-    .into()
-}
-
-fn render_sim_trend_plotter<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
-    column![
-        text(lang.tr("Real-Time Trend Plotter & Oscilloscope", "Traceur de Tendances Temps Réel & Oscilloscope"))
-            .size(18)
-            .color(StudioTheme::TEXT_PRIMARY),
-    ]
-    .spacing(12)
-    .into()
-}
-
-fn render_fieldbus_modbus_rtu<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
-    column![
-        text(lang.tr("Modbus RTU Serial (RS-485 / RS-232)", "Modbus RTU Série (RS-485 / RS-232)"))
-            .size(18)
-            .color(StudioTheme::TEXT_PRIMARY),
-    ]
-    .spacing(12)
-    .into()
-}
-
-fn render_tools_plcopen_xml<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
-    column![
-        text(lang.tr("PLCopen TC6 XML Export & Import", "Import & Export PLCopen TC6 XML"))
-            .size(18)
-            .color(StudioTheme::TEXT_PRIMARY),
     ]
     .spacing(12)
     .into()
