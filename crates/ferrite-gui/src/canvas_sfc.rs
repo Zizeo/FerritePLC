@@ -2531,19 +2531,19 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 });
             }
 
-            // Active dot & timer
-            if active {
-                let id_w = (display_id.len() as f32) * 8.5 + 4.0;
-                let active_x = k_rect.x + k_rect.width + 6.0 + id_w + 6.0;
-                let timer_text = format!("T#{}ms", elapsed_ms);
-                let timer_w = 12.0 + (timer_text.len() as f32) * 6.5;
-                let active_rect = Rectangle {
-                    x: active_x,
-                    y: y + 7.0,
-                    width: timer_w + 4.0,
-                    height: 16.0,
-                };
-                if !is_occluded(active_rect) && active_x + timer_w < add_rect.x - 24.0 {
+            // Step Timer: bright green when active, dimmed when inactive
+            let id_w = (display_id.len() as f32) * 8.5 + 4.0;
+            let active_x = k_rect.x + k_rect.width + 6.0 + id_w + 6.0;
+            let timer_text = format!("T#{}ms", elapsed_ms);
+            let timer_w = 12.0 + (timer_text.len() as f32) * 6.5;
+            let timer_rect = Rectangle {
+                x: active_x,
+                y: y + 7.0,
+                width: timer_w + 4.0,
+                height: 16.0,
+            };
+            if !is_occluded(timer_rect) && active_x + timer_w < add_rect.x - 24.0 {
+                if active {
                     frame.fill_text(canvas::Text {
                         content: "●".to_string(),
                         position: Point::new(active_x, y + 7.0),
@@ -2556,6 +2556,15 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                         position: Point::new(active_x + 13.0, y + 8.0),
                         color: COLOR_ACTIVE_STEP,
                         size: iced::Pixels(10.0),
+                        font: iced::Font::MONOSPACE,
+                        ..Default::default()
+                    });
+                } else {
+                    frame.fill_text(canvas::Text {
+                        content: timer_text,
+                        position: Point::new(active_x, y + 8.0),
+                        color: Color::from_rgba(0.55, 0.65, 0.75, 0.4),
+                        size: iced::Pixels(9.5),
                         font: iced::Font::MONOSPACE,
                         ..Default::default()
                     });
