@@ -36,8 +36,8 @@ pub const COLOR_ACTION_BG: Color = Color::from_rgb(30.0 / 255.0, 38.0 / 255.0, 5
 pub const COLOR_INPUT_BG: Color = Color::from_rgb(14.0 / 255.0, 20.0 / 255.0, 29.0 / 255.0); // #0E141D
 
 pub const GRID_SIZE: f32 = 20.0;
-pub const STEP_WIDTH: f32 = 180.0;
-pub const STEP_HEIGHT: f32 = 60.0;
+pub const STEP_WIDTH: f32 = 210.0;
+pub const STEP_HEIGHT: f32 = 64.0;
 pub const TRANS_WIDTH: f32 = 80.0;
 pub const TRANS_HEIGHT: f32 = 20.0;
 pub const PORT_RADIUS: f32 = 4.5;
@@ -47,8 +47,8 @@ pub const PORT_DROP_RADIUS: f32 = 28.0;
 
 // Legacy constants kept for layout compatibility and unit tests
 pub const COLUMN_STRIDE: f32 = 560.0;
-pub const STEP_BOX_WIDTH: f32 = 188.0;
-pub const STEP_BOX_HEIGHT: f32 = 68.0;
+pub const STEP_BOX_WIDTH: f32 = 218.0;
+pub const STEP_BOX_HEIGHT: f32 = 72.0;
 pub const TRANSITION_CARD_WIDTH: f32 = 320.0;
 
 pub fn step_center_x(col_idx: usize, cols: usize, base_spine_x: f32, col_stride: f32) -> f32 {
@@ -503,7 +503,7 @@ impl<'a> SfcCanvasProgram<'a> {
 
     pub fn step_width(&self, step: &SfcStep) -> f32 {
         let name_len = step.name.len().max(6);
-        (name_len as f32 * 8.2 + 60.0).clamp(180.0, 320.0)
+        (name_len as f32 * 7.5 + 80.0).clamp(200.0, 320.0)
     }
 
     pub fn step_name_rect(&self, step: &SfcStep, state: &SfcCanvasState) -> Rectangle {
@@ -511,7 +511,7 @@ impl<'a> SfcCanvasProgram<'a> {
         let w = self.step_width(step);
         Rectangle {
             x: x + 8.0,
-            y: y + 30.0,
+            y: y + 32.0,
             width: w - 16.0,
             height: 24.0,
         }
@@ -521,7 +521,7 @@ impl<'a> SfcCanvasProgram<'a> {
         let (x, y) = self.step_pos(step, state);
         Rectangle {
             x: x + 8.0,
-            y: y + 6.0,
+            y: y + 7.0,
             width: 44.0,
             height: 18.0,
         }
@@ -532,7 +532,7 @@ impl<'a> SfcCanvasProgram<'a> {
         let w = self.step_width(step);
         Rectangle {
             x: x + w - 48.0,
-            y: y + 6.0,
+            y: y + 7.0,
             width: 40.0,
             height: 18.0,
         }
@@ -2506,34 +2506,6 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 });
             }
 
-            // Active dot & timer
-            if active {
-                let active_x = k_rect.x + k_rect.width + 42.0;
-                let active_rect = Rectangle {
-                    x: active_x,
-                    y: y + 7.0,
-                    width: 70.0,
-                    height: 16.0,
-                };
-                if !is_occluded(active_rect) {
-                    frame.fill_text(canvas::Text {
-                        content: "●".to_string(),
-                        position: Point::new(active_x, y + 7.0),
-                        color: COLOR_ACTIVE_STEP,
-                        size: iced::Pixels(11.0),
-                        ..Default::default()
-                    });
-                    frame.fill_text(canvas::Text {
-                        content: format!("T#{}ms", elapsed_ms),
-                        position: Point::new(active_x + 14.0, y + 8.0),
-                        color: COLOR_ACTIVE_STEP,
-                        size: iced::Pixels(10.0),
-                        font: iced::Font::MONOSPACE,
-                        ..Default::default()
-                    });
-                }
-            }
-
             // On-canvas [+ Act] button on top right of step header
             let add_rect = self.step_add_action_rect(step, state);
             if !is_occluded(add_rect) {
@@ -2557,6 +2529,37 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                     font: iced::Font::MONOSPACE,
                     ..Default::default()
                 });
+            }
+
+            // Active dot & timer
+            if active {
+                let id_w = (display_id.len() as f32) * 8.5 + 4.0;
+                let active_x = k_rect.x + k_rect.width + 6.0 + id_w + 6.0;
+                let timer_text = format!("T#{}ms", elapsed_ms);
+                let timer_w = 12.0 + (timer_text.len() as f32) * 6.5;
+                let active_rect = Rectangle {
+                    x: active_x,
+                    y: y + 7.0,
+                    width: timer_w + 4.0,
+                    height: 16.0,
+                };
+                if !is_occluded(active_rect) && active_x + timer_w < add_rect.x - 24.0 {
+                    frame.fill_text(canvas::Text {
+                        content: "●".to_string(),
+                        position: Point::new(active_x, y + 7.0),
+                        color: COLOR_ACTIVE_STEP,
+                        size: iced::Pixels(11.0),
+                        ..Default::default()
+                    });
+                    frame.fill_text(canvas::Text {
+                        content: timer_text,
+                        position: Point::new(active_x + 13.0, y + 8.0),
+                        color: COLOR_ACTIVE_STEP,
+                        size: iced::Pixels(10.0),
+                        font: iced::Font::MONOSPACE,
+                        ..Default::default()
+                    });
+                }
             }
 
             // Tree badge or error badge
