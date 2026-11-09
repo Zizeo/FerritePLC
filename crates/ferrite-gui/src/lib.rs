@@ -599,6 +599,7 @@ mod tests {
                 app.ui_lang,
                 None,
                 &[],
+                None,
             );
         }
 
@@ -812,8 +813,31 @@ mod tests {
         // 5. Verify render_sfc_editor renders without panic with both trees
         if let Some(PouSource::Sfc(s)) = app.project.pous.get("parallel_sfc") {
             let _elem =
-                canvas_sfc::render_sfc_editor(s, app.runtime.as_ref(), app.ui_lang, None, &[]);
+                canvas_sfc::render_sfc_editor(s, app.runtime.as_ref(), app.ui_lang, None, &[], None);
         }
+
+        // 6. Test StepKind::Macro toggle and drill-down navigation
+        let _ = app.update(Message::SfcStepKindChanged(
+            "parallel_sfc".to_string(),
+            1,
+            StepKind::Macro,
+        ));
+        if let Some(PouSource::Sfc(s)) = app.project.pous.get("parallel_sfc") {
+            assert_eq!(s.steps[1].kind, StepKind::Macro);
+            assert!(s.steps[1].macro_sfc.is_some());
+        }
+
+        let _ = app.update(Message::SfcEnterMacro("parallel_sfc".to_string(), "1".to_string()));
+        assert_eq!(
+            app.sfc_drill_down_path.get("parallel_sfc"),
+            Some(&vec!["1".to_string()])
+        );
+
+        let _ = app.update(Message::SfcExitMacro("parallel_sfc".to_string()));
+        assert_eq!(
+            app.sfc_drill_down_path.get("parallel_sfc"),
+            Some(&vec![])
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

@@ -517,6 +517,16 @@ impl<'a> SfcCanvasProgram<'a> {
         }
     }
 
+    pub fn step_kind_badge_rect(&self, step: &SfcStep, state: &SfcCanvasState) -> Rectangle {
+        let (x, y) = self.step_pos(step, state);
+        Rectangle {
+            x: x + 6.0,
+            y: y + 5.0,
+            width: 38.0,
+            height: 18.0,
+        }
+    }
+
     pub fn step_add_action_rect(&self, step: &SfcStep, state: &SfcCanvasState) -> Rectangle {
         let (x, y) = self.step_pos(step, state);
         let w = self.step_width(step);
@@ -961,6 +971,37 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                             };
                             return (event::Status::Captured, None);
                         }
+                    }
+                }
+
+                // 1.5. Check if clicking on Step Kind badge to cycle: Normal -> Initial -> Macro -> Normal
+                for step in self.program.steps.iter().rev() {
+                    let k_rect = self.step_kind_badge_rect(step, state);
+                    if cursor_pos.x >= k_rect.x
+                        && cursor_pos.x <= k_rect.x + k_rect.width
+                        && cursor_pos.y >= k_rect.y
+                        && cursor_pos.y <= k_rect.y + k_rect.height
+                    {
+                        let _ = self.commit_current_edit(state);
+                        let s_idx = self
+                            .program
+                            .steps
+                            .iter()
+                            .position(|s| s.id == step.id)
+                            .unwrap_or(0);
+                        let next_kind = match step.kind {
+                            StepKind::Normal => StepKind::Initial,
+                            StepKind::Initial => StepKind::Macro,
+                            StepKind::Macro => StepKind::Normal,
+                        };
+                        return (
+                            event::Status::Captured,
+                            Some(Message::SfcStepKindChanged(
+                                self.pou_name.to_string(),
+                                s_idx,
+                                next_kind,
+                            )),
+                        );
                     }
                 }
 
@@ -3376,13 +3417,22 @@ fn render_step_inspector<'a>(
         .padding([4, 8]);
 
     let del_btn = button(text("Delete").size(11))
-        .on_press(Message::SfcRemoveStep(p_name, s_idx))
+        .on_press(Message::SfcRemoveStep(p_name.clone(), s_idx))
         .style(StudioTheme::danger_button)
         .padding([4, 8]);
 
     let mut step_row = row![id_label, name_input, kind_picker, add_act_btn]
         .spacing(8)
         .align_y(Alignment::Center);
+
+    if step.kind == StepKind::Macro {
+        let open_macro_btn = button(text("Open Macro SFC [->]").size(11))
+            .on_press(Message::SfcEnterMacro(p_name, step.id.clone()))
+            .style(StudioTheme::primary_button)
+            .padding([4, 8]);
+
+        step_row = step_row.push(open_macro_btn);
+    }
 
     for (a_idx, act) in step.actions.iter().enumerate() {
         let p = pou_name.to_string();
@@ -3541,12 +3591,13 @@ pub fn render_sfc_editor<'a>(
     _lang: UiLanguage,
     selected: Option<&'a SfcElementKey>,
     selected_elements: &'a [SfcElementKey],
+    breadcrumb: Option<(String, Vec<String>)>,
 ) -> Element<'a, Message> {
     let pou_name = &program.name;
 
     // Validate topology to find independent trees and error count
     let validation_report = validate_sfc_topology(program);
-    let tree_count = validation_report.trees.len();
+    let _tree_count = validation_report.trees.len();
     let _error_count = validation_report.errors.len();
 
     // Toolbar buttons: always visible at the top, scrollable horizontally so never squished
@@ -3590,19 +3641,6 @@ pub fn render_sfc_editor<'a>(
         .style(StudioTheme::primary_button)
         .padding([4, 8]);
 
-    let tree_badge = container(
-        text(format!(
-            "{tree_count} Parallel Tree{}",
-            if tree_count == 1 { "" } else { "s" }
-        ))
-        .size(11)
-        .color(COLOR_ACTIVE_STEP),
-    )
-    .padding([3, 8])
-    .style(StudioTheme::subtle_badge_style(Color::from_rgba(
-        0.18, 0.835, 0.45, 0.15,
-    )));
-
     let status_badge: Option<Element<'a, Message>> = if !validation_report.is_valid {
         Some(
             container(
@@ -3637,7 +3675,6 @@ pub fn render_sfc_editor<'a>(
         add_or_conv_btn,
         auto_layout_btn,
         validate_btn,
-        tree_badge,
     ]
     .spacing(6)
     .align_y(Alignment::Center);
@@ -3662,11 +3699,41 @@ pub fn render_sfc_editor<'a>(
     ))
     .width(Length::Fill);
 
+    let breadcrumb_bar: Option<Element<'a, Message>> = breadcrumb.and_then(|(root_pou, path)| {
+        if path.is_empty() {
+            return None;
+        }
+        let back_btn = button(text("<- Back to Main SFC").size(11.5))
+            .on_press(Message::SfcExitMacro(root_pou.clone()))
+            .style(StudioTheme::primary_button)
+            .padding([3, 8]);
+
+        let path_str = path.join(" / ");
+        let crumb_label = text(format!("Macro Sub-SFC: {root_pou} > {path_str}"))
+            .size(11.5)
+            .font(iced::Font::MONOSPACE)
+            .color(StudioTheme::ACCENT_CYAN);
+
+        Some(
+            container(
+                row![back_btn, crumb_label]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .padding([4, 8])
+            .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+                0.15, 0.45, 0.85, 0.18,
+            )))
+            .into(),
+        )
+    });
+
     let tip = text("Tip: Direct in-place editing on canvas (click names/actions/transitions to edit). Double-click or click [+ Act] on steps. Drag wires (● to ●). Right-click any port to disconnect.")
         .size(10.5)
         .color(StudioTheme::TEXT_MUTED);
 
-    let top_bar = column![
+    let mut top_bar_col = column![
         container(scrollable_toolbar)
             .width(Length::Fill)
             .padding([4, 8])
@@ -3676,6 +3743,12 @@ pub fn render_sfc_editor<'a>(
         tip,
     ]
     .spacing(4);
+
+    if let Some(bc) = breadcrumb_bar {
+        top_bar_col = top_bar_col.push(bc);
+    }
+
+    let top_bar = top_bar_col;
 
     // Bottom Bar: Multi-selection bulk actions pop at the bottom when multiple elements are selected
     let bottom_bar: Option<Element<'a, Message>> = if selected_elements.len() > 1 {
@@ -3803,11 +3876,54 @@ pub fn render_sfc_editor<'a>(
         .width(Length::Fill)
         .height(Length::Fill);
 
+    // Single element selected inspector bar: display step or transition editor
+    let single_inspector: Option<Element<'a, Message>> = if selected_elements.len() <= 1 {
+        if let Some(SfcElementKey::Step(sid)) = selected {
+            render_step_inspector(pou_name, program, sid, _lang)
+        } else if let Some(SfcElementKey::Transition(tid)) = selected {
+            render_transition_inspector(pou_name, program, tid, _lang)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let inspector_bar: Option<Element<'a, Message>> = single_inspector.map(|content| {
+        let scrollable_insp = scrollable(
+            container(content).padding(Padding {
+                top: 2.0,
+                right: 4.0,
+                bottom: 8.0,
+                left: 2.0,
+            }),
+        )
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new()
+                .width(4)
+                .scroller_width(4)
+                .margin(1),
+        ))
+        .width(Length::Fill);
+
+        container(scrollable_insp)
+            .width(Length::Fill)
+            .padding([4, 8])
+            .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+                0.2, 0.4, 0.6, 0.15,
+            )))
+            .into()
+    });
+
     let mut main_col = column![top_bar, scrollable_canvas]
         .spacing(8)
         .padding(8)
         .width(Length::Fill)
         .height(Length::Fill);
+
+    if let Some(insp) = inspector_bar {
+        main_col = main_col.push(insp);
+    }
 
     if let Some(bot) = bottom_bar {
         main_col = main_col.push(bot);
@@ -3927,7 +4043,7 @@ mod tests {
         };
 
         // Render editor without panic
-        let _elem = render_sfc_editor(&program, None, UiLanguage::En, None, &[]);
+        let _elem = render_sfc_editor(&program, None, UiLanguage::En, None, &[], None);
     }
 
     #[test]
@@ -4222,7 +4338,7 @@ mod tests {
 
         program.assign_default_grid_positions();
         // Render canvas elements without panic
-        let _elem = render_sfc_editor(&program, None, UiLanguage::En, None, &[]);
+        let _elem = render_sfc_editor(&program, None, UiLanguage::En, None, &[], None);
     }
 
     #[test]
@@ -4467,7 +4583,7 @@ mod tests {
         };
 
         // Render editor without panic or errors
-        let _elem = render_sfc_editor(&valid_or_conv, None, UiLanguage::En, None, &[]);
+        let _elem = render_sfc_editor(&valid_or_conv, None, UiLanguage::En, None, &[], None);
         let report = validate_sfc_topology(&valid_or_conv);
         assert!(report.is_valid, "Valid IEC 60848 OR convergence with multiple branch transitions is valid");
 
@@ -4883,14 +4999,14 @@ mod tests {
         // 3. Verify render_sfc_editor renders full view with Step inspector (horizontal scrollable with bottom padding)
         let sel_step_key = SfcElementKey::Step("10".to_string());
         let _elem_step =
-            render_sfc_editor(&program, None, UiLanguage::En, Some(&sel_step_key), &[]);
+            render_sfc_editor(&program, None, UiLanguage::En, Some(&sel_step_key), &[], None);
 
         let multi_sel = [SfcElementKey::Step("10".to_string()), SfcElementKey::Transition("1".to_string())];
-        let _elem_multi = render_sfc_editor(&program, None, UiLanguage::En, None, &multi_sel);
+        let _elem_multi = render_sfc_editor(&program, None, UiLanguage::En, None, &multi_sel, None);
         // 4. Verify render_sfc_editor renders full view with Transition inspector
         let sel_trans_key = SfcElementKey::Transition("1".to_string());
         let _elem_trans =
-            render_sfc_editor(&program, None, UiLanguage::En, Some(&sel_trans_key), &[]);
+            render_sfc_editor(&program, None, UiLanguage::En, Some(&sel_trans_key), &[], None);
     }
 
     #[test]

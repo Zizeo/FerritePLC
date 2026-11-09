@@ -348,6 +348,8 @@ pub enum Message {
     SfcRemoveStep(String, usize),
     SfcStepNameChanged(String, usize, String),
     SfcStepKindChanged(String, usize, StepKind),
+    SfcEnterMacro(String, String),
+    SfcExitMacro(String),
     SfcAddAction(String, usize),
     SfcRemoveAction(String, usize, usize),
     SfcActionQualifierChanged(String, usize, usize, ActionQualifier),
@@ -540,6 +542,7 @@ pub struct FerriteStudioApp {
     pub confirm_clear_modal: Option<String>,
     pub sfc_selected: Option<(String, crate::canvas_sfc::SfcElementKey)>,
     pub sfc_selected_elements: Vec<crate::canvas_sfc::SfcElementKey>,
+    pub sfc_drill_down_path: HashMap<String, Vec<String>>,
     pub sfc_delete_modal: Option<(String, Vec<crate::canvas_sfc::SfcElementKey>)>,
     pub ld_selected: Option<(String, LdElementKey)>,
     pub ld_selected_elements: Vec<LdElementKey>,
@@ -777,6 +780,7 @@ impl FerriteStudioApp {
             confirm_clear_modal: None,
             sfc_selected: None,
             sfc_selected_elements: Vec::new(),
+            sfc_drill_down_path: HashMap::new(),
             sfc_delete_modal: None,
             ld_selected: None,
             ld_selected_elements: Vec::new(),
@@ -4161,9 +4165,58 @@ impl FerriteStudioApp {
                     && let Some(step) = sfc.steps.get_mut(s_idx)
                 {
                     step.kind = kind;
+                    if kind == StepKind::Macro && step.macro_sfc.is_none() {
+                        step.macro_sfc = Some(Box::new(ferrite_lang_sfc::SfcProgram {
+                            name: format!("{}_{}", pou_name, step.id),
+                            comment: format!("Macro step {} sub-sequence", step.id),
+                            steps: vec![
+                                SfcStep {
+                                    id: "SM_IN".to_string(),
+                                    name: "SM_IN".to_string(),
+                                    kind: StepKind::Initial,
+                                    actions: Vec::new(),
+                                    grid_pos: Some((60, 40)),
+                                    ..Default::default()
+                                },
+                                SfcStep {
+                                    id: "SM_OUT".to_string(),
+                                    name: "SM_OUT".to_string(),
+                                    kind: StepKind::Normal,
+                                    actions: Vec::new(),
+                                    grid_pos: Some((60, 200)),
+                                    ..Default::default()
+                                },
+                            ],
+                            transitions: vec![SfcTransition {
+                                id: "T_M1".to_string(),
+                                from_steps: vec!["SM_IN".to_string()],
+                                to_steps: vec!["SM_OUT".to_string()],
+                                receptivity: "TRUE".to_string(),
+                                grid_pos: Some((110, 120)),
+                                ..Default::default()
+                            }],
+                        }));
+                    }
                     self.track_history();
                     self.modified = true;
                 }
+                Task::none()
+            }
+            Message::SfcEnterMacro(pou_name, step_id) => {
+                self.sfc_drill_down_path
+                    .entry(pou_name.clone())
+                    .or_default()
+                    .push(step_id);
+                self.sfc_selected = None;
+                self.sfc_selected_elements.clear();
+                Task::none()
+            }
+            Message::SfcExitMacro(pou_name) => {
+                if let Some(stack) = self.sfc_drill_down_path.get_mut(&pou_name) {
+                    stack.pop();
+                }
+                self.sfc_selected = None;
+                self.sfc_selected_elements.clear();
                 Task::none()
             }
             Message::SfcAddAction(pou_name, s_idx) => {
@@ -7962,16 +8015,36 @@ impl FerriteStudioApp {
                             )
                         }
                         PouSource::Sfc(sfc) => {
+                            let drill_stack = self.sfc_drill_down_path.get(name);
+                            let (active_sfc, breadcrumb_info) = if let Some(stack) = drill_stack
+                                && !stack.is_empty()
+                            {
+                                let mut curr = sfc;
+                                let mut valid_crumb = Vec::new();
+                                for step_id in stack {
+                                    if let Some(s) = curr.steps.iter().find(|s| &s.id == step_id)
+                                        && let Some(ref sub) = s.macro_sfc
+                                    {
+                                        curr = sub;
+                                        valid_crumb.push(step_id.clone());
+                                    }
+                                }
+                                (curr, Some((name.clone(), valid_crumb)))
+                            } else {
+                                (sfc, None)
+                            };
+
                             let sel = self
                                 .sfc_selected
                                 .as_ref()
                                 .and_then(|(p, k)| if p == name { Some(k) } else { None });
                             render_sfc_editor(
-                                sfc,
+                                active_sfc,
                                 self.runtime.as_ref(),
                                 self.ui_lang,
                                 sel,
                                 &self.sfc_selected_elements,
+                                breadcrumb_info,
                             )
                         }
                         PouSource::St(_) => {
