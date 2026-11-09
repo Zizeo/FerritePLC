@@ -825,6 +825,69 @@ fn render_arch_project_files<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, M
     .into()
 }
 
+fn render_arch_inter_lang<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("Inter-Language Communication & Process Image", "Communication Inter-Langages & Image Processus"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+        paragraph(lang.tr(
+            "FerritePLC enforces a unified, cross-language execution model allowing all four IEC 61131-3 languages (LD, SFC, ST, FBD) to interact seamlessly through a Shared Process Image (MemoryMap) and Unified Tag Table.",
+            "FerritePLC applique un modèle d'exécution unifié et inter-langages permettant aux 4 langages CEI 61131-3 (LD, SFC, ST, FBD) d'interagir harmonieusement via une Image Mémoire Processus Partagée et une Table des Variables Unifiée."
+        )),
+        section_title(lang.tr("The Shared Memory Model", "Le Modèle Mémoire Partagé")),
+        table_card(
+            &[lang.tr("Memory Segment", "Segment Mémoire"), lang.tr("Prefix", "Préfixe"), lang.tr("Inter-Language Role", "Rôle Inter-Langages")],
+            &[
+                &[lang.tr("Discrete & Analog Inputs", "Entrées Tores & Analogiques"), "%I", lang.tr("Latched at scan cycle start; readable by LD contacts, SFC receptivities, ST scripts, and FBD pins.", "Verrouillées en début de cycle ; lisibles par contacts LD, réceptivités SFC, scripts ST et broches FBD.")],
+                &[lang.tr("Actuator Outputs", "Sorties Actionneurs"), "%Q", lang.tr("Written by LD coils, ST assignments, SFC actions, or FBD blocks; committed at cycle end.", "Écrites par bobines LD, affectations ST, actions SFC ou blocs FBD ; émises en fin de cycle.")],
+                &[lang.tr("Internal Markers & Flags", "Mémentos & Drapeaux Internes"), "%M", lang.tr("Shared read/write scratchpad memory accessible across all POUs in the scan loop.", "Zone mémoire de travail partagée en lecture/écriture accessible à toutes les POUs.")],
+                &[lang.tr("SFC Introspection Symbols", "Symboles d'Introspection SFC"), "X<i>.state / X<i>.t", lang.tr("Automatically published step activity and elapsed timers for cross-POU coordination.", "Activité d'étape et chronomètres automatiquement publiés pour coordonner les POUs.")],
+            ]
+        ),
+        section_title(lang.tr("Cross-Language Execution Examples", "Exemples de Liaisons Inter-Langages")),
+        symbol_card(
+            "LD -> SFC",
+            lang.tr("Ladder Permissive Interlock -> Grafcet Transition", "Interverrouillage Ladder -> Transition Grafcet"),
+            lang.tr("Safety Interlock Coordination", "Coordination de Sécurité"),
+            lang.tr(
+                "A Ladder rung checks safety light curtains and emergency stop buttons, energizing a shared boolean 'Safety_Permissive_OK' coil (%M). An SFC transition receptivity binds directly to 'Safety_Permissive_OK AND Sensor_Ready'.",
+                "Un rung Ladder vérifie les barrières immatérielles et arrêts d'urgence, activant une bobine 'Safety_Permissive_OK' (%M). Une réceptivité Grafcet se lie directement à 'Safety_Permissive_OK AND Sensor_Ready'."
+            ),
+            "LD: --[ Estop_OK ]--[ Door_Closed ]--( Safety_Permissive_OK )--  ===>  SFC Transition: [ Safety_Permissive_OK ]"
+        ),
+        symbol_card(
+            "SFC -> ST / FBD",
+            lang.tr("Active Step Action -> ST Script or FBD Block", "Action d'Étape -> Script ST ou Bloc FBD"),
+            lang.tr("Sequence-Triggered Computation", "Calcul Déclenché par la Séquence"),
+            lang.tr(
+                "When Step 5 ('Heat_Tank') becomes active, an 'N' action triggers an ST temperature control routine or activates the 'IN' pin of an FBD timer block.",
+                "Lorsque l'Étape 5 ('Heat_Tank') s'active, une action 'N' déclenche un script ST de régulation ou active l'entrée 'IN' d'un temporisateur FBD."
+            ),
+            "Step 5 [N: Target_Temp := 85.0; Heater_On := TRUE;]"
+        ),
+        symbol_card(
+            "FBD -> LD",
+            lang.tr("FBD Calculation -> Ladder Permissive Contact", "Calcul FBD -> Contact Permissif Ladder"),
+            lang.tr("Closed-Loop Feedback into Interlocks", "Retour de Boucle dans les Interverrouillages"),
+            lang.tr(
+                "An FBD PID block computes an error status or threshold alarm 'High_Pressure_Trip'. A Ladder rung uses an NC contact --[/ High_Pressure_Trip ]-- to drop the pump contactor instantly.",
+                "Un bloc PID FBD calcule un seuil d'alarme 'High_Pressure_Trip'. Un rung Ladder utilise un contact NF --[/ High_Pressure_Trip ]-- pour couper immédiatement la pompe."
+            ),
+            "FBD: High_Pressure_Trip (BOOL)  ===>  LD: --[/ High_Pressure_Trip ]--( Pump_Contactor )--"
+        ),
+        callout_box(
+            lang.tr("ExecutablePou Contract", "Contrat d'Exécution ExecutablePou"),
+            lang.tr(
+                "Every compiled POU—regardless of source language (.ld, .sfc, .st, .fbd)—implements the Rust `ExecutablePou` trait and evaluates within the atomic `ScanContext`.",
+                "Chaque POU compilée—quel que soit son langage (.ld, .sfc, .st, .fbd)—implémente le trait Rust `ExecutablePou` et s'évalue dans le `ScanContext` atomique."
+            ),
+            StudioTheme::ACCENT_CYAN,
+        ),
+    ]
+    .spacing(12)
+    .into()
+}
+
 // ---------------------------------------------------------------------------
 // 2. Ladder Diagram
 // ---------------------------------------------------------------------------
@@ -941,6 +1004,111 @@ fn render_ld_branches<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message>
                 "Lorsque tous les éléments d'une branche parallèle sont supprimés, FerritePLC nettoie automatiquement le chemin vide et referme le rung proprement."
             ),
             StudioTheme::ACCENT_INDIGO,
+        ),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn render_ld_compare_math<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("Comparison & Math/Move Rung Blocks", "Blocs de Comparaison & Calcul Math/Move sur Rung"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+        paragraph(lang.tr(
+            "FerritePLC rungs support inline numerical comparison and arithmetic execution. These blocks sit inline within the rung and condition or execute logic during power flow.",
+            "Les rungs FerritePLC supportent les blocs de comparaison numérique et d'arithmétique en ligne. Ces blocs s'insèrent dans le flux d'énergie pour tester ou transformer des valeurs."
+        )),
+        section_title(lang.tr("Comparison Blocks (LdCompareOp)", "Blocs de Comparaison (LdCompareOp)")),
+        paragraph(lang.tr(
+            "A comparison block acts like a conditional contact: it passes power flow only when the relational condition between Left and Right operands evaluates to TRUE.",
+            "Un bloc de comparaison agit comme un contact conditionnel : il transmet le flux d'énergie uniquement lorsque la relation entre l'opérande gauche et droit est VRAIE."
+        )),
+        table_card(
+            &[lang.tr("Operator", "Opérateur"), lang.tr("Symbol", "Symbole"), lang.tr("Condition For Power Flow", "Condition de Continuité")],
+            &[
+                &["EQ", "==", lang.tr("Passes when Left is equal to Right", "Passe lorsque Gauche est égal à Droite")],
+                &["NE", "<>", lang.tr("Passes when Left is not equal to Right", "Passe lorsque Gauche est différent de Droite")],
+                &["GT", ">", lang.tr("Passes when Left is strictly greater than Right", "Passe lorsque Gauche est strictement supérieur à Droite")],
+                &["GE", ">=", lang.tr("Passes when Left is greater than or equal to Right", "Passe lorsque Gauche est supérieur ou égal à Droite")],
+                &["LT", "<", lang.tr("Passes when Left is strictly less than Right", "Passe lorsque Gauche est strictement inférieur à Droite")],
+                &["LE", "<=", lang.tr("Passes when Left is less than or equal to Right", "Passe lorsque Gauche est inférieur ou égal à Droite")],
+            ]
+        ),
+        code_snippet(
+            "+-- Left Rail                                                      Right Rail --+\n\
+             |                                                                                |\n\
+             |   +--[ Start_PB ]--+---[ CMP: Tank_Level > 75.0 ]---------------+---( Fill_Stop )--+\n\
+             |                                                                                |\n\
+             +--------------------------------------------------------------------------------+"
+        ),
+        section_title(lang.tr("Math & Move Operations (LdMathOp)", "Opérations Arithmétiques & Déplacement (LdMathOp)")),
+        paragraph(lang.tr(
+            "Math and Move blocks execute numerical calculations when power flow reaches them, storing the result in a destination variable and propagating power to downstream elements.",
+            "Les blocs Math et Move effectuent des calculs dès qu'ils sont alimentés, écrivent le résultat dans la variable de destination et propagent l'énergie vers l'aval."
+        )),
+        symbol_card(
+            "[MOVE]",
+            lang.tr("Data Move / Transfer", "Transfert de Données (MOVE)"),
+            "In1 -> Dest",
+            lang.tr("Transfers literal value or variable In1 directly into variable Dest when energized.", "Transfère la valeur ou variable In1 directement dans Dest lors de l'activation."),
+            "MOVE: Preset_Value (100) -> Target_Speed"
+        ),
+        symbol_card(
+            "[ADD / SUB]",
+            lang.tr("Addition & Subtraction", "Addition & Soustraction"),
+            "In1 (+ / -) In2 -> Dest",
+            lang.tr("Computes the sum or difference of In1 and In2, storing into Dest.", "Calcule la somme ou la différence entre In1 et In2, et écrit le résultat dans Dest."),
+            "ADD: Part_Count + 1 -> Part_Count"
+        ),
+        symbol_card(
+            "[MUL / DIV]",
+            lang.tr("Multiplication & Division", "Multiplication & Division"),
+            "In1 (* / /) In2 -> Dest",
+            lang.tr("Multiplies or divides In1 by In2 (with zero-division protection) into Dest.", "Multiplie ou divise In1 par In2 (avec protection contre la division par zéro) vers Dest."),
+            "DIV: Raw_Analog / 10.0 -> Scaled_Pressure"
+        ),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn render_ld_inline_fb<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("Inline Function Blocks in Ladder Rungs", "Blocs Fonctionnels Intégrés en Rung Ladder"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+        paragraph(lang.tr(
+            "FerritePLC allows instantiating IEC 61131-3 Function Blocks (such as TON on-delay timers, CTU counters, or edge triggers) directly within Ladder rungs.",
+            "FerritePLC permet d'insérer des blocs fonctionnels CEI 61131-3 (tels que les temporisateurs TON, compteurs CTU ou déclencheurs de front) directement au cœur des rungs Ladder."
+        )),
+        section_title(lang.tr("Inline Block Architecture (EN / ENO)", "Architecture des Blocs Intégrés (EN / ENO)")),
+        code_snippet(
+            "+-- Left Rail                                                              Right Rail --+\n\
+             |                                                                                         |\n\
+             |   +--[ Sensor_Trip ]---+---------[ TON: Timer_1 ]---------+------------( Valve_Open )---+ \n\
+             |                        |  EN                    ENO  |    |                             |\n\
+             |                        |  IN: Sensor_Trip      Q: --+----+                             |\n\
+             |                        |  PT: T#3s            ET: Elapsed                               |\n\
+             |                        +-----------------------------+                                  |\n\
+             +-----------------------------------------------------------------------------------------+"
+        ),
+        table_card(
+            &[lang.tr("Pin / Concept", "Broche / Concept"), lang.tr("Direction", "Direction"), lang.tr("Role in Ladder Rung", "Rôle dans le Rung")],
+            &[
+                &["EN (Enable In)", lang.tr("Power Input", "Entrée Énergie"), lang.tr("Controls execution of the block instance. Receives power from upstream contacts.", "Pilote l'exécution du bloc. Reçoit l'énergie des contacts amont.")],
+                &["ENO (Enable Out)", lang.tr("Power Output", "Sortie Énergie"), lang.tr("Passes power flow downstream when EN is active and block executed without fault.", "Transmet l'énergie vers l'aval quand EN est actif et que le bloc a fonctionné sans erreur.")],
+                &["Inputs Mapping", lang.tr("Parameters", "Paramètres"), lang.tr("Explicitly binds tags or literals to block inputs (e.g., PT := T#5s, PV := 10).", "Lie explicitement des variables ou littéraux aux entrées (ex. PT := T#5s, PV := 10).")],
+                &["Outputs Mapping", lang.tr("Feedback", "Retours"), lang.tr("Binds block outputs to process image tags or Ladder coils (e.g., Q, ET, CV).", "Lie les sorties du bloc aux variables de l'image processus (ex. Q, ET, CV).")],
+            ]
+        ),
+        callout_box(
+            lang.tr("Shared Function Block Instances", "Instances de Blocs Fonctionnels Partagées"),
+            lang.tr(
+                "Inline function block instances are registered in `fb_instances.toml`. Their internal states (such as elapsed time `Timer_1.ET` or counter value `Counter_1.CV`) are globally accessible to ST scripts, SFC transitions, and FBD networks.",
+                "Les instances de blocs fonctionnels intégrés sont déclarées dans `fb_instances.toml`. Leurs états internes (comme le temps écoulé `Timer_1.ET` ou la valeur `Counter_1.CV`) sont accessibles depuis ST, SFC et FBD."
+            ),
+            StudioTheme::ACCENT_EMERALD,
         ),
     ]
     .spacing(12)
@@ -1659,40 +1827,6 @@ fn render_canvas_shortcuts<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Mes
                 &["F10", lang.tr("Single Step", "Pas Unique"), lang.tr("Executes exactly ONE scan cycle tick.", "Exécute exactement UN cycle de scan de l'automate.")],
             ]
         ),
-    ]
-    .spacing(12)
-    .into()
-}
-
-fn render_arch_inter_lang<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
-    column![
-        text(lang.tr("Inter-Language Communication & Process Image", "Communication Inter-Langages & Image Processus"))
-            .size(18)
-            .color(StudioTheme::TEXT_PRIMARY),
-        paragraph(lang.tr(
-            "FerritePLC allows seamless cross-language interoperability: any language (LD, SFC, ST, FBD) can read, mutate, or trigger logic in another language via the Shared Process Image and Unified Symbol Table.",
-            "FerritePLC permet une interopérabilité totale entre langages : chaque langage (LD, SFC, ST, FBD) peut lire, modifier ou déclencher une logique dans un autre langage via l'Image Processus Partagée et la Table des Variables Unifiée."
-        )),
-    ]
-    .spacing(12)
-    .into()
-}
-
-fn render_ld_compare_math<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
-    column![
-        text(lang.tr("Comparison & Math/Move Rung Blocks", "Blocs de Comparaison & Calcul Math/Move sur Rung"))
-            .size(18)
-            .color(StudioTheme::TEXT_PRIMARY),
-    ]
-    .spacing(12)
-    .into()
-}
-
-fn render_ld_inline_fb<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
-    column![
-        text(lang.tr("Inline Function Blocks in Ladder Rungs", "Blocs Fonctionnels Intégrés en Rung Ladder"))
-            .size(18)
-            .color(StudioTheme::TEXT_PRIMARY),
     ]
     .spacing(12)
     .into()
