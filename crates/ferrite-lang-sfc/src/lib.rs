@@ -154,6 +154,8 @@ pub struct SfcStep {
     pub max_duration: Option<String>,
     #[serde(default)]
     pub macro_body: Vec<String>,
+    #[serde(default)]
+    pub macro_sfc: Option<Box<SfcProgram>>,
 }
 
 impl SfcStep {
@@ -166,6 +168,7 @@ impl SfcStep {
             grid_pos: None,
             max_duration: None,
             macro_body: Vec::new(),
+            macro_sfc: None,
         }
     }
 
@@ -181,6 +184,11 @@ impl SfcStep {
 
     pub fn with_macro_body(mut self, substeps: Vec<String>) -> Self {
         self.macro_body = substeps;
+        self
+    }
+
+    pub fn with_macro_sfc(mut self, sub_sfc: SfcProgram) -> Self {
+        self.macro_sfc = Some(Box::new(sub_sfc));
         self
     }
 
@@ -960,19 +968,133 @@ impl SfcProgram {
     /// Registers `X<i>.state` (`BOOL`), `<pou>.X<i>.state` (`BOOL`), `<step_name>.state` (`BOOL`),
     /// and their `.t` (`TIME`) counterparts for every step in `TagTable`.
     pub fn register_introspection_symbols(&self, tags: &mut TagTable) -> Result<(), SfcError> {
-        for step in &self.steps {
+        let expanded = self.expand_macro_steps()?;
+        for step in &expanded.steps {
             tags.register_sfc_step_full(
-                &self.name,
+                &expanded.name,
                 &step.id,
                 &step.name,
                 step.kind == StepKind::Initial,
             )
             .map_err(|source| SfcError::Core {
-                pou: self.name.clone(),
+                pou: expanded.name.clone(),
                 source,
             })?;
         }
         Ok(())
+    }
+
+    /// Expands any macro steps with embedded `macro_sfc` into an inlined flat SfcProgram
+    /// with entry step SM_IN and exit step SM_OUT connected appropriately.
+    pub fn expand_macro_steps(&self) -> Result<SfcProgram, SfcError> {
+        let has_macros = self.steps.iter().any(|s| s.kind == StepKind::Macro || s.macro_sfc.is_some());
+        if !has_macros {
+            return Ok(self.clone());
+        }
+
+        let mut expanded_steps = Vec::new();
+        let mut expanded_transitions = self.transitions.clone();
+
+        for step in &self.steps {
+            if step.kind == StepKind::Macro || step.macro_sfc.is_some() {
+                let Some(ref sub_sfc) = step.macro_sfc else {
+                    return Err(SfcError::MacroStepUnsupported {
+                        pou: self.name.clone(),
+                        step: step.id.clone(),
+                    });
+                };
+
+                let sub_expanded = sub_sfc.expand_macro_steps()?;
+                let macro_id = step.id.clone();
+                let macro_name = step.name.clone();
+
+                // Find entry step (id containing SM_IN or kind Initial) and exit step (id containing SM_OUT)
+                let entry_step = sub_expanded
+                    .steps
+                    .iter()
+                    .find(|s| s.id.eq_ignore_ascii_case("SM_IN") || s.kind == StepKind::Initial)
+                    .ok_or_else(|| SfcError::TopologyValidation {
+                        pou: self.name.clone(),
+                        errors: vec![SfcValidationError::InvalidAlternation {
+                            element_id: macro_id.clone(),
+                            reason: "Macro step sub-SFC is missing entry step (SM_IN)".to_string(),
+                        }],
+                    })?;
+
+                let exit_step = sub_expanded
+                    .steps
+                    .iter()
+                    .find(|s| s.id.eq_ignore_ascii_case("SM_OUT"))
+                    .or_else(|| sub_expanded.steps.last())
+                    .ok_or_else(|| SfcError::TopologyValidation {
+                        pou: self.name.clone(),
+                        errors: vec![SfcValidationError::InvalidAlternation {
+                            element_id: macro_id.clone(),
+                            reason: "Macro step sub-SFC is missing exit step (SM_OUT)".to_string(),
+                        }],
+                    })?;
+
+                let entry_inlined_id = format!("{macro_id}_{}", entry_step.id);
+                let exit_inlined_id = format!("{macro_id}_{}", exit_step.id);
+
+                // Add all sub-steps prefixed with macro_id
+                for sub_step in &sub_expanded.steps {
+                    let mut inlined_s = sub_step.clone();
+                    inlined_s.id = format!("{macro_id}_{}", sub_step.id);
+                    inlined_s.name = if sub_step.name.is_empty() {
+                        inlined_s.id.clone()
+                    } else {
+                        format!("{macro_id}_{}", sub_step.name)
+                    };
+                    // Inner steps in an inlined macro step are NOT initial in the parent POU unless the macro step itself was Initial
+                    if step.kind != StepKind::Initial || sub_step.id != entry_step.id {
+                        inlined_s.kind = StepKind::Normal;
+                    }
+                    expanded_steps.push(inlined_s);
+                }
+
+                // Add all sub-transitions prefixed with macro_id
+                for sub_tr in &sub_expanded.transitions {
+                    let mut inlined_tr = sub_tr.clone();
+                    inlined_tr.id = format!("{macro_id}_{}", sub_tr.id);
+                    inlined_tr.from_steps = sub_tr
+                        .from_steps
+                        .iter()
+                        .map(|s| format!("{macro_id}_{s}"))
+                        .collect();
+                    inlined_tr.to_steps = sub_tr
+                        .to_steps
+                        .iter()
+                        .map(|s| format!("{macro_id}_{s}"))
+                        .collect();
+                    expanded_transitions.push(inlined_tr);
+                }
+
+                // Rewire transitions leading TO this macro step -> lead to entry_inlined_id
+                // Rewire transitions leading FROM this macro step -> lead from exit_inlined_id
+                for tr in &mut expanded_transitions {
+                    for to_s in &mut tr.to_steps {
+                        if *to_s == macro_id || (!macro_name.is_empty() && *to_s == macro_name) {
+                            *to_s = entry_inlined_id.clone();
+                        }
+                    }
+                    for from_s in &mut tr.from_steps {
+                        if *from_s == macro_id || (!macro_name.is_empty() && *from_s == macro_name) {
+                            *from_s = exit_inlined_id.clone();
+                        }
+                    }
+                }
+            } else {
+                expanded_steps.push(step.clone());
+            }
+        }
+
+        Ok(SfcProgram {
+            name: self.name.clone(),
+            comment: self.comment.clone(),
+            steps: expanded_steps,
+            transitions: expanded_transitions,
+        })
     }
 
     /// Computes and assigns orderly, non-overlapping grid positions `(grid_x, grid_y)`
@@ -1174,15 +1296,11 @@ impl SfcProgram {
     }
 
     pub fn compile(&self, tags: &TagTable) -> Result<CompiledSfcPou, SfcError> {
-        // Macro steps with macro_body / StepKind::Macro are unsupported by runtime (I-18)
-        for step in &self.steps {
-            if step.kind == StepKind::Macro || !step.macro_body.is_empty() {
-                return Err(SfcError::MacroStepUnsupported {
-                    pou: self.name.clone(),
-                    step: step.id.clone(),
-                });
-            }
-        }
+        let expanded = self.expand_macro_steps()?;
+        expanded.compile_expanded(tags)
+    }
+
+    fn compile_expanded(&self, tags: &TagTable) -> Result<CompiledSfcPou, SfcError> {
 
         let report = validate_sfc_topology(self);
         if !report.is_valid {
@@ -3423,6 +3541,105 @@ mod tests {
         let rep = validate_sfc_topology(&prog);
         assert!(!rep.is_valid);
         assert!(rep.errors.iter().any(|e| matches!(e, SfcValidationError::InvalidAlternation { .. })));
+    }
+
+    #[test]
+    fn test_macro_step_embedded_sfc_compilation_and_execution() -> Result<(), Box<dyn std::error::Error>> {
+        let mut tags = TagTable::new();
+        tags.register_tag(ferrite_core::tag_table::TagEntry::new(
+            "InnerDone",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+        tags.register_tag(ferrite_core::tag_table::TagEntry::new(
+            "Finished",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+
+        // Sub-SFC inside Macro step M1
+        let sub_sfc = SfcProgram {
+            name: "M1_sub".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("SM_IN", "Entry", StepKind::Initial),
+                SfcStep::new("SM_OUT", "Exit", StepKind::Normal),
+            ],
+            transitions: vec![SfcTransition {
+                id: "T_sub".to_string(),
+                from_steps: vec!["SM_IN".to_string()],
+                to_steps: vec!["SM_OUT".to_string()],
+                receptivity: "InnerDone".to_string(),
+                ..Default::default()
+            }],
+        };
+
+        let prog = SfcProgram {
+            name: "main_macro_prog".to_string(),
+            comment: "".to_string(),
+            steps: vec![
+                SfcStep::new("0", "Init", StepKind::Initial),
+                SfcStep {
+                    id: "M1".to_string(),
+                    name: "MacroCleaning".to_string(),
+                    kind: StepKind::Macro,
+                    macro_sfc: Some(Box::new(sub_sfc)),
+                    ..Default::default()
+                },
+                SfcStep::new("2", "Done", StepKind::Normal),
+            ],
+            transitions: vec![
+                SfcTransition {
+                    id: "T0".to_string(),
+                    from_steps: vec!["0".to_string()],
+                    to_steps: vec!["M1".to_string()],
+                    receptivity: "TRUE".to_string(),
+                    ..Default::default()
+                },
+                SfcTransition {
+                    id: "T1".to_string(),
+                    from_steps: vec!["M1".to_string()],
+                    to_steps: vec!["2".to_string()],
+                    receptivity: "Finished".to_string(),
+                    ..Default::default()
+                },
+            ],
+        };
+
+        prog.register_introspection_symbols(&mut tags)?;
+        let mut compiled = prog.compile(&tags)?;
+        let mut pi = ferrite_core::ProcessImage::new(1024);
+        let mut ctx = ferrite_core::ScanContext::new(&mut pi, &mut tags, 50, 1);
+
+        // Scan 1: Boot/Initialization scan - Step 0 is active initially
+        compiled.execute(&mut ctx)?;
+        assert_eq!(ctx.read_bool("main_macro_prog.0.state")?, true);
+        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_IN.state")?, false);
+        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_OUT.state")?, false);
+
+        // Scan 2: Transition T0 fires -> Step 0 deactivates, M1 activates (meaning SM_IN becomes active!)
+        compiled.execute(&mut ctx)?;
+        assert_eq!(ctx.read_bool("main_macro_prog.0.state")?, false);
+        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_IN.state")?, true);
+        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_OUT.state")?, false);
+
+        // Scan 3: InnerDone is set -> T_sub fires -> SM_OUT becomes active
+        ctx.write_symbol("InnerDone", IecValue::Bool(true))?;
+        compiled.execute(&mut ctx)?;
+        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_IN.state")?, false);
+        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_OUT.state")?, true);
+
+        // Scan 4: Finished is set -> T1 fires -> Step 2 becomes active
+        ctx.write_symbol("Finished", IecValue::Bool(true))?;
+        compiled.execute(&mut ctx)?;
+        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_OUT.state")?, false);
+        assert_eq!(ctx.read_bool("main_macro_prog.2.state")?, true);
+
+        Ok(())
     }
 
     #[test]
