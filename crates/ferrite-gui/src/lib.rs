@@ -2665,10 +2665,10 @@ mod tests {
 
         let proj = resolve_or_scaffold_project(Some(&temp_dir))?;
 
-        // 1. First app launch: defaults to French
+        // 1. First app launch: defaults to English
         {
             let mut app = FerriteStudioApp::new(proj.clone());
-            assert_eq!(app.ui_lang, UiLanguage::Fr, "Default language on first launch must be French");
+            assert_eq!(app.ui_lang, UiLanguage::En, "Default language on first launch must be English");
             let _ = app.update(Message::SetLanguage(UiLanguage::Fr));
             assert_eq!(app.ui_lang, UiLanguage::Fr);
         } // App is "closed" here
