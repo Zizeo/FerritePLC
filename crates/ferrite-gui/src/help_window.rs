@@ -9,9 +9,10 @@ pub enum HelpCategory {
     FunctionBlockDiagram,
     MemoryAddressing,
     Simulation,
-    FieldbusHardware,
+    FieldbusProtocols,
+    HardwareEmbedded,
     DigitalTwin,
-    Shortcuts,
+    ProjectTools,
 }
 
 impl HelpCategory {
@@ -24,9 +25,10 @@ impl HelpCategory {
             HelpCategory::FunctionBlockDiagram,
             HelpCategory::MemoryAddressing,
             HelpCategory::Simulation,
-            HelpCategory::FieldbusHardware,
+            HelpCategory::FieldbusProtocols,
+            HelpCategory::HardwareEmbedded,
             HelpCategory::DigitalTwin,
-            HelpCategory::Shortcuts,
+            HelpCategory::ProjectTools,
         ]
     }
 
@@ -40,39 +42,61 @@ impl HelpCategory {
                 lang.tr("5. Function Block Diagram (FBD)", "5. Blocs Fonctionnels (FBD)")
             }
             HelpCategory::MemoryAddressing => lang.tr("6. Memory & Tags", "6. Mémoire & Variables"),
-            HelpCategory::Simulation => lang.tr("7. Simulator & Forcing", "7. Simulateur & Forçages"),
-            HelpCategory::FieldbusHardware => {
-                lang.tr("8. Fieldbus & Hardware", "8. Bus de Terrain & Matériel")
+            HelpCategory::Simulation => lang.tr("7. Simulation & Diagnostics", "7. Simulation & Diagnostics"),
+            HelpCategory::FieldbusProtocols => {
+                lang.tr("8. Fieldbus & Communication", "8. Bus de Terrain & Communication")
             }
-            HelpCategory::DigitalTwin => lang.tr("9. 2D Digital Twin", "9. Jumeau Numérique 2D"),
-            HelpCategory::Shortcuts => lang.tr("10. Shortcuts & Controls", "10. Raccourcis & Édition"),
+            HelpCategory::HardwareEmbedded => {
+                lang.tr("9. Hardware & Embedded HAL", "9. Matériel & HAL Embarqué")
+            }
+            HelpCategory::DigitalTwin => lang.tr("10. 2D Digital Twin", "10. Jumeau Numérique 2D"),
+            HelpCategory::ProjectTools => lang.tr("11. Tools & Shortcuts", "11. Outils & Raccourcis"),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HelpTopic {
+    // 1. Architecture
     ArchScanLoop,
     ArchProjectFiles,
+    ArchInterLang,
+    // 2. Ladder Diagram
     LdContacts,
     LdCoils,
     LdBranches,
+    LdCompareMath,
+    LdInlineFb,
+    // 3. SFC / Grafcet
     SfcSteps,
     SfcActions,
     SfcDivergenceConvergence,
     SfcIntrospection,
+    // 4. Structured Text
     StSyntax,
     StControlFlow,
     StMathFunctions,
+    // 5. Function Block Diagram
     FbdStandardBlocks,
     FbdPidController,
+    FbdLogicMath,
+    FbdCustomComposite,
+    // 6. Memory & Tags
     MemDirectAddressing,
     MemTagTable,
+    // 7. Simulation & Diagnostics
     SimExecutionAndForces,
     SimAlarmsAndRetain,
-    FieldbusProtocols,
+    SimTrendPlotter,
+    // 8. Fieldbus & Protocols
+    FieldbusTcpIot,
+    FieldbusModbusRtu,
+    // 9. Hardware & Embedded
     HardwareRpiGpio,
+    // 10. Digital Twin
     DigitalTwinSimulation,
+    // 11. Tools & Shortcuts
+    ToolsPlcOpenXml,
     CanvasShortcuts,
 }
 
@@ -85,7 +109,7 @@ pub struct HelpTopicMeta {
 }
 
 pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
-    // Architecture
+    // 1. Architecture
     HelpTopicMeta {
         id: HelpTopic::ArchScanLoop,
         category: HelpCategory::Architecture,
@@ -100,7 +124,14 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         title_fr: "Structure du Projet & Manifeste (.fplc)",
         keywords: &["project", "manifest", "fplc", "file", "pou", "symbols", "scaffold", "json", "toml"],
     },
-    // Ladder Diagram
+    HelpTopicMeta {
+        id: HelpTopic::ArchInterLang,
+        category: HelpCategory::Architecture,
+        title_en: "Inter-Language Communication & Process Image",
+        title_fr: "Communication Inter-Langages & Image Processus",
+        keywords: &["inter-language", "process image", "memory map", "pou", "executablepou", "cross-language", "shared", "context"],
+    },
+    // 2. Ladder Diagram
     HelpTopicMeta {
         id: HelpTopic::LdContacts,
         category: HelpCategory::LadderDiagram,
@@ -122,7 +153,21 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         title_fr: "Branches de Rung & Flux d'Énergie",
         keywords: &["branch", "rung", "parallel", "or branch", "power rail", "dissolution", "wire"],
     },
-    // SFC / Grafcet
+    HelpTopicMeta {
+        id: HelpTopic::LdCompareMath,
+        category: HelpCategory::LadderDiagram,
+        title_en: "Comparison & Math/Move Rung Blocks",
+        title_fr: "Blocs de Comparaison & Calcul Math/Move sur Rung",
+        keywords: &["compare", "math", "move", "rung", "gt", "lt", "eq", "ge", "le", "ne", "add", "sub", "mul", "div"],
+    },
+    HelpTopicMeta {
+        id: HelpTopic::LdInlineFb,
+        category: HelpCategory::LadderDiagram,
+        title_en: "Inline Function Blocks in Ladder Rungs",
+        title_fr: "Blocs Fonctionnels Intégrés en Rung Ladder",
+        keywords: &["inline fb", "function block", "ton", "ctu", "ladder", "rung", "enable", "en", "eno"],
+    },
+    // 3. SFC / Grafcet
     HelpTopicMeta {
         id: HelpTopic::SfcSteps,
         category: HelpCategory::SfcGrafcet,
@@ -151,7 +196,7 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         title_fr: "Symboles d'Introspection Grafcet (X<i>.state, X<i>.t)",
         keywords: &["introspection", "x.state", "x.t", "step activity", "elapsed time", "cross-language", "receptivity"],
     },
-    // Structured Text
+    // 4. Structured Text
     HelpTopicMeta {
         id: HelpTopic::StSyntax,
         category: HelpCategory::StructuredText,
@@ -173,7 +218,7 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         title_fr: "Fonctions Mathématiques Standards (ABS, SQRT, etc.)",
         keywords: &["math", "functions", "abs", "sqrt", "sin", "cos", "tan", "exp", "ln", "log", "asin", "acos", "atan"],
     },
-    // Function Block Diagram
+    // 5. Function Block Diagram
     HelpTopicMeta {
         id: HelpTopic::FbdStandardBlocks,
         category: HelpCategory::FunctionBlockDiagram,
@@ -188,7 +233,21 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         title_fr: "Régulateur Boucle Fermée PID",
         keywords: &["pid", "controller", "closed loop", "parallel", "series", "mixed", "ideal", "kp", "ti", "td", "anti-windup"],
     },
-    // Memory & Addressing
+    HelpTopicMeta {
+        id: HelpTopic::FbdLogicMath,
+        category: HelpCategory::FunctionBlockDiagram,
+        title_en: "FBD Logic, Comparison & Math Blocks",
+        title_fr: "Blocs Logiques, Comparaisons & Calculs FBD",
+        keywords: &["fbd", "logic", "and", "or", "xor", "not", "add", "sub", "mul", "div", "gt", "lt", "eq", "math"],
+    },
+    HelpTopicMeta {
+        id: HelpTopic::FbdCustomComposite,
+        category: HelpCategory::FunctionBlockDiagram,
+        title_en: "Custom & Composite User Function Blocks",
+        title_fr: "Blocs Fonctionnels Utilisateur & Composites",
+        keywords: &["composite", "custom", "user fb", "custom fbd library", "encapsulation", "reusable", "sub-diagram"],
+    },
+    // 6. Memory & Addressing
     HelpTopicMeta {
         id: HelpTopic::MemDirectAddressing,
         category: HelpCategory::MemoryAddressing,
@@ -207,7 +266,7 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         title_fr: "Table des Variables & Types IEC",
         keywords: &["tags", "variables", "symbols", "bool", "int", "dint", "real", "time", "string", "iec types", "retained"],
     },
-    // Simulation
+    // 7. Simulation & Diagnostics
     HelpTopicMeta {
         id: HelpTopic::SimExecutionAndForces,
         category: HelpCategory::Simulation,
@@ -222,22 +281,37 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         title_fr: "Cycle de Vie Alarmes ISA 18.2 & Mémoire Rémanente",
         keywords: &["alarms", "isa 18.2", "journal", "unacknowledged", "acknowledged", "retain", "snapshots", "persistence"],
     },
-    // Fieldbus & Hardware
     HelpTopicMeta {
-        id: HelpTopic::FieldbusProtocols,
-        category: HelpCategory::FieldbusHardware,
-        title_en: "Industrial Fieldbus (Modbus TCP, OPC UA, MQTT)",
-        title_fr: "Bus de Terrain Industriels (Modbus TCP, OPC UA, MQTT)",
+        id: HelpTopic::SimTrendPlotter,
+        category: HelpCategory::Simulation,
+        title_en: "Real-Time Trend Plotter & Oscilloscope",
+        title_fr: "Traceur de Tendances Temps Réel & Oscilloscope",
+        keywords: &["trend", "plotter", "oscilloscope", "waveform", "sampling", "history", "live", "trigger", "channels"],
+    },
+    // 8. Fieldbus & Communication
+    HelpTopicMeta {
+        id: HelpTopic::FieldbusTcpIot,
+        category: HelpCategory::FieldbusProtocols,
+        title_en: "Modbus TCP, OPC UA & MQTT Telemetry",
+        title_fr: "Modbus TCP, OPC UA & Télémesure MQTT",
         keywords: &["fieldbus", "modbus", "modbus tcp", "opc ua", "mqtt", "telemetry", "holding registers", "coils", "address space"],
     },
     HelpTopicMeta {
+        id: HelpTopic::FieldbusModbusRtu,
+        category: HelpCategory::FieldbusProtocols,
+        title_en: "Modbus RTU Serial (RS-485 / RS-232)",
+        title_fr: "Modbus RTU Série (RS-485 / RS-232)",
+        keywords: &["rtu", "serial", "rs485", "rs232", "baud rate", "crc", "parity", "t1.5", "t3.5", "modbus rtu", "master", "slave"],
+    },
+    // 9. Hardware & Embedded HAL
+    HelpTopicMeta {
         id: HelpTopic::HardwareRpiGpio,
-        category: HelpCategory::FieldbusHardware,
+        category: HelpCategory::HardwareEmbedded,
         title_en: "Raspberry Pi 40-Pin GPIO Header Visualizer",
         title_fr: "Visualiseur GPIO 40 Broches Raspberry Pi",
         keywords: &["gpio", "raspberry pi", "rpi", "hardware", "hal", "40-pin", "pinout", "levels"],
     },
-    // Digital Twin
+    // 10. Digital Twin
     HelpTopicMeta {
         id: HelpTopic::DigitalTwinSimulation,
         category: HelpCategory::DigitalTwin,
@@ -245,10 +319,17 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         title_fr: "Canvas de Simulation Digital Twin 2D",
         keywords: &["digital twin", "twin", "simulation", "physics", "tanks", "pumps", "valves", "conveyors", "sensors", "schematic"],
     },
-    // Shortcuts
+    // 11. Tools & Shortcuts
+    HelpTopicMeta {
+        id: HelpTopic::ToolsPlcOpenXml,
+        category: HelpCategory::ProjectTools,
+        title_en: "PLCopen TC6 XML Export & Import",
+        title_fr: "Import & Export PLCopen TC6 XML",
+        keywords: &["plcopen", "tc6", "xml", "interoperability", "export", "import", "twincat", "codesys", "standard"],
+    },
     HelpTopicMeta {
         id: HelpTopic::CanvasShortcuts,
-        category: HelpCategory::Shortcuts,
+        category: HelpCategory::ProjectTools,
         title_en: "Studio Navigation & Keyboard Shortcuts",
         title_fr: "Navigation Studio & Raccourcis Clavier",
         keywords: &["shortcuts", "hotkeys", "keyboard", "f1", "ctrl+s", "ctrl+o", "ctrl+z", "ctrl+y", "pan", "zoom", "marquee", "wiring"],
@@ -479,9 +560,12 @@ pub fn render_topic_content<'a, Message: 'a>(
     match topic {
         HelpTopic::ArchScanLoop => render_arch_scan_loop(lang),
         HelpTopic::ArchProjectFiles => render_arch_project_files(lang),
+        HelpTopic::ArchInterLang => render_arch_inter_lang(lang),
         HelpTopic::LdContacts => render_ld_contacts(lang),
         HelpTopic::LdCoils => render_ld_coils(lang),
         HelpTopic::LdBranches => render_ld_branches(lang),
+        HelpTopic::LdCompareMath => render_ld_compare_math(lang),
+        HelpTopic::LdInlineFb => render_ld_inline_fb(lang),
         HelpTopic::SfcSteps => render_sfc_steps(lang),
         HelpTopic::SfcActions => render_sfc_actions(lang),
         HelpTopic::SfcDivergenceConvergence => render_sfc_div_conv(lang),
@@ -491,13 +575,18 @@ pub fn render_topic_content<'a, Message: 'a>(
         HelpTopic::StMathFunctions => render_st_math(lang),
         HelpTopic::FbdStandardBlocks => render_fbd_standard_blocks(lang),
         HelpTopic::FbdPidController => render_fbd_pid(lang),
+        HelpTopic::FbdLogicMath => render_fbd_logic_math(lang),
+        HelpTopic::FbdCustomComposite => render_fbd_custom_composite(lang),
         HelpTopic::MemDirectAddressing => render_mem_direct(lang),
         HelpTopic::MemTagTable => render_mem_tags(lang),
         HelpTopic::SimExecutionAndForces => render_sim_exec_forces(lang),
         HelpTopic::SimAlarmsAndRetain => render_sim_alarms_retain(lang),
-        HelpTopic::FieldbusProtocols => render_fieldbus(lang),
+        HelpTopic::SimTrendPlotter => render_sim_trend_plotter(lang),
+        HelpTopic::FieldbusTcpIot => render_fieldbus_tcp_iot(lang),
+        HelpTopic::FieldbusModbusRtu => render_fieldbus_modbus_rtu(lang),
         HelpTopic::HardwareRpiGpio => render_hardware_rpi(lang),
         HelpTopic::DigitalTwinSimulation => render_digital_twin(lang),
+        HelpTopic::ToolsPlcOpenXml => render_tools_plcopen_xml(lang),
         HelpTopic::CanvasShortcuts => render_canvas_shortcuts(lang),
     }
 }
@@ -1394,9 +1483,9 @@ fn render_sim_alarms_retain<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Me
 // 8. Fieldbus & Hardware
 // ---------------------------------------------------------------------------
 
-fn render_fieldbus<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+fn render_fieldbus_tcp_iot<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
     column![
-        text(lang.tr("Industrial Fieldbus (Modbus TCP, OPC UA, MQTT)", "Bus de Terrain Industriels (Modbus TCP, OPC UA, MQTT)"))
+        text(lang.tr("Modbus TCP, OPC UA & MQTT Industrial Telemetry", "Modbus TCP, OPC UA & Télémesure Industrielle MQTT"))
             .size(18)
             .color(StudioTheme::TEXT_PRIMARY),
         paragraph(lang.tr(
@@ -1575,6 +1664,90 @@ fn render_canvas_shortcuts<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Mes
     .into()
 }
 
+fn render_arch_inter_lang<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("Inter-Language Communication & Process Image", "Communication Inter-Langages & Image Processus"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+        paragraph(lang.tr(
+            "FerritePLC allows seamless cross-language interoperability: any language (LD, SFC, ST, FBD) can read, mutate, or trigger logic in another language via the Shared Process Image and Unified Symbol Table.",
+            "FerritePLC permet une interopérabilité totale entre langages : chaque langage (LD, SFC, ST, FBD) peut lire, modifier ou déclencher une logique dans un autre langage via l'Image Processus Partagée et la Table des Variables Unifiée."
+        )),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn render_ld_compare_math<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("Comparison & Math/Move Rung Blocks", "Blocs de Comparaison & Calcul Math/Move sur Rung"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn render_ld_inline_fb<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("Inline Function Blocks in Ladder Rungs", "Blocs Fonctionnels Intégrés en Rung Ladder"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn render_fbd_logic_math<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("FBD Logic, Comparison & Math Blocks", "Blocs Logiques, Comparaisons & Calculs FBD"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn render_fbd_custom_composite<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("Custom & Composite User Function Blocks", "Blocs Fonctionnels Utilisateur & Composites"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn render_sim_trend_plotter<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("Real-Time Trend Plotter & Oscilloscope", "Traceur de Tendances Temps Réel & Oscilloscope"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn render_fieldbus_modbus_rtu<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("Modbus RTU Serial (RS-485 / RS-232)", "Modbus RTU Série (RS-485 / RS-232)"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn render_tools_plcopen_xml<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Message> {
+    column![
+        text(lang.tr("PLCopen TC6 XML Export & Import", "Import & Export PLCopen TC6 XML"))
+            .size(18)
+            .color(StudioTheme::TEXT_PRIMARY),
+    ]
+    .spacing(12)
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1582,12 +1755,30 @@ mod tests {
     #[test]
     fn test_help_catalog_completeness() {
         let topics = all_topics();
-        assert!(topics.len() >= 20);
+        assert!(topics.len() >= 29);
         for t in topics {
             assert!(!t.title_en.is_empty());
             assert!(!t.title_fr.is_empty());
             assert!(!t.keywords.is_empty());
         }
+    }
+
+    #[test]
+    fn test_new_industrial_topics_exist_and_searchable() {
+        let rtu_results = filter_topics("rtu");
+        assert!(rtu_results.contains(&HelpTopic::FieldbusModbusRtu));
+
+        let plcopen_results = filter_topics("plcopen");
+        assert!(plcopen_results.contains(&HelpTopic::ToolsPlcOpenXml));
+
+        let compare_results = filter_topics("compare");
+        assert!(compare_results.contains(&HelpTopic::LdCompareMath));
+
+        let composite_results = filter_topics("composite");
+        assert!(composite_results.contains(&HelpTopic::FbdCustomComposite));
+
+        let trend_results = filter_topics("oscilloscope");
+        assert!(trend_results.contains(&HelpTopic::SimTrendPlotter));
     }
 
     #[test]
