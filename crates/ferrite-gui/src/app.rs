@@ -4204,7 +4204,7 @@ impl FerriteStudioApp {
             }
             Message::SfcEnterMacro(pou_name, step_id) => {
                 self.sfc_drill_down_path
-                    .entry(pou_name.clone())
+                    .entry(pou_name)
                     .or_default()
                     .push(step_id);
                 self.sfc_selected = None;

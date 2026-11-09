@@ -3617,27 +3617,27 @@ mod tests {
 
         // Scan 1: Boot/Initialization scan - Step 0 is active initially
         compiled.execute(&mut ctx)?;
-        assert_eq!(ctx.read_bool("main_macro_prog.0.state")?, true);
-        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_IN.state")?, false);
-        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_OUT.state")?, false);
+        assert!(ctx.read_bool("main_macro_prog.0.state")?);
+        assert!(!ctx.read_bool("main_macro_prog.M1_SM_IN.state")?);
+        assert!(!ctx.read_bool("main_macro_prog.M1_SM_OUT.state")?);
 
         // Scan 2: Transition T0 fires -> Step 0 deactivates, M1 activates (meaning SM_IN becomes active!)
         compiled.execute(&mut ctx)?;
-        assert_eq!(ctx.read_bool("main_macro_prog.0.state")?, false);
-        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_IN.state")?, true);
-        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_OUT.state")?, false);
+        assert!(!ctx.read_bool("main_macro_prog.0.state")?);
+        assert!(ctx.read_bool("main_macro_prog.M1_SM_IN.state")?);
+        assert!(!ctx.read_bool("main_macro_prog.M1_SM_OUT.state")?);
 
         // Scan 3: InnerDone is set -> T_sub fires -> SM_OUT becomes active
         ctx.write_symbol("InnerDone", IecValue::Bool(true))?;
         compiled.execute(&mut ctx)?;
-        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_IN.state")?, false);
-        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_OUT.state")?, true);
+        assert!(!ctx.read_bool("main_macro_prog.M1_SM_IN.state")?);
+        assert!(ctx.read_bool("main_macro_prog.M1_SM_OUT.state")?);
 
         // Scan 4: Finished is set -> T1 fires -> Step 2 becomes active
         ctx.write_symbol("Finished", IecValue::Bool(true))?;
         compiled.execute(&mut ctx)?;
-        assert_eq!(ctx.read_bool("main_macro_prog.M1_SM_OUT.state")?, false);
-        assert_eq!(ctx.read_bool("main_macro_prog.2.state")?, true);
+        assert!(!ctx.read_bool("main_macro_prog.M1_SM_OUT.state")?);
+        assert!(ctx.read_bool("main_macro_prog.2.state")?);
 
         Ok(())
     }
