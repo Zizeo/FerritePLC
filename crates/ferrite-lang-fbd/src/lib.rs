@@ -83,6 +83,9 @@ pub struct FbdBlock {
     pub id: String,
     #[serde(flatten)]
     pub kind: FbdBlockKind,
+    /// Optional canvas position in world pixels (top-left corner of the block).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_pos: Option<[i32; 2]>,
     /// Map of input pin name (`IN1`, `IN2`, `IN`, `PT`, etc.) to `FbdInputSource`.
     #[serde(default)]
     pub inputs: HashMap<String, FbdInputSource>,
@@ -874,12 +877,14 @@ mod tests {
                     },
                     inputs: ton_inputs,
                     outputs: ton_outputs,
+                    grid_pos: None,
                 },
                 FbdBlock {
                     id: "B_CMP".to_string(),
                     kind: FbdBlockKind::Gt,
                     inputs: cmp_inputs,
                     outputs: cmp_outputs,
+                    grid_pos: None,
                 },
             ],
         };
@@ -922,12 +927,14 @@ mod tests {
                     kind: FbdBlockKind::Not,
                     inputs: a_in,
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
                 FbdBlock {
                     id: "B".to_string(),
                     kind: FbdBlockKind::Not,
                     inputs: b_in,
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
             ],
         };
@@ -1040,12 +1047,14 @@ mod tests {
                     },
                     inputs: pid_in,
                     outputs: pid_out,
+                    grid_pos: None,
                 },
                 FbdBlock {
                     id: "B_GT".to_string(),
                     kind: FbdBlockKind::Gt,
                     inputs: gt_in,
                     outputs: gt_out,
+                    grid_pos: None,
                 },
             ],
         };
@@ -1080,12 +1089,14 @@ mod tests {
                     kind: FbdBlockKind::Not,
                     inputs: HashMap::new(),
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
                 FbdBlock {
                     id: "B".to_string(),
                     kind: FbdBlockKind::And,
                     inputs: blk_b_inputs,
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
             ],
         };
@@ -1147,18 +1158,21 @@ mod tests {
                     kind: FbdBlockKind::Not,
                     inputs: HashMap::new(),
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
                 FbdBlock {
                     id: "B".to_string(),
                     kind: FbdBlockKind::And,
                     inputs: HashMap::new(),
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
                 FbdBlock {
                     id: "C".to_string(),
                     kind: FbdBlockKind::Or,
                     inputs: HashMap::new(),
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
             ],
         };
@@ -1225,6 +1239,7 @@ mod tests {
             },
             inputs: HashMap::new(),
             outputs: HashMap::new(),
+            grid_pos: None,
         };
         block.inputs.insert("CH1".to_string(), FbdInputSource::Value { expr: "Permissive_A".to_string() });
         block.inputs.insert("CH2".to_string(), FbdInputSource::Value { expr: "Permissive_B".to_string() });
@@ -1269,12 +1284,14 @@ mod tests {
                     kind: FbdBlockKind::Not,
                     inputs: inp1,
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
                 FbdBlock {
                     id: "BLK1".to_string(),
                     kind: FbdBlockKind::Not,
                     inputs: inp2,
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
             ],
         };
@@ -1296,6 +1313,7 @@ mod tests {
                     kind: FbdBlockKind::Not,
                     inputs: HashMap::new(),
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
             ],
         };
@@ -1324,6 +1342,7 @@ mod tests {
                     kind: FbdBlockKind::Not,
                     inputs: HashMap::new(),
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
             ],
         };
@@ -1342,6 +1361,7 @@ mod tests {
                     kind: FbdBlockKind::And,
                     inputs: and_inputs,
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
             ],
         };
@@ -1362,9 +1382,53 @@ mod tests {
                     kind: FbdBlockKind::Not,
                     inputs: not_valid_in,
                     outputs: bad_out,
+                    grid_pos: None,
                 },
             ],
         };
         assert!(matches!(bad_out_prog.validate(&tags), Err(FbdError::Validation(msg)) if msg.contains("unknown or invalid output pin")));
     }
+    #[test]
+    fn test_fbd_grid_pos_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+        let block = FbdBlock {
+            id: "B1".to_string(),
+            kind: FbdBlockKind::And,
+            grid_pos: Some([340, 120]),
+            inputs: HashMap::new(),
+            outputs: HashMap::new(),
+        };
+
+        let json = serde_json::to_string(&block)?;
+        assert!(json.contains("\"grid_pos\""));
+
+        let parsed: FbdBlock = serde_json::from_str(&json)?;
+        assert_eq!(parsed, block);
+        Ok(())
+    }
+
+    #[test]
+    fn test_fbd_legacy_json_without_grid_pos_loads() -> Result<(), Box<dyn std::error::Error>> {
+        let json = r#"{
+            "name": "legacy_pou",
+            "blocks": [
+                {
+                    "op": "AND",
+                    "id": "B1",
+                    "inputs": {
+                        "IN1": { "kind": "value", "expr": "TRUE" },
+                        "IN2": { "kind": "value", "expr": "TRUE" }
+                    },
+                    "outputs": {}
+                }
+            ]
+        }"#;
+
+        let prog = FbdProgram::from_json(json)?;
+        assert_eq!(prog.blocks[0].grid_pos, None);
+
+        let tags = TagTable::new();
+        prog.compile(&tags)?;
+        Ok(())
+    }
+
 }

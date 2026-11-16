@@ -76,6 +76,7 @@ mod tests {
             kind: FbdBlockKind::And,
             inputs: HashMap::new(),
             outputs: HashMap::new(),
+            grid_pos: None,
         };
         let data = FerriteClipboardData::Fbd {
             blocks: vec![block],

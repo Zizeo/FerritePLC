@@ -2175,6 +2175,7 @@ impl FerriteStudioApp {
                         kind: ferrite_lang_fbd::FbdBlockKind::Composite { type_name: def.name },
                         inputs,
                         outputs: HashMap::new(),
+                        grid_pos: None,
                     });
 
                     self.track_history();
@@ -5488,6 +5489,7 @@ impl FerriteStudioApp {
                         kind,
                         inputs,
                         outputs: HashMap::new(),
+                        grid_pos: None,
                     });
                     self.track_history();
                     self.modified = self.is_dirty();

@@ -2155,6 +2155,7 @@ mod tests {
             kind: ferrite_lang_fbd::FbdBlockKind::And,
             inputs: std::collections::HashMap::new(),
             outputs: std::collections::HashMap::new(),
+            grid_pos: None,
         };
         let payload =
             crate::clipboard::serialize_clipboard(crate::clipboard::FerriteClipboardData::Fbd {

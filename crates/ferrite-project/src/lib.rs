@@ -1008,24 +1008,28 @@ END_PROGRAM
                     kind: FbdBlockKind::And,
                     inputs: pump_and_in,
                     outputs: pump_and_out,
+                    grid_pos: None,
                 },
                 FbdBlock {
                     id: "Blk_CIP_Header".to_string(),
                     kind: FbdBlockKind::Or,
                     inputs: header_or_in,
                     outputs: header_or_out,
+                    grid_pos: None,
                 },
                 FbdBlock {
                     id: "Blk_Temp_Comparator".to_string(),
                     kind: FbdBlockKind::Gt,
                     inputs: temp_gt_in,
                     outputs: temp_gt_out,
+                    grid_pos: None,
                 },
                 FbdBlock {
                     id: "Blk_Level_Guard".to_string(),
                     kind: FbdBlockKind::Ge,
                     inputs: lvl_ge_in,
                     outputs: lvl_ge_out,
+                    grid_pos: None,
                 },
             ],
         };

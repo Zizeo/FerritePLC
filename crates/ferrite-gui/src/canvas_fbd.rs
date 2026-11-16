@@ -1352,6 +1352,7 @@ mod tests {
                     kind: FbdBlockKind::And,
                     inputs: HashMap::new(),
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
                 FbdBlock {
                     id: "B".to_string(),
@@ -1366,6 +1367,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                     outputs: HashMap::new(),
+                    grid_pos: None,
                 },
             ],
         };
@@ -1400,12 +1402,14 @@ mod tests {
             kind: FbdBlockKind::And,
             inputs: HashMap::new(),
             outputs: HashMap::new(),
+            grid_pos: None,
         };
         let block_b = FbdBlock {
             id: "BlockB".to_string(),
             kind: FbdBlockKind::Or,
             inputs: HashMap::new(),
             outputs: HashMap::new(),
+            grid_pos: None,
         };
         let program = FbdProgram {
             name: "test_drag_fbd".to_string(),
