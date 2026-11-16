@@ -9,6 +9,7 @@ pub mod custom_fbd_library;
 pub mod digital_twin;
 pub mod editor_st;
 pub mod editor_symbols;
+pub mod fbd_geometry;
 pub mod fbd_library_window;
 pub mod help_window;
 pub mod i18n;
@@ -66,17 +67,20 @@ pub fn init_system_and_emoji_fonts() {
 
 /// Returns true if a Nerd Font (such as FiraCode Nerd Font) is loaded in the font system.
 pub fn is_nerd_font_available() -> bool {
-    init_system_and_emoji_fonts();
-    if let Ok(mut fs_lock) = iced::advanced::graphics::text::font_system().write() {
-        let db = fs_lock.raw().db();
-        db.faces().any(|face| {
-            face.families
-                .iter()
-                .any(|(name, _)| name.contains("Nerd Font"))
-        })
-    } else {
-        false
-    }
+    static NERD_FONT_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *NERD_FONT_AVAILABLE.get_or_init(|| {
+        init_system_and_emoji_fonts();
+        if let Ok(mut fs_lock) = iced::advanced::graphics::text::font_system().write() {
+            let db = fs_lock.raw().db();
+            db.faces().any(|face| {
+                face.families
+                    .iter()
+                    .any(|(name, _)| name.contains("Nerd Font"))
+            })
+        } else {
+            false
+        }
+    })
 }
 
 /// Resolves the preferred default application font for FerritePLC Studio.
@@ -1199,6 +1203,7 @@ mod tests {
                 instance: "PID_Test".to_string(),
                 fb_type: Some(StandardFbKind::PidParallel),
             },
+            None,
         ));
 
         let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
@@ -1342,7 +1347,7 @@ mod tests {
         // Test Renaming
         let _ = app.update(Message::FbdBlockIdChanged(
             pou_name.clone(),
-            0,
+            initial_b0.clone(),
             "Block_Renamed_Test".to_string(),
         ));
         let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
@@ -1407,11 +1412,15 @@ mod tests {
 
         let mut app = StudioApp::new_test_app();
         let pou_name = "pump_ctrl".to_string();
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
+            panic!("Expected FBD POU");
+        };
+        let block_id = fbd.blocks[0].id.clone();
 
         // 1. Typing a float like "5.0" should become a Value, NOT a Link
         let _ = app.update(Message::FbdInputSourceChanged(
             pou_name.clone(),
-            0,
+            block_id.clone(),
             "IN1".to_string(),
             "5.0".to_string(),
         ));
@@ -1428,7 +1437,7 @@ mod tests {
         // 2. Typing a direct address "%IX0.0" should become a Value
         let _ = app.update(Message::FbdInputSourceChanged(
             pou_name.clone(),
-            0,
+            block_id.clone(),
             "IN1".to_string(),
             "%IX0.0".to_string(),
         ));
@@ -1446,7 +1455,7 @@ mod tests {
         let target_block_id = fbd.blocks[1].id.clone();
         let _ = app.update(Message::FbdInputSourceChanged(
             pou_name.clone(),
-            0,
+            block_id.clone(),
             "IN1".to_string(),
             format!("{target_block_id}.OUT"),
         ));
@@ -2141,7 +2150,7 @@ mod tests {
 
         let pou_name = "pump_ctrl".to_string();
         app.active_tab = WorkspaceTab::Pou(pou_name.clone());
-        app.fbd_selected_block = Some(0);
+        app.fbd_selected_block_idx = Some(0);
 
         let initial_blocks =
             if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
@@ -2168,7 +2177,7 @@ mod tests {
             assert_eq!(fbd.blocks.len(), initial_blocks + 1);
             let pasted_block = &fbd.blocks[1];
             assert_ne!(pasted_block.id, "TON_1");
-            assert_eq!(app.fbd_selected_block, Some(1));
+            assert_eq!(app.fbd_selected_block_idx, Some(1));
         } else {
             panic!("Expected FBD POU");
         }
@@ -2552,6 +2561,7 @@ mod tests {
                 instance: "PID_Mixed_ISA".to_string(),
                 fb_type: Some(ferrite_core::StandardFbKind::PidMixed),
             },
+            None,
         ));
 
         for lang in UiLanguage::ALL {
@@ -2862,6 +2872,7 @@ mod tests {
                 instance: "TON_1".to_string(),
                 fb_type: Some(ferrite_core::StandardFbKind::Ton),
             },
+            None,
         ));
         let _ = app.update(Message::FbdAddBlock(
             pou_name.clone(),
@@ -2869,10 +2880,11 @@ mod tests {
                 instance: "TON_2".to_string(),
                 fb_type: Some(ferrite_core::StandardFbKind::Ton),
             },
+            None,
         ));
 
         // Delete TON_1
-        let _ = app.update(Message::FbdRemoveBlock(pou_name.clone(), 0));
+        let _ = app.update(Message::FbdRemoveBlock(pou_name.clone(), "TON_1".to_string()));
 
         // Add another block with instance TON_2 (as if clicked from library when count was 1)
         let _ = app.update(Message::FbdAddBlock(
@@ -2881,6 +2893,7 @@ mod tests {
                 instance: "TON_2".to_string(),
                 fb_type: Some(ferrite_core::StandardFbKind::Ton),
             },
+            None,
         ));
 
         let fbd = match app.project.pous.get(&pou_name) {
