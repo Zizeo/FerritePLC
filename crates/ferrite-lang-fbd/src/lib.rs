@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use ferrite_core::{
-    CoreError, ExecutablePou, FbInstance, IecValue, LanguageKind, PouId, RuntimeError, ScanContext,
-    StandardFbKind, TagTable,
+    CoreError, ExecutablePou, FbId, IecType, IecValue, LanguageKind, PouId, ProcessImage,
+    RuntimeError, ScanContext, StandardFbKind, TagEntry, TagId, TagTable,
 };
 use ferrite_ir::{IrBinaryOp, IrError, PouGraph, SymbolResolver, eval_binary_op};
 use serde::{Deserialize, Serialize};
@@ -206,13 +206,25 @@ impl FbdProgram {
             graph.add_node(blk.id.clone());
         }
 
-        // I-9: Reject composite FBs with sub-network blocks if st_code is not provided
+        // I-9 / Item #6: Validate graphical sub-network for composite FBs without st_code
         for comp in &self.composites {
             if comp.st_code.is_none() && !comp.blocks.is_empty() {
-                return Err(FbdError::Validation(format!(
-                    "Composite FB '{}': graphical sub-network execution is not supported; provide st_code implementation",
-                    comp.name
-                )));
+                if comp.blocks.iter().any(|b| {
+                    matches!(&b.kind, FbdBlockKind::Composite { type_name } if type_name == &comp.name)
+                }) {
+                    return Err(FbdError::Validation(format!(
+                        "Composite FB '{}': recursive self-reference in graphical sub-network",
+                        comp.name
+                    )));
+                }
+                let (sub_prog, sub_tags) =
+                    build_composite_sub_program(comp, &self.composites, tags);
+                sub_prog.validate(&sub_tags).map_err(|e| {
+                    FbdError::Validation(format!(
+                        "Composite FB '{}': invalid graphical sub-network: {e}",
+                        comp.name
+                    ))
+                })?;
             }
         }
 
@@ -429,7 +441,13 @@ impl FbdProgram {
                 let csrc = match src {
                     FbdInputSource::Value { expr } => match IecValue::parse_literal(expr, None) {
                         Ok(val) => CompiledInputSource::Literal(val),
-                        Err(_) => CompiledInputSource::Symbol(expr.trim().to_string()),
+                        Err(_) => {
+                            let trimmed = expr.trim();
+                            CompiledInputSource::Symbol(
+                                trimmed.to_string(),
+                                tags.tag_id(trimmed),
+                            )
+                        }
                     },
                     FbdInputSource::Link {
                         from_block,
@@ -452,12 +470,24 @@ impl FbdProgram {
             // Sort inputs by pin name so IN1 comes before IN2 deterministically
             compiled_inputs.sort_by(|a, b| a.0.cmp(&b.0));
 
-            let mut compiled_outputs: Vec<(PinSlot, String)> = blk
+            let mut compiled_outputs: Vec<(PinSlot, String, Option<TagId>)> = blk
                 .outputs
                 .iter()
-                .map(|(pin, sym)| (PinSlot::from_name(pin), sym.trim().to_string()))
+                .map(|(pin, sym)| {
+                    let trimmed = sym.trim();
+                    (
+                        PinSlot::from_name(pin),
+                        trimmed.to_string(),
+                        tags.tag_id(trimmed),
+                    )
+                })
                 .collect();
             compiled_outputs.sort_by(|a, b| a.1.cmp(&b.1));
+
+            let fb_id = match &blk.kind {
+                FbdBlockKind::StandardFb { instance, .. } => tags.fb_id(instance.trim()),
+                _ => None,
+            };
 
             let composite_local_fbs = if let FbdBlockKind::Composite { type_name } = &blk.kind {
                 self.composites
@@ -480,12 +510,31 @@ impl FbdProgram {
                 None
             };
 
+            let compiled_sub_network = if let Some(ref def) = composite_local_fbs
+                && compiled_st_stmts.is_none()
+                && !def.blocks.is_empty()
+            {
+                let (sub_prog, sub_tags) =
+                    build_composite_sub_program(def, &self.composites, tags);
+                let compiled_sub = sub_prog.compile(&sub_tags)?;
+                Some((Box::new(compiled_sub), sub_tags, ProcessImage::default()))
+            } else {
+                None
+            };
+
+            let output_pins = composite_local_fbs
+                .as_ref()
+                .map(|d| d.output_pins.clone())
+                .unwrap_or_default();
+
             compiled_blocks.push(CompiledFbdBlock {
                 kind: blk.kind.clone(),
+                fb_id,
                 inputs: compiled_inputs,
                 outputs: compiled_outputs,
-                composite_def: composite_local_fbs,
+                output_pins,
                 compiled_st_stmts,
+                compiled_sub_network,
                 slot_out: IecValue::Bool(false),
                 slot_q: IecValue::Bool(false),
                 slot_qu: IecValue::Bool(false),
@@ -532,20 +581,53 @@ impl PinSlot {
     }
 }
 
+fn build_composite_sub_program(
+    comp: &CompositeFbDef,
+    all_composites: &[CompositeFbDef],
+    parent_tags: &TagTable,
+) -> (FbdProgram, TagTable) {
+    let mut sub_tags = parent_tags.clone();
+    for pin in comp.input_pins.iter().chain(comp.output_pins.iter()) {
+        if sub_tags.tag_id(pin).is_none() {
+            let _ = sub_tags.register_tag(TagEntry::new(
+                pin,
+                IecType::Bool,
+                None,
+                IecValue::Bool(false),
+                "Composite FB pin",
+            ));
+        }
+    }
+    let sub_composites: Vec<CompositeFbDef> = all_composites
+        .iter()
+        .filter(|c| c.name != comp.name)
+        .cloned()
+        .collect();
+    let sub_prog = FbdProgram {
+        name: comp.name.clone(),
+        comment: comp.description.clone(),
+        composites: sub_composites,
+        blocks: comp.blocks.clone(),
+    };
+    (sub_prog, sub_tags)
+}
+
 #[derive(Debug, Clone)]
 enum CompiledInputSource {
     Literal(IecValue),
-    Symbol(String),
+    Symbol(String, Option<TagId>),
     Wire { block_idx: usize, pin: PinSlot },
 }
 
 #[derive(Debug, Clone)]
 struct CompiledFbdBlock {
     kind: FbdBlockKind,
+    fb_id: Option<FbId>,
     inputs: Vec<(String, CompiledInputSource)>,
-    outputs: Vec<(PinSlot, String)>,
-    composite_def: Option<CompositeFbDef>,
+    outputs: Vec<(PinSlot, String, Option<TagId>)>,
+    output_pins: Vec<String>,
     compiled_st_stmts: Option<Vec<ferrite_ir::IrStmt>>,
+    compiled_sub_network: Option<(Box<CompiledFbdPou>, TagTable, ProcessImage)>,
     slot_out: IecValue,
     slot_q: IecValue,
     slot_qu: IecValue,
@@ -594,7 +676,8 @@ impl CompiledFbdPou {
     ) -> Result<IecValue, RuntimeError> {
         match src {
             CompiledInputSource::Literal(v) => Ok(v.clone()),
-            CompiledInputSource::Symbol(sym) => ctx.read_symbol(sym),
+            CompiledInputSource::Symbol(_sym, Some(id)) => ctx.read_tag_id(*id),
+            CompiledInputSource::Symbol(sym, None) => ctx.read_symbol(sym),
             CompiledInputSource::Wire { block_idx, pin } => Ok(blocks[*block_idx].read_slot(pin)),
         }
     }
@@ -682,12 +765,23 @@ impl ExecutablePou for CompiledFbdPou {
                             ctx,
                         )?;
                         let pin_name = &current_block.inputs[inp_idx].0;
-                        if let Some(fb) = ctx.tags.get_fb_mut(instance) {
+                        let fb_opt = match current_block.fb_id {
+                            Some(id) => ctx.tags.get_fb_mut_by_id(id),
+                            None => ctx.tags.get_fb_mut(instance),
+                        };
+                        if let Some(fb) = fb_opt {
                             fb.write_pin(pin_name, &val)?;
                         }
                     }
-                    ctx.evaluate_fb(instance)?;
-                    if let Some(fb) = ctx.tags.get_fb(instance) {
+                    match current_block.fb_id {
+                        Some(id) => ctx.evaluate_fb_id(id)?,
+                        None => ctx.evaluate_fb(instance)?,
+                    }
+                    let fb_opt = match current_block.fb_id {
+                        Some(id) => ctx.tags.get_fb_by_id(id),
+                        None => ctx.tags.get_fb(instance),
+                    };
+                    if let Some(fb) = fb_opt {
                         if fb.kind.is_corrector()
                             || matches!(
                                 fb.kind,
@@ -719,23 +813,19 @@ impl ExecutablePou for CompiledFbdPou {
                             let val = Self::read_input(prev_blocks, src, ctx)?;
                             current_block.composite_env.insert(pin_name.clone(), val);
                         }
-                        let output_pins = current_block
-                            .composite_def
-                            .as_ref()
-                            .map(|d| d.output_pins.clone())
-                            .unwrap_or_default();
-                        for out_pin in &output_pins {
-                            current_block
-                                .composite_env
-                                .entry(out_pin.clone())
-                                .or_insert(IecValue::Bool(false));
+                        for out_pin in &current_block.output_pins {
+                            if !current_block.composite_env.contains_key(out_pin) {
+                                current_block
+                                    .composite_env
+                                    .insert(out_pin.clone(), IecValue::Bool(false));
+                            }
                         }
                         for stmt in st_stmts {
                             stmt.execute_with_env(ctx, &mut current_block.composite_env, pou_name)?;
                         }
                         let mut primary_set = false;
-                        let out_count = output_pins.len();
-                        for out_pin in &output_pins {
+                        let out_count = current_block.output_pins.len();
+                        for out_pin in &current_block.output_pins {
                             let mut out_val = None;
                             for (k, v) in &current_block.composite_env {
                                 if k.eq_ignore_ascii_case(out_pin) {
@@ -744,7 +834,11 @@ impl ExecutablePou for CompiledFbdPou {
                                 }
                             }
                             if let Some(v) = out_val {
-                                current_block.custom_slots.insert(out_pin.clone(), v.clone());
+                                if let Some(slot) = current_block.custom_slots.get_mut(out_pin) {
+                                    *slot = v.clone();
+                                } else {
+                                    current_block.custom_slots.insert(out_pin.clone(), v.clone());
+                                }
                                 if out_pin.eq_ignore_ascii_case("OUT")
                                     || (!primary_set && out_count == 1)
                                 {
@@ -764,11 +858,60 @@ impl ExecutablePou for CompiledFbdPou {
                                 current_block.slot_q = v.clone();
                             }
                         }
-                    } else {
-                        // Evaluate composite FB as boolean AND/OR reducer or custom sub-network
-                        if let Some(ref def) = current_block.composite_def {
-                            let _ = FbInstance::new(&def.name, StandardFbKind::Sr);
+                    } else if current_block.compiled_sub_network.is_some() {
+                        let in_len = current_block.inputs.len();
+                        for inp_idx in 0..in_len {
+                            let val = Self::read_input(
+                                prev_blocks,
+                                &current_block.inputs[inp_idx].1,
+                                ctx,
+                            )?;
+                            let pin_name = &current_block.inputs[inp_idx].0;
+                            if let Some((_, ref mut sub_tags, ref mut sub_pi)) =
+                                current_block.compiled_sub_network
+                                && let Some(tag) = sub_tags.get_tag_mut(pin_name)
+                            {
+                                if let Some(addr) = tag.address {
+                                    let _ = sub_pi.write(addr, &val);
+                                }
+                                tag.data_type = val.iec_type();
+                                tag.value = Some(val);
+                            }
                         }
+                        if let Some((ref mut sub_pou, ref mut sub_tags, ref mut sub_pi)) =
+                            current_block.compiled_sub_network
+                        {
+                            let mut sub_ctx =
+                                ScanContext::new(sub_pi, sub_tags, ctx.dt_ms, ctx.scan_count);
+                            sub_pou.execute(&mut sub_ctx)?;
+
+                            let out_count = current_block.output_pins.len();
+                            let mut primary_set = false;
+                            for out_pin in &current_block.output_pins {
+                                if let Some(tag) = sub_tags.get_tag(out_pin) {
+                                    let v = tag.current_value().clone();
+                                    if let Some(slot) = current_block.custom_slots.get_mut(out_pin)
+                                    {
+                                        *slot = v.clone();
+                                    } else {
+                                        current_block
+                                            .custom_slots
+                                            .insert(out_pin.clone(), v.clone());
+                                    }
+                                    if out_pin.eq_ignore_ascii_case("OUT")
+                                        || (!primary_set && out_count == 1)
+                                    {
+                                        current_block.slot_out = v.clone();
+                                        primary_set = true;
+                                    }
+                                    if out_pin.eq_ignore_ascii_case("Q") {
+                                        current_block.slot_q = v;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Evaluate composite FB as boolean AND reducer when no ST body or sub-network is defined
                         let mut result = true;
                         let in_len = current_block.inputs.len();
                         for inp_idx in 0..in_len {
@@ -786,9 +929,12 @@ impl ExecutablePou for CompiledFbdPou {
                 }
             }
 
-            for (slot, target_sym) in &current_block.outputs {
+            for (slot, target_sym, target_id) in &current_block.outputs {
                 let val = current_block.read_slot(slot);
-                ctx.write_symbol(target_sym, val)?;
+                match target_id {
+                    Some(id) => ctx.write_tag_id(*id, val)?,
+                    None => ctx.write_symbol(target_sym, val)?,
+                }
             }
         }
 
@@ -1324,7 +1470,97 @@ mod tests {
             blocks: vec![],
         };
         let res = prog.validate(&tags);
-        assert!(matches!(res, Err(FbdError::Validation(msg)) if msg.contains("graphical sub-network execution is not supported")));
+        assert!(matches!(res, Err(FbdError::Validation(msg)) if msg.contains("invalid graphical sub-network")));
+    }
+
+    #[test]
+    fn test_composite_graphical_subnetwork_execution() -> Result<(), Box<dyn std::error::Error>> {
+        let mut tags = TagTable::new();
+        tags.register_tag(TagEntry::new("A", IecType::Bool, None, IecValue::Bool(true), ""))?;
+        tags.register_tag(TagEntry::new("B", IecType::Bool, None, IecValue::Bool(true), ""))?;
+        tags.register_tag(TagEntry::new("Out", IecType::Bool, None, IecValue::Bool(false), ""))?;
+
+        // NAND composite implemented purely as graphical FBD sub-network (AND -> NOT)
+        let mut and_in = HashMap::new();
+        and_in.insert("IN1".to_string(), FbdInputSource::Value { expr: "IN1".to_string() });
+        and_in.insert("IN2".to_string(), FbdInputSource::Value { expr: "IN2".to_string() });
+
+        let mut not_in = HashMap::new();
+        not_in.insert(
+            "IN".to_string(),
+            FbdInputSource::Link {
+                from_block: "SUB_AND".to_string(),
+                from_pin: "OUT".to_string(),
+            },
+        );
+        let mut not_out = HashMap::new();
+        not_out.insert("OUT".to_string(), "OUT".to_string());
+
+        let nand_def = CompositeFbDef {
+            name: "NAND_SUBNET".to_string(),
+            description: "Graphical sub-network NAND".to_string(),
+            input_pins: vec!["IN1".to_string(), "IN2".to_string()],
+            output_pins: vec!["OUT".to_string()],
+            st_code: None,
+            blocks: vec![
+                FbdBlock {
+                    id: "SUB_AND".to_string(),
+                    kind: FbdBlockKind::And,
+                    inputs: and_in,
+                    outputs: HashMap::new(),
+                    grid_pos: None,
+                },
+                FbdBlock {
+                    id: "SUB_NOT".to_string(),
+                    kind: FbdBlockKind::Not,
+                    inputs: not_in,
+                    outputs: not_out,
+                    grid_pos: None,
+                },
+            ],
+        };
+
+        let mut blk_in = HashMap::new();
+        blk_in.insert("IN1".to_string(), FbdInputSource::Value { expr: "A".to_string() });
+        blk_in.insert("IN2".to_string(), FbdInputSource::Value { expr: "B".to_string() });
+        let mut blk_out = HashMap::new();
+        blk_out.insert("OUT".to_string(), "Out".to_string());
+
+        let prog = FbdProgram {
+            name: "nand_test".to_string(),
+            comment: String::new(),
+            composites: vec![nand_def],
+            blocks: vec![FbdBlock {
+                id: "U1".to_string(),
+                kind: FbdBlockKind::Composite {
+                    type_name: "NAND_SUBNET".to_string(),
+                },
+                inputs: blk_in,
+                outputs: blk_out,
+                grid_pos: None,
+            }],
+        };
+
+        let mut compiled = prog.compile(&tags)?;
+        let mut img = ProcessImage::default();
+
+        // TRUE NAND TRUE = FALSE
+        {
+            let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+            compiled.execute(&mut ctx)?;
+        }
+        assert_eq!(tags.get_tag("Out").map(|t| t.current_value()), Some(&IecValue::Bool(false)));
+
+        // TRUE NAND FALSE = TRUE
+        if let Some(t) = tags.get_tag_mut("B") {
+            t.value = Some(IecValue::Bool(false));
+        }
+        {
+            let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 2);
+            compiled.execute(&mut ctx)?;
+        }
+        assert_eq!(tags.get_tag("Out").map(|t| t.current_value()), Some(&IecValue::Bool(true)));
+        Ok(())
     }
 
     #[test]
@@ -1388,6 +1624,7 @@ mod tests {
         };
         assert!(matches!(bad_out_prog.validate(&tags), Err(FbdError::Validation(msg)) if msg.contains("unknown or invalid output pin")));
     }
+
     #[test]
     fn test_fbd_grid_pos_round_trips() -> Result<(), Box<dyn std::error::Error>> {
         let block = FbdBlock {
@@ -1400,9 +1637,24 @@ mod tests {
 
         let json = serde_json::to_string(&block)?;
         assert!(json.contains("\"grid_pos\""));
+        assert!(
+            json.contains("\"grid_pos\":[340,120]"),
+            "grid_pos must serialize as a compact [x, y] pair, got: {json}"
+        );
 
         let parsed: FbdBlock = serde_json::from_str(&json)?;
         assert_eq!(parsed, block);
+
+        // A block without a position must not emit the key at all.
+        let mut unpinned = block.clone();
+        unpinned.grid_pos = None;
+        let json_none = serde_json::to_string(&unpinned)?;
+        assert!(
+            !json_none.contains("grid_pos"),
+            "None grid_pos must be omitted from serialization, got: {json_none}"
+        );
+        let parsed_none: FbdBlock = serde_json::from_str(&json_none)?;
+        assert_eq!(parsed_none, unpinned);
         Ok(())
     }
 
@@ -1430,5 +1682,4 @@ mod tests {
         prog.compile(&tags)?;
         Ok(())
     }
-
 }

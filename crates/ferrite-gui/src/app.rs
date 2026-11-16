@@ -196,7 +196,8 @@ pub enum Message {
     CopySelection,
     PasteClipboard,
     ClipboardPasted(Option<String>),
-    FbdBlockSelected(usize),
+    #[deprecated(note = "index-based FBD messages are being removed in favour of id-based ones")]
+    FbdBlockSelectedByIndex(usize),
     FbdBlockDragStarted(String, usize),
     FbdBlockDragHovered(String, usize),
     FbdBlockDragDropped,
@@ -397,14 +398,31 @@ pub enum Message {
     ToggleForceTag(String),
 
     // Function Block Diagram (FBD)
-    FbdAddBlock(String, FbdBlockKind),
-    FbdRemoveBlock(String, usize),
-    FbdInputSourceChanged(String, usize, String, String),
-    FbdOutputTargetChanged(String, usize, String, String),
+    FbdAddBlock(String, FbdBlockKind, Option<[i32; 2]>),
+    #[deprecated(note = "index-based FBD messages are being removed in favour of id-based ones")]
+    FbdRemoveBlockByIndex(String, usize),
+    FbdRemoveBlock(String, String),
+    #[deprecated(note = "index-based FBD messages are being removed in favour of id-based ones")]
+    FbdInputSourceChangedByIndex(String, usize, String, String),
+    FbdInputSourceChanged(String, String, String, String),
+    #[deprecated(note = "index-based FBD messages are being removed in favour of id-based ones")]
+    FbdOutputTargetChangedByIndex(String, usize, String, String),
+    FbdOutputTargetChanged(String, String, String, String),
     FbdChangeCorrectorKind(String, usize, StandardFbKind),
-    FbdBlockIdChanged(String, usize, String),
+    #[deprecated(note = "index-based FBD messages are being removed in favour of id-based ones")]
+    FbdBlockIdChangedByIndex(String, usize, String),
+    FbdBlockIdChanged(String, String, String),
     FbdMoveBlockUp(String, usize),
     FbdMoveBlockDown(String, usize),
+    FbdBlockSelected(String, Option<String>),
+    FbdBlockMoved(String, String, [i32; 2]),
+    FbdAddInputPin(String, String),
+    FbdRemoveInputPin(String, String, String),
+    FbdDisconnectInput(String, String, String),
+    FbdDisconnectOutput(String, String, String),
+    FbdChangeKind(String, String, FbdBlockKind),
+    FbdInlineEditingChanged(bool),
+    FbdViewportChanged(String, Vector, f32, iced::Size),
 
     // Digital Twin
     DigitalTwinToggleElement(u64),
@@ -500,9 +518,12 @@ pub struct FerriteStudioApp {
     pub custom_fbd_validation_error: Option<String>,
     pub custom_fbd_editing_name: Option<String>,
     pub global_custom_fbs: Vec<ferrite_lang_fbd::CompositeFbDef>,
-    pub fbd_selected_block: Option<usize>,
+    pub fbd_selected_block: Option<String>,
+    pub fbd_selected_block_idx: Option<usize>,
     pub fbd_dragging_block: Option<usize>,
     pub fbd_drag_hover_block: Option<usize>,
+    pub fbd_inline_editing: bool,
+    pub fbd_viewport: HashMap<String, (Vector, f32, iced::Size)>,
     pub help_window_id: Option<iced::window::Id>,
     pub digital_twin_window_id: Option<iced::window::Id>,
     pub twin_elapsed_ms: u64,
@@ -740,8 +761,11 @@ impl FerriteStudioApp {
             custom_fbd_editing_name: None,
             global_custom_fbs: crate::custom_fbd_library::load_global_library().blocks,
             fbd_selected_block: None,
+            fbd_selected_block_idx: None,
             fbd_dragging_block: None,
             fbd_drag_hover_block: None,
+            fbd_inline_editing: false,
+            fbd_viewport: HashMap::new(),
             help_window_id: None,
             digital_twin_window_id: None,
             twin_elapsed_ms: 0,
@@ -944,6 +968,7 @@ impl FerriteStudioApp {
         self.sfc_selected_elements.clear();
         self.sfc_delete_modal = None;
         self.fbd_selected_block = None;
+        self.fbd_selected_block_idx = None;
         self.fbd_dragging_block = None;
         self.fbd_drag_hover_block = None;
         self.dragging_pou = None;
@@ -1197,6 +1222,297 @@ impl FerriteStudioApp {
                     self.status_banner = format!("Compilation error: {e}");
                 }
             }
+        }
+    }
+
+    /// Computes the creation defaults for a new FBD block of `kind`.
+    ///
+    /// Returns the (possibly uniquified) kind, the block id to use, the default
+    /// input sources, and — for `StandardFb` kinds — the instance to register in
+    /// the project's FB instance table. `exclude_block_id` names a block whose id
+    /// must not count as an instance-name collision (used when re-kinding an
+    /// existing block in place).
+    fn fbd_resolve_new_kind(
+        fbd: &ferrite_lang_fbd::FbdProgram,
+        instances: &[FbInstance],
+        mut kind: FbdBlockKind,
+        next_block_id: &str,
+        exclude_block_id: Option<&str>,
+    ) -> (
+        FbdBlockKind,
+        String,
+        HashMap<String, FbdInputSource>,
+        Option<(String, StandardFbKind)>,
+    ) {
+        let instance_taken = |name: &str| {
+            fbd.blocks
+                .iter()
+                .any(|b| &b.id == name && Some(b.id.as_str()) != exclude_block_id)
+                || instances.iter().any(|fb| fb.name == name)
+        };
+
+        if let FbdBlockKind::StandardFb { ref mut instance, .. } = kind
+            && instance_taken(instance)
+        {
+            let prefix = if let Some(pos) = instance.rfind('_') {
+                instance[..=pos].to_string()
+            } else {
+                format!("{instance}_")
+            };
+            let mut candidate = 1;
+            while instance_taken(&format!("{prefix}{candidate}")) {
+                candidate += 1;
+            }
+            *instance = format!("{prefix}{candidate}");
+        }
+
+        let next_block_id = next_block_id.to_string();
+        match &kind {
+            FbdBlockKind::StandardFb {
+                instance,
+                fb_type: Some(k),
+            } if k.is_corrector() => {
+                let mut ins = HashMap::new();
+                ins.insert(
+                    "SP".to_string(),
+                    FbdInputSource::Value {
+                        expr: "60.0".to_string(),
+                    },
+                );
+                ins.insert(
+                    "PV".to_string(),
+                    FbdInputSource::Value {
+                        expr: "0.0".to_string(),
+                    },
+                );
+                ins.insert(
+                    "KP".to_string(),
+                    FbdInputSource::Value {
+                        expr: "2.0".to_string(),
+                    },
+                );
+                if k.has_integral() {
+                    ins.insert(
+                        "TI".to_string(),
+                        FbdInputSource::Value {
+                            expr: "5.0".to_string(),
+                        },
+                    );
+                }
+                if k.has_derivative() {
+                    ins.insert(
+                        "TD".to_string(),
+                        FbdInputSource::Value {
+                            expr: "0.5".to_string(),
+                        },
+                    );
+                }
+                (kind.clone(), instance.clone(), ins, Some((instance.clone(), *k)))
+            }
+            FbdBlockKind::StandardFb {
+                instance,
+                fb_type: Some(k),
+            } => {
+                let mut ins = HashMap::new();
+                match k {
+                    StandardFbKind::Ton | StandardFbKind::Tof | StandardFbKind::Tp => {
+                        ins.insert(
+                            "IN".to_string(),
+                            FbdInputSource::Value {
+                                expr: "TRUE".to_string(),
+                            },
+                        );
+                        ins.insert(
+                            "PT".to_string(),
+                            FbdInputSource::Value {
+                                expr: "T#1s".to_string(),
+                            },
+                        );
+                    }
+                    StandardFbKind::Ctu => {
+                        ins.insert(
+                            "CU".to_string(),
+                            FbdInputSource::Value {
+                                expr: "FALSE".to_string(),
+                            },
+                        );
+                        ins.insert(
+                            "R".to_string(),
+                            FbdInputSource::Value {
+                                expr: "FALSE".to_string(),
+                            },
+                        );
+                        ins.insert(
+                            "PV".to_string(),
+                            FbdInputSource::Value {
+                                expr: "10".to_string(),
+                            },
+                        );
+                    }
+                    StandardFbKind::Ctd => {
+                        ins.insert(
+                            "CD".to_string(),
+                            FbdInputSource::Value {
+                                expr: "FALSE".to_string(),
+                            },
+                        );
+                        ins.insert(
+                            "LD".to_string(),
+                            FbdInputSource::Value {
+                                expr: "FALSE".to_string(),
+                            },
+                        );
+                        ins.insert(
+                            "PV".to_string(),
+                            FbdInputSource::Value {
+                                expr: "10".to_string(),
+                            },
+                        );
+                    }
+                    StandardFbKind::Ctud => {
+                        for (p, v) in [("CU", "FALSE"), ("CD", "FALSE"), ("R", "FALSE"), ("LD", "FALSE"), ("PV", "10")] {
+                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                        }
+                    }
+                    StandardFbKind::Blink => {
+                        for (p, v) in [("ENABLE", "TRUE"), ("TIMELOW", "T#500ms"), ("TIMEHIGH", "T#500ms")] {
+                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                        }
+                    }
+                    StandardFbKind::Hysteresis => {
+                        for (p, v) in [("IN", "0.0"), ("LOW", "20.0"), ("HIGH", "80.0")] {
+                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                        }
+                    }
+                    StandardFbKind::RampReal => {
+                        for (p, v) in [("IN", "100.0"), ("ASC", "10.0"), ("DSC", "10.0"), ("RESET", "FALSE")] {
+                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                        }
+                    }
+                    StandardFbKind::ScaleLin => {
+                        for (p, v) in [("IN", "0.0"), ("IN_MIN", "0.0"), ("IN_MAX", "27648.0"), ("OUT_MIN", "0.0"), ("OUT_MAX", "100.0")] {
+                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                        }
+                    }
+                    StandardFbKind::Sr => {
+                        for (p, v) in [("S1", "FALSE"), ("R", "FALSE")] {
+                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                        }
+                    }
+                    StandardFbKind::Rs => {
+                        for (p, v) in [("S", "FALSE"), ("R1", "FALSE")] {
+                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                        }
+                    }
+                    StandardFbKind::RTrig | StandardFbKind::FTrig => {
+                        ins.insert("CLK".to_string(), FbdInputSource::Value { expr: "FALSE".to_string() });
+                    }
+                    _ => {
+                        ins.insert(
+                            "IN1".to_string(),
+                            FbdInputSource::Value {
+                                expr: "TRUE".to_string(),
+                            },
+                        );
+                    }
+                }
+                (kind.clone(), instance.clone(), ins, Some((instance.clone(), *k)))
+            }
+            FbdBlockKind::Not => {
+                let mut ins = HashMap::new();
+                ins.insert(
+                    "IN1".to_string(),
+                    FbdInputSource::Value {
+                        expr: "TRUE".to_string(),
+                    },
+                );
+                (kind, next_block_id, ins, None)
+            }
+            _ => {
+                let mut ins = HashMap::new();
+                ins.insert(
+                    "IN1".to_string(),
+                    FbdInputSource::Value {
+                        expr: "TRUE".to_string(),
+                    },
+                );
+                ins.insert(
+                    "IN2".to_string(),
+                    FbdInputSource::Value {
+                        expr: "TRUE".to_string(),
+                    },
+                );
+                (kind, next_block_id, ins, None)
+            }
+        }
+    }
+
+    /// Per-kind input remap used by `FbdChangeKind` when retargeting between
+    /// operator families: variadic operators keep `IN1..INk`, `Not` keeps exactly
+    /// one input, comparisons and binary arithmetic keep two.
+    fn remap_inputs_for_kind(
+        kind: &FbdBlockKind,
+        old: &HashMap<String, FbdInputSource>,
+    ) -> HashMap<String, FbdInputSource> {
+        let default_true =
+            || FbdInputSource::Value { expr: "TRUE".to_string() };
+        match kind {
+            FbdBlockKind::And
+            | FbdBlockKind::Or
+            | FbdBlockKind::Xor
+            | FbdBlockKind::Add
+            | FbdBlockKind::Mul => {
+                // Variadic: keep the existing IN1..INk pins, padding up to two.
+                let mut inputs: HashMap<String, FbdInputSource> = old
+                    .iter()
+                    .filter(|(k, _)| {
+                        k.len() > 2
+                            && k.starts_with("IN")
+                            && k[2..].chars().all(|c| c.is_ascii_digit())
+                    })
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                if inputs.is_empty() {
+                    // Nothing IN-numbered to keep: fall back to the old inputs as-is.
+                    inputs = old.clone();
+                }
+                let mut n = inputs.len() + 1;
+                while inputs.len() < 2 {
+                    inputs.entry(format!("IN{n}")).or_insert_with(default_true);
+                    n += 1;
+                }
+                inputs
+            }
+            FbdBlockKind::Not => {
+                let mut inputs = HashMap::new();
+                let kept = old
+                    .get("IN1")
+                    .cloned()
+                    .or_else(|| old.values().next().cloned())
+                    .unwrap_or_else(default_true);
+                inputs.insert("IN1".to_string(), kept);
+                inputs
+            }
+            FbdBlockKind::Sub
+            | FbdBlockKind::Div
+            | FbdBlockKind::Gt
+            | FbdBlockKind::Ge
+            | FbdBlockKind::Lt
+            | FbdBlockKind::Le
+            | FbdBlockKind::Eq
+            | FbdBlockKind::Ne => {
+                let mut inputs = HashMap::new();
+                inputs.insert(
+                    "IN1".to_string(),
+                    old.get("IN1").cloned().unwrap_or_else(default_true),
+                );
+                inputs.insert(
+                    "IN2".to_string(),
+                    old.get("IN2").cloned().unwrap_or_else(default_true),
+                );
+                inputs
+            }
+            _ => old.clone(),
         }
     }
 
@@ -2872,7 +3188,7 @@ impl FerriteStudioApp {
                         }
                     }
                     PouSource::Fbd(fbd) => {
-                        let block_idx = self.fbd_selected_block.or(
+                        let block_idx = self.fbd_selected_block_idx.or(
                             if !fbd.blocks.is_empty() { Some(0) } else { None }
                         );
                         if let Some(idx) = block_idx {
@@ -3042,7 +3358,7 @@ impl FerriteStudioApp {
                             return Task::none();
                         }
 
-                        let insert_pos = if let Some(sel_idx) = self.fbd_selected_block {
+                        let insert_pos = if let Some(sel_idx) = self.fbd_selected_block_idx {
                             (sel_idx + 1).min(fbd.blocks.len())
                         } else {
                             fbd.blocks.len()
@@ -3060,10 +3376,17 @@ impl FerriteStudioApp {
                                 new_id = format!("{}_{}", base_name, suffix);
                             }
                             block.id = new_id;
+                            // Offset the pasted block on the canvas grid (+2 grid cells of 20 px).
+                            if let Some(gp) = block.grid_pos.as_mut() {
+                                gp[0] += 2 * 20;
+                                gp[1] += 2 * 20;
+                            }
                             fbd.blocks.insert(insert_pos + offset, block);
                         }
 
-                        self.fbd_selected_block = Some(first_inserted);
+                        let pasted_id = fbd.blocks[first_inserted].id.clone();
+                        self.fbd_selected_block = Some(pasted_id);
+                        self.fbd_selected_block_idx = Some(first_inserted);
                         self.track_history();
                         self.modified = self.project.pous != self.saved_pous;
                     }
@@ -3071,13 +3394,36 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
-            Message::FbdBlockSelected(idx) => {
-                self.fbd_selected_block = Some(idx);
+            #[allow(deprecated)] // boundary shim: removed in Task 8
+            Message::FbdBlockSelectedByIndex(idx) => {
+                self.fbd_selected_block_idx = Some(idx);
+                if let WorkspaceTab::Pou(pou_name) = &self.active_tab
+                    && let Some(PouSource::Fbd(fbd)) = self.project.pous.get(pou_name)
+                    && let Some(blk) = fbd.blocks.get(idx)
+                {
+                    self.fbd_selected_block = Some(blk.id.clone());
+                }
+                Task::none()
+            }
+            Message::FbdBlockSelected(pou_name, block_id) => {
+                self.fbd_selected_block = block_id.clone();
+                self.fbd_selected_block_idx = None;
+                if let Some(id) = &block_id
+                    && let Some(PouSource::Fbd(fbd)) = self.project.pous.get(&pou_name)
+                    && let Some(idx) = fbd.blocks.iter().position(|b| &b.id == id)
+                {
+                    self.fbd_selected_block_idx = Some(idx);
+                }
                 Task::none()
             }
             Message::FbdBlockDragStarted(pou_name, idx) => {
-                self.active_tab = WorkspaceTab::Pou(pou_name);
-                self.fbd_selected_block = Some(idx);
+                self.active_tab = WorkspaceTab::Pou(pou_name.clone());
+                self.fbd_selected_block_idx = Some(idx);
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(&pou_name)
+                    && let Some(blk) = fbd.blocks.get(idx)
+                {
+                    self.fbd_selected_block = Some(blk.id.clone());
+                }
                 self.fbd_dragging_block = Some(idx);
                 self.fbd_drag_hover_block = None;
                 Task::none()
@@ -3098,7 +3444,12 @@ impl FerriteStudioApp {
                 {
                     let blk = fbd.blocks.remove(from);
                     fbd.blocks.insert(to, blk);
-                    self.fbd_selected_block = Some(to);
+                    self.fbd_selected_block_idx = Some(to);
+                    if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(pou_name)
+                        && let Some(blk) = fbd.blocks.get(to)
+                    {
+                        self.fbd_selected_block = Some(blk.id.clone());
+                    }
                     self.track_history();
                     self.modified = self.project.pous != self.saved_pous;
                 }
@@ -3132,9 +3483,19 @@ impl FerriteStudioApp {
                             return self.update(Message::SfcRequestDeleteSelected(p));
                         }
                         PouSource::Fbd(_) => {
-                            if let Some(b_idx) = self.fbd_selected_block.take() {
+                            if self.fbd_inline_editing {
+                                // Text field inside the FBD canvas has focus: Delete is
+                                // owned by the text editor, not the block list.
+                                return Task::none();
+                            }
+                            if let Some(b_idx) = self.fbd_selected_block_idx.take() {
                                 let p = pou_name.clone();
-                                return self.update(Message::FbdRemoveBlock(p, b_idx));
+                                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(pou_name)
+                                    && let Some(blk) = fbd.blocks.get(b_idx)
+                                {
+                                    let id = blk.id.clone();
+                                    return self.update(Message::FbdRemoveBlock(p, id));
+                                }
                             }
                         }
                         _ => {}
@@ -5263,208 +5624,19 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
-            Message::FbdAddBlock(pou_name, mut kind) => {
+            Message::FbdAddBlock(pou_name, kind, grid_pos) => {
                 if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name) {
-                    if let FbdBlockKind::StandardFb { ref mut instance, .. } = kind
-                        && (fbd.blocks.iter().any(|b| &b.id == instance)
-                            || self.project.fb_instances.instances.iter().any(|fb| &fb.name == instance))
-                    {
-                        let prefix = if let Some(pos) = instance.rfind('_') {
-                            instance[..=pos].to_string()
-                        } else {
-                            format!("{instance}_")
-                        };
-                        let mut candidate = 1;
-                        while fbd.blocks.iter().any(|b| b.id == format!("{prefix}{candidate}"))
-                            || self.project.fb_instances.instances.iter().any(|fb| fb.name == format!("{prefix}{candidate}"))
-                        {
-                            candidate += 1;
-                        }
-                        *instance = format!("{prefix}{candidate}");
-                    }
-
                     let mut next = 1;
                     while fbd.blocks.iter().any(|b| b.id == format!("Block_{next}")) {
                         next += 1;
                     }
-                    let (block_id, inputs, fb_to_register) = match &kind {
-                        FbdBlockKind::StandardFb {
-                            instance,
-                            fb_type: Some(k),
-                        } if k.is_corrector() => {
-                            let mut ins = HashMap::new();
-                            ins.insert(
-                                "SP".to_string(),
-                                FbdInputSource::Value {
-                                    expr: "60.0".to_string(),
-                                },
-                            );
-                            ins.insert(
-                                "PV".to_string(),
-                                FbdInputSource::Value {
-                                    expr: "0.0".to_string(),
-                                },
-                            );
-                            ins.insert(
-                                "KP".to_string(),
-                                FbdInputSource::Value {
-                                    expr: "2.0".to_string(),
-                                },
-                            );
-                            if k.has_integral() {
-                                ins.insert(
-                                    "TI".to_string(),
-                                    FbdInputSource::Value {
-                                        expr: "5.0".to_string(),
-                                    },
-                                );
-                            }
-                            if k.has_derivative() {
-                                ins.insert(
-                                    "TD".to_string(),
-                                    FbdInputSource::Value {
-                                        expr: "0.5".to_string(),
-                                    },
-                                );
-                            }
-                            (instance.clone(), ins, Some((instance.clone(), *k)))
-                        }
-                        FbdBlockKind::StandardFb {
-                            instance,
-                            fb_type: Some(k),
-                        } => {
-                            let mut ins = HashMap::new();
-                            match k {
-                                StandardFbKind::Ton | StandardFbKind::Tof | StandardFbKind::Tp => {
-                                    ins.insert(
-                                        "IN".to_string(),
-                                        FbdInputSource::Value {
-                                            expr: "TRUE".to_string(),
-                                        },
-                                    );
-                                    ins.insert(
-                                        "PT".to_string(),
-                                        FbdInputSource::Value {
-                                            expr: "T#1s".to_string(),
-                                        },
-                                    );
-                                }
-                                StandardFbKind::Ctu => {
-                                    ins.insert(
-                                        "CU".to_string(),
-                                        FbdInputSource::Value {
-                                            expr: "FALSE".to_string(),
-                                        },
-                                    );
-                                    ins.insert(
-                                        "R".to_string(),
-                                        FbdInputSource::Value {
-                                            expr: "FALSE".to_string(),
-                                        },
-                                    );
-                                    ins.insert(
-                                        "PV".to_string(),
-                                        FbdInputSource::Value {
-                                            expr: "10".to_string(),
-                                        },
-                                    );
-                                }
-                                StandardFbKind::Ctd => {
-                                    ins.insert(
-                                        "CD".to_string(),
-                                        FbdInputSource::Value {
-                                            expr: "FALSE".to_string(),
-                                        },
-                                    );
-                                    ins.insert(
-                                        "LD".to_string(),
-                                        FbdInputSource::Value {
-                                            expr: "FALSE".to_string(),
-                                        },
-                                    );
-                                    ins.insert(
-                                        "PV".to_string(),
-                                        FbdInputSource::Value {
-                                            expr: "10".to_string(),
-                                        },
-                                    );
-                                }
-                                StandardFbKind::Ctud => {
-                                    for (p, v) in [("CU", "FALSE"), ("CD", "FALSE"), ("R", "FALSE"), ("LD", "FALSE"), ("PV", "10")] {
-                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
-                                    }
-                                }
-                                StandardFbKind::Blink => {
-                                    for (p, v) in [("ENABLE", "TRUE"), ("TIMELOW", "T#500ms"), ("TIMEHIGH", "T#500ms")] {
-                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
-                                    }
-                                }
-                                StandardFbKind::Hysteresis => {
-                                    for (p, v) in [("IN", "0.0"), ("LOW", "20.0"), ("HIGH", "80.0")] {
-                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
-                                    }
-                                }
-                                StandardFbKind::RampReal => {
-                                    for (p, v) in [("IN", "100.0"), ("ASC", "10.0"), ("DSC", "10.0"), ("RESET", "FALSE")] {
-                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
-                                    }
-                                }
-                                StandardFbKind::ScaleLin => {
-                                    for (p, v) in [("IN", "0.0"), ("IN_MIN", "0.0"), ("IN_MAX", "27648.0"), ("OUT_MIN", "0.0"), ("OUT_MAX", "100.0")] {
-                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
-                                    }
-                                }
-                                StandardFbKind::Sr => {
-                                    for (p, v) in [("S1", "FALSE"), ("R", "FALSE")] {
-                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
-                                    }
-                                }
-                                StandardFbKind::Rs => {
-                                    for (p, v) in [("S", "FALSE"), ("R1", "FALSE")] {
-                                        ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
-                                    }
-                                }
-                                StandardFbKind::RTrig | StandardFbKind::FTrig => {
-                                    ins.insert("CLK".to_string(), FbdInputSource::Value { expr: "FALSE".to_string() });
-                                }
-                                _ => {
-                                    ins.insert(
-                                        "IN1".to_string(),
-                                        FbdInputSource::Value {
-                                            expr: "TRUE".to_string(),
-                                        },
-                                    );
-                                }
-                            }
-                            (instance.clone(), ins, Some((instance.clone(), *k)))
-                        }
-                        FbdBlockKind::Not => {
-                            let mut ins = HashMap::new();
-                            ins.insert(
-                                "IN1".to_string(),
-                                FbdInputSource::Value {
-                                    expr: "TRUE".to_string(),
-                                },
-                            );
-                            (format!("Block_{next}"), ins, None)
-                        }
-                        _ => {
-                            let mut ins = HashMap::new();
-                            ins.insert(
-                                "IN1".to_string(),
-                                FbdInputSource::Value {
-                                    expr: "TRUE".to_string(),
-                                },
-                            );
-                            ins.insert(
-                                "IN2".to_string(),
-                                FbdInputSource::Value {
-                                    expr: "TRUE".to_string(),
-                                },
-                            );
-                            (format!("Block_{next}"), ins, None)
-                        }
-                    };
+                    let (kind, block_id, inputs, fb_to_register) = Self::fbd_resolve_new_kind(
+                        fbd,
+                        &self.project.fb_instances.instances,
+                        kind,
+                        &format!("Block_{next}"),
+                        None,
+                    );
 
                     if fbd.blocks.iter().any(|b| b.id == block_id) {
                         return Task::none();
@@ -5489,7 +5661,7 @@ impl FerriteStudioApp {
                         kind,
                         inputs,
                         outputs: HashMap::new(),
-                        grid_pos: None,
+                        grid_pos,
                     });
                     self.track_history();
                     self.modified = self.is_dirty();
@@ -5497,16 +5669,32 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
-            Message::FbdRemoveBlock(pou_name, b_idx) => {
-                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name) {
+            Message::FbdRemoveBlock(pou_name, block_id) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(b_idx) = fbd.blocks.iter().position(|b| b.id == block_id)
+                {
                     delete_fbd_block(fbd, b_idx);
+                    if self.fbd_selected_block.as_deref() == Some(block_id.as_str()) {
+                        self.fbd_selected_block = None;
+                        self.fbd_selected_block_idx = None;
+                    }
                     self.track_history();
                     self.modified = true;
                     self.recompile_runtime();
                 }
                 Task::none()
             }
-            Message::FbdInputSourceChanged(pou_name, b_idx, pin, val_str) => {
+            #[allow(deprecated)] // boundary shim: removed in Task 8
+            Message::FbdRemoveBlockByIndex(pou_name, b_idx) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(&pou_name)
+                    && let Some(blk) = fbd.blocks.get(b_idx)
+                {
+                    let id = blk.id.clone();
+                    return self.update(Message::FbdRemoveBlock(pou_name, id));
+                }
+                Task::none()
+            }
+            Message::FbdInputSourceChanged(pou_name, block_id, pin, val_str) => {
                 if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name) {
                     let is_numeric = val_str.trim().parse::<f64>().is_ok();
                     let is_direct_addr = val_str.trim().starts_with('%');
@@ -5524,7 +5712,7 @@ impl FerriteStudioApp {
                         FbdInputSource::Value { expr: val_str }
                     };
 
-                    if let Some(blk) = fbd.blocks.get_mut(b_idx) {
+                    if let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == block_id) {
                         blk.inputs.insert(pin, new_src);
                         self.track_history();
                         self.modified = true;
@@ -5533,9 +5721,19 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
-            Message::FbdOutputTargetChanged(pou_name, b_idx, pin, target_str) => {
+            #[allow(deprecated)] // boundary shim: removed in Task 8
+            Message::FbdInputSourceChangedByIndex(pou_name, b_idx, pin, val_str) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(&pou_name)
+                    && let Some(blk) = fbd.blocks.get(b_idx)
+                {
+                    let id = blk.id.clone();
+                    return self.update(Message::FbdInputSourceChanged(pou_name, id, pin, val_str));
+                }
+                Task::none()
+            }
+            Message::FbdOutputTargetChanged(pou_name, block_id, pin, target_str) => {
                 if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
-                    && let Some(blk) = fbd.blocks.get_mut(b_idx)
+                    && let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == block_id)
                 {
                     if target_str.trim().is_empty() {
                         blk.outputs.remove(&pin);
@@ -5545,6 +5743,16 @@ impl FerriteStudioApp {
                     self.track_history();
                     self.modified = true;
                     self.recompile_runtime();
+                }
+                Task::none()
+            }
+            #[allow(deprecated)] // boundary shim: removed in Task 8
+            Message::FbdOutputTargetChangedByIndex(pou_name, b_idx, pin, target_str) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(&pou_name)
+                    && let Some(blk) = fbd.blocks.get(b_idx)
+                {
+                    let id = blk.id.clone();
+                    return self.update(Message::FbdOutputTargetChanged(pou_name, id, pin, target_str));
                 }
                 Task::none()
             }
@@ -5606,41 +5814,243 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
-            Message::FbdBlockIdChanged(pou_name, b_idx, new_id) => {
-                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+            Message::FbdBlockIdChanged(pou_name, old_id, new_id) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name) {
+                    let trimmed = new_id.trim().to_string();
+                    let had_matching_instance = fbd
+                        .blocks
+                        .iter()
+                        .find(|b| b.id == old_id)
+                        .is_some_and(|blk| {
+                            matches!(&blk.kind, FbdBlockKind::StandardFb { instance, .. } if instance == &old_id)
+                        });
+
+                    // Empty or duplicate block ids are refused: no rename, no recompile.
+                    if !trimmed.is_empty()
+                        && trimmed != old_id
+                        && !fbd.blocks.iter().any(|b| b.id == trimmed)
+                        && fbd.rename_block(&old_id, &trimmed).is_ok()
+                    {
+                        if had_matching_instance {
+                            if let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == trimmed)
+                                && let FbdBlockKind::StandardFb { instance, .. } = &mut blk.kind
+                            {
+                                *instance = trimmed.clone();
+                            }
+                            if let Some(fb) = self
+                                .project
+                                .fb_instances
+                                .instances
+                                .iter_mut()
+                                .find(|fb| fb.name == old_id)
+                            {
+                                fb.name = trimmed.clone();
+                            }
+                        }
+                        if self.fbd_selected_block.as_deref() == Some(old_id.as_str()) {
+                            self.fbd_selected_block = Some(trimmed.clone());
+                        }
+                        self.track_history();
+                        self.modified = true;
+                        self.recompile_runtime();
+                    }
+                }
+                Task::none()
+            }
+            #[allow(deprecated)] // boundary shim: removed in Task 8
+            Message::FbdBlockIdChangedByIndex(pou_name, b_idx, new_id) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(&pou_name)
                     && let Some(blk) = fbd.blocks.get(b_idx)
                 {
                     let old_id = blk.id.clone();
-                    let trimmed = new_id.trim();
-                    if !trimmed.is_empty() && trimmed != old_id {
-                        let had_matching_instance = match &blk.kind {
-                            FbdBlockKind::StandardFb { instance, .. } => instance == &old_id,
-                            _ => false,
-                        };
-
-                        if fbd.rename_block(&old_id, trimmed).is_ok() {
-                            if had_matching_instance {
-                                if let Some(blk) = fbd.blocks.get_mut(b_idx)
-                                    && let FbdBlockKind::StandardFb { instance, .. } = &mut blk.kind
-                                {
-                                    *instance = trimmed.to_string();
-                                }
-                                if let Some(fb) = self
-                                    .project
-                                    .fb_instances
-                                    .instances
-                                    .iter_mut()
-                                    .find(|fb| fb.name == old_id)
-                                {
-                                    fb.name = trimmed.to_string();
-                                }
+                    return self.update(Message::FbdBlockIdChanged(pou_name, old_id, new_id));
+                }
+                Task::none()
+            }
+            Message::FbdBlockMoved(pou_name, block_id, pos) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == block_id)
+                    && blk.grid_pos != Some(pos)
+                {
+                    blk.grid_pos = Some(pos);
+                    self.track_history();
+                    self.modified = true;
+                }
+                Task::none()
+            }
+            Message::FbdAddInputPin(pou_name, block_id) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == block_id)
+                {
+                    let mut n = blk.inputs.len() + 1;
+                    while blk.inputs.contains_key(&format!("IN{n}")) {
+                        n += 1;
+                    }
+                    blk.inputs.insert(
+                        format!("IN{n}"),
+                        FbdInputSource::Value {
+                            expr: "TRUE".to_string(),
+                        },
+                    );
+                    self.track_history();
+                    self.modified = true;
+                    self.recompile_runtime();
+                }
+                Task::none()
+            }
+            Message::FbdRemoveInputPin(pou_name, block_id, pin) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(b_idx) = fbd.blocks.iter().position(|b| b.id == block_id)
+                    && fbd.blocks[b_idx].inputs.len() > 2
+                    && fbd.blocks[b_idx].inputs.contains_key(&pin)
+                {
+                    fbd.blocks[b_idx].inputs.remove(&pin);
+                    // Every inbound link pointing at the removed pin becomes a constant 0
+                    // in the same mutation, keeping the program compilable.
+                    for blk in &mut fbd.blocks {
+                        for src in blk.inputs.values_mut() {
+                            if let FbdInputSource::Link { from_block, from_pin } = src
+                                && *from_block == block_id
+                                && *from_pin == pin
+                            {
+                                *src = FbdInputSource::Value {
+                                    expr: "0".to_string(),
+                                };
                             }
-                            self.track_history();
-                            self.modified = true;
-                            self.recompile_runtime();
                         }
                     }
+                    self.track_history();
+                    self.modified = true;
+                    self.recompile_runtime();
                 }
+                Task::none()
+            }
+            Message::FbdDisconnectInput(pou_name, block_id, pin) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == block_id)
+                    && blk.inputs.contains_key(&pin)
+                {
+                    blk.inputs.insert(
+                        pin,
+                        FbdInputSource::Value {
+                            expr: "0".to_string(),
+                        },
+                    );
+                    self.track_history();
+                    self.modified = true;
+                    self.recompile_runtime();
+                }
+                Task::none()
+            }
+            Message::FbdDisconnectOutput(pou_name, block_id, pin) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == block_id)
+                    && blk.outputs.remove(&pin).is_some()
+                {
+                    self.track_history();
+                    self.modified = true;
+                    self.recompile_runtime();
+                }
+                Task::none()
+            }
+            Message::FbdChangeKind(pou_name, block_id, new_kind) => {
+                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
+                    && let Some(b_idx) = fbd.blocks.iter().position(|b| b.id == block_id)
+                {
+                    let old_kind = fbd.blocks[b_idx].kind.clone();
+                    let old_inputs = fbd.blocks[b_idx].inputs.clone();
+                    let reset_to_defaults = matches!(
+                        &new_kind,
+                        FbdBlockKind::StandardFb { .. } | FbdBlockKind::Composite { .. }
+                    );
+
+                    // Switching away from a StandardFb whose instance name matches the
+                    // block id unregisters that instance.
+                    if let FbdBlockKind::StandardFb { instance, .. } = &old_kind
+                        && instance == &block_id
+                    {
+                        self.project
+                            .fb_instances
+                            .instances
+                            .retain(|fb| fb.name != *instance);
+                    }
+
+                    let (resolved_kind, inputs, fb_to_register) = if reset_to_defaults {
+                        // StandardFb / Composite: reset to that kind's creation defaults.
+                        let mut next = 1;
+                        while fbd.blocks.iter().any(|b| b.id == format!("Block_{next}")) {
+                            next += 1;
+                        }
+                        let (resolved, _block_id, inputs, fb_to_register) = Self::fbd_resolve_new_kind(
+                            fbd,
+                            &self.project.fb_instances.instances,
+                            new_kind,
+                            &format!("Block_{next}"),
+                            Some(block_id.as_str()),
+                        );
+                        (resolved, inputs, fb_to_register)
+                    } else {
+                        (
+                            new_kind.clone(),
+                            Self::remap_inputs_for_kind(&new_kind, &old_inputs),
+                            None,
+                        )
+                    };
+
+                    // A StandardFb block id must equal its instance name; renaming through
+                    // `rename_block` rewires all downstream link references.
+                    if let FbdBlockKind::StandardFb { instance, .. } = &resolved_kind
+                        && instance != &block_id
+                    {
+                        if fbd.blocks.iter().any(|b| b.id == *instance)
+                            || fbd.rename_block(&block_id, instance).is_err()
+                        {
+                            return Task::none();
+                        }
+                    }
+
+                    if let Some((inst_name, fb_kind)) = fb_to_register
+                        && !self
+                            .project
+                            .fb_instances
+                            .instances
+                            .iter()
+                            .any(|fb| fb.name == inst_name)
+                    {
+                        self.project
+                            .fb_instances
+                            .instances
+                            .push(FbInstance::new(&inst_name, fb_kind));
+                    }
+
+                    let new_id = match &resolved_kind {
+                        FbdBlockKind::StandardFb { instance, .. } => instance.clone(),
+                        _ => block_id.clone(),
+                    };
+                    if let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == new_id) {
+                        blk.kind = resolved_kind.clone();
+                        blk.inputs = inputs;
+                        if reset_to_defaults {
+                            blk.outputs = HashMap::new();
+                        }
+                    }
+                    if new_id != block_id
+                        && self.fbd_selected_block.as_deref() == Some(block_id.as_str())
+                    {
+                        self.fbd_selected_block = Some(new_id);
+                    }
+                    self.track_history();
+                    self.modified = true;
+                    self.recompile_runtime();
+                }
+                Task::none()
+            }
+            Message::FbdInlineEditingChanged(active) => {
+                self.fbd_inline_editing = active;
+                Task::none()
+            }
+            Message::FbdViewportChanged(pou_name, pan, zoom, size) => {
+                self.fbd_viewport.insert(pou_name, (pan, zoom, size));
                 Task::none()
             }
             Message::FbdMoveBlockUp(pou_name, b_idx) => {
@@ -7123,12 +7533,7 @@ impl FerriteStudioApp {
                 .on_press(Message::ToggleActiveMenu(None)),
             ];
 
-            let x_offset = match active {
-                ActiveMenu::File => 88.0,
-                ActiveMenu::Plc => 134.0,
-                ActiveMenu::Panels => 180.0,
-                ActiveMenu::Options => 248.0,
-            };
+            let x_offset = menu_dropdown_x_offset(active, self.ui_lang);
 
             let mut menu_content = row![self.view_active_menu()].spacing(2);
             if active == ActiveMenu::Options && self.active_submenu == Some(ActiveSubmenu::Language) {
@@ -8057,7 +8462,7 @@ impl FerriteStudioApp {
                             }
                         }
                         PouSource::Fbd(fbd) => {
-                            render_fbd_editor(fbd, self.runtime.as_ref(), self.ui_lang, self.fbd_selected_block, self.fbd_drag_hover_block)
+                            render_fbd_editor(fbd, self.runtime.as_ref(), self.ui_lang, self.fbd_selected_block_idx, self.fbd_drag_hover_block)
                         }
                     }
                 } else {
@@ -8921,5 +9326,192 @@ impl FerriteStudioApp {
                 column![toolbar, samples_card].spacing(8).into()
             }
         }
+    }
+}
+
+/// Computes horizontal dropdown offset in pixels dynamically from localized top-menu titles.
+pub fn menu_dropdown_x_offset(active: ActiveMenu, lang: crate::i18n::UiLanguage) -> f32 {
+    let base_x = 88.0_f32;
+    let btn_width = |key: &str| -> f32 {
+        let label = crate::tr!(key, lang);
+        (label.chars().count() as f32 * 6.8).max(20.0) + 18.0
+    };
+    let file_w = btn_width("menu.file.title");
+    let plc_w = btn_width("menu.plc.title");
+    let panels_w = btn_width("menu.panels.title");
+    match active {
+        ActiveMenu::File => base_x,
+        ActiveMenu::Plc => base_x + file_w,
+        ActiveMenu::Panels => base_x + file_w + plc_w,
+        ActiveMenu::Options => base_x + file_w + plc_w + panels_w,
+    }
+}
+
+#[cfg(test)]
+mod menu_alignment_tests {
+    use super::*;
+
+    #[test]
+    fn test_dynamic_menu_dropdown_offsets_adapt_to_language() {
+        let en_panels = menu_dropdown_x_offset(ActiveMenu::Panels, crate::i18n::UiLanguage::En);
+        let fr_panels = menu_dropdown_x_offset(ActiveMenu::Panels, crate::i18n::UiLanguage::Fr);
+        assert!(
+            fr_panels > en_panels,
+            "French 'Fichier'/'Automate' buttons are wider than English 'File'/'PLC', expected offset shift"
+        );
+        assert_eq!(
+            menu_dropdown_x_offset(ActiveMenu::File, crate::i18n::UiLanguage::De),
+            88.0
+        );
+    }
+}
+
+#[cfg(test)]
+mod fbd_editing_tests {
+    use super::*;
+
+    fn val(expr: &str) -> FbdInputSource {
+        FbdInputSource::Value {
+            expr: expr.to_string(),
+        }
+    }
+
+    /// Builds a test app with a fresh FBD POU containing no blocks yet.
+    fn fbd_edit_app() -> (FerriteStudioApp, String) {
+        let mut app = FerriteStudioApp::new_test_app();
+        let pou = "fbd_edit_tests".to_string();
+        app.project
+            .add_pou(&pou, LanguageKind::Fbd)
+            .expect("add fbd pou for editing tests");
+        (app, pou)
+    }
+
+    fn push_block(
+        fbd: &mut ferrite_lang_fbd::FbdProgram,
+        id: &str,
+        kind: FbdBlockKind,
+        inputs: HashMap<String, FbdInputSource>,
+    ) {
+        fbd.blocks.push(FbdBlock {
+            id: id.to_string(),
+            kind,
+            inputs,
+            outputs: HashMap::new(),
+            grid_pos: None,
+        });
+    }
+
+    #[test]
+    fn test_fbd_duplicate_block_id_is_refused() {
+        let (mut app, pou) = fbd_edit_app();
+        {
+            let Some(PouSource::Fbd(fbd)) = app.project.pous.get_mut(&pou) else {
+                panic!("Expected FBD POU");
+            };
+            let mut ins = HashMap::new();
+            ins.insert("IN1".to_string(), val("TRUE"));
+            ins.insert("IN2".to_string(), val("TRUE"));
+            push_block(fbd, "B1", FbdBlockKind::And, ins.clone());
+            push_block(fbd, "B2", FbdBlockKind::And, ins);
+        }
+
+        // Renaming B1 onto B2's existing id must be a no-op.
+        let _ = app.update(Message::FbdBlockIdChanged(
+            pou.clone(),
+            "B1".to_string(),
+            "B2".to_string(),
+        ));
+
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou) else {
+            panic!("Expected FBD POU");
+        };
+        let ids: Vec<&str> = fbd.blocks.iter().map(|b| b.id.as_str()).collect();
+        assert_eq!(ids, vec!["B1", "B2"], "both block ids must be unchanged");
+    }
+
+    #[test]
+    fn test_fbd_remove_input_pin_rewrites_inbound_links() {
+        let (mut app, pou) = fbd_edit_app();
+        {
+            let Some(PouSource::Fbd(fbd)) = app.project.pous.get_mut(&pou) else {
+                panic!("Expected FBD POU");
+            };
+            let mut ins_a: HashMap<String, FbdInputSource> = HashMap::new();
+            for pin in ["IN1", "IN2", "IN3"] {
+                ins_a.insert(pin.to_string(), val("TRUE"));
+            }
+            push_block(fbd, "A", FbdBlockKind::And, ins_a);
+
+            let mut ins_c: HashMap<String, FbdInputSource> = HashMap::new();
+            ins_c.insert("IN1".to_string(), val("TRUE"));
+            ins_c.insert(
+                "IN2".to_string(),
+                FbdInputSource::Link {
+                    from_block: "A".to_string(),
+                    from_pin: "IN3".to_string(),
+                },
+            );
+            push_block(fbd, "C", FbdBlockKind::And, ins_c);
+        }
+
+        let _ = app.update(Message::FbdRemoveInputPin(
+            pou.clone(),
+            "A".to_string(),
+            "IN3".to_string(),
+        ));
+
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou) else {
+            panic!("Expected FBD POU");
+        };
+        let a = fbd.blocks.iter().find(|b| b.id == "A").unwrap();
+        assert!(!a.inputs.contains_key("IN3"), "IN3 must be removed from A");
+
+        let c = fbd.blocks.iter().find(|b| b.id == "C").unwrap();
+        assert_eq!(
+            c.inputs["IN2"],
+            FbdInputSource::Value {
+                expr: "0".to_string()
+            },
+            "inbound link pointing at the removed pin must be rewritten to Value 0"
+        );
+
+        let tags = ferrite_core::TagTable::new();
+        assert!(fbd.compile(&tags).is_ok(), "program must still compile");
+    }
+
+    #[test]
+    fn test_fbd_input_edit_recompiles_with_running_runtime() {
+        let (mut app, pou) = fbd_edit_app();
+        {
+            let Some(PouSource::Fbd(fbd)) = app.project.pous.get_mut(&pou) else {
+                panic!("Expected FBD POU");
+            };
+            let mut ins = HashMap::new();
+            ins.insert("IN1".to_string(), val("TRUE"));
+            ins.insert("IN2".to_string(), val("TRUE"));
+            push_block(fbd, "A", FbdBlockKind::And, ins);
+        }
+
+        // Start the runtime so the edit goes through the online recompile path.
+        app.runtime = Some(PlcRuntime::from_project(&app.project).expect("build runtime"));
+
+        let _ = app.update(Message::FbdInputSourceChanged(
+            pou.clone(),
+            "A".to_string(),
+            "IN1".to_string(),
+            "FALSE".to_string(),
+        ));
+
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou) else {
+            panic!("Expected FBD POU");
+        };
+        assert_eq!(fbd.blocks[0].inputs["IN1"], val("FALSE"));
+
+        assert!(app.runtime.is_some(), "runtime must stay installed");
+        assert!(
+            !app.status_banner.contains("Compilation error"),
+            "fresh compiled program must install cleanly, banner: {}",
+            app.status_banner
+        );
     }
 }
