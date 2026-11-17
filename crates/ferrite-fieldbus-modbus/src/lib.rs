@@ -3,7 +3,10 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// Default timeout before an idle Modbus TCP client connection is evicted.
+pub const DEFAULT_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 use ferrite_core::{AccessWidth, DirectAddress, IecType, IecValue, MemoryArea, ProcessImage};
 use thiserror::Error;
@@ -804,6 +807,7 @@ pub struct ModbusServerTelemetry {
 struct ConnectedClient {
     stream: TcpStream,
     buf: Vec<u8>,
+    last_active: Instant,
 }
 
 /// Dedicated, deterministic Modbus TCP Server running in a background worker thread.
@@ -820,6 +824,14 @@ impl ModbusTcpServer {
     pub fn start(
         bind_addr: SocketAddr,
         shared_pi: Arc<RwLock<ProcessImage>>,
+    ) -> Result<Self, ModbusError> {
+        Self::start_with_idle_timeout(bind_addr, shared_pi, DEFAULT_CLIENT_IDLE_TIMEOUT)
+    }
+
+    pub fn start_with_idle_timeout(
+        bind_addr: SocketAddr,
+        shared_pi: Arc<RwLock<ProcessImage>>,
+        idle_timeout: Duration,
     ) -> Result<Self, ModbusError> {
         let listener = TcpListener::bind(bind_addr)?;
         let actual_addr = listener.local_addr()?;
@@ -841,6 +853,13 @@ impl ModbusTcpServer {
             let mut scratch = [0u8; 1024];
 
             while r_flag.load(Ordering::Relaxed) {
+                let now = Instant::now();
+                let prev_len = clients.len();
+                clients.retain(|c| now.duration_since(c.last_active) <= idle_timeout);
+                let evicted = prev_len.saturating_sub(clients.len());
+                if evicted > 0 {
+                    act_cnt.fetch_sub(evicted, Ordering::Relaxed);
+                }
 
                 // Non-blocking accept of new connections
                 match listener.accept() {
@@ -851,6 +870,7 @@ impl ModbusTcpServer {
                             clients.push(ConnectedClient {
                                 stream,
                                 buf: Vec::with_capacity(512),
+                                last_active: Instant::now(),
                             });
                             act_cnt.fetch_add(1, Ordering::Relaxed);
                         }
@@ -868,6 +888,7 @@ impl ModbusTcpServer {
                             continue;
                         }
                         Ok(n) => {
+                            client.last_active = Instant::now();
                             client.buf.extend_from_slice(&scratch[..n]);
                         }
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
@@ -1371,8 +1392,8 @@ mod tests {
     }
 
     #[test]
-    fn test_modbus_server_frame_accumulator_coalesced_and_fragmented_i29(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn test_modbus_server_frame_accumulator_coalesced_and_fragmented_i29()
+    -> Result<(), Box<dyn std::error::Error>> {
         let pi = Arc::new(RwLock::new(ProcessImage::default()));
         let mut server = ModbusTcpServer::start("127.0.0.1:0".parse()?, Arc::clone(&pi))?;
         let addr = server.bind_addr();
@@ -1471,8 +1492,8 @@ mod tests {
     }
 
     #[test]
-    fn test_modbus_client_transaction_id_mismatch_and_poisoning_p1_p2(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn test_modbus_client_transaction_id_mismatch_and_poisoning_p1_p2()
+    -> Result<(), Box<dyn std::error::Error>> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let addr = listener.local_addr()?;
 
@@ -1546,6 +1567,28 @@ mod tests {
 
         let telem = server.telemetry();
         assert_eq!(telem.requests_total, 0);
+
+        server.stop();
+        Ok(())
+    }
+
+    #[test]
+    fn test_modbus_tcp_server_evicts_idle_clients() -> Result<(), Box<dyn std::error::Error>> {
+        let pi = Arc::new(RwLock::new(ProcessImage::default()));
+        let mut server = ModbusTcpServer::start_with_idle_timeout(
+            "127.0.0.1:0".parse()?,
+            Arc::clone(&pi),
+            Duration::from_millis(40),
+        )?;
+        let addr = server.bind_addr();
+
+        let _idle_stream = TcpStream::connect(addr)?;
+        thread::sleep(Duration::from_millis(15));
+        assert_eq!(server.telemetry().active_clients, 1);
+
+        // Wait past idle_timeout without sending traffic
+        thread::sleep(Duration::from_millis(90));
+        assert_eq!(server.telemetry().active_clients, 0);
 
         server.stop();
         Ok(())
