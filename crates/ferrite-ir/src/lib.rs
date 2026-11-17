@@ -29,122 +29,586 @@ pub struct StandardFunctionInfo {
 }
 
 pub const STANDARD_FUNCTIONS: &[StandardFunctionInfo] = &[
-    StandardFunctionInfo { name: "ABS", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "SQRT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "SIN", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "COS", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "TAN", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LN", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "EXP", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "EXPT", min_arity: 2, max_arity: Some(2) },
-    StandardFunctionInfo { name: "MIN", min_arity: 2, max_arity: None },
-    StandardFunctionInfo { name: "MAX", min_arity: 2, max_arity: None },
-    StandardFunctionInfo { name: "LIMIT", min_arity: 3, max_arity: Some(3) },
-    StandardFunctionInfo { name: "TRUNC", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "ROUND", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "CEIL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "FLOOR", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "ASIN", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "ACOS", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "ATAN", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LOG", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "SEL", min_arity: 3, max_arity: Some(3) },
-    StandardFunctionInfo { name: "MUX", min_arity: 2, max_arity: None },
-    StandardFunctionInfo { name: "SHL", min_arity: 2, max_arity: Some(2) },
-    StandardFunctionInfo { name: "SHR", min_arity: 2, max_arity: Some(2) },
-    StandardFunctionInfo { name: "ROL", min_arity: 2, max_arity: Some(2) },
-    StandardFunctionInfo { name: "ROR", min_arity: 2, max_arity: Some(2) },
-    StandardFunctionInfo { name: "INT_TO_REAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DINT_TO_REAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "BOOL_TO_REAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "TIME_TO_REAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "REAL_TO_INT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DINT_TO_INT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "BOOL_TO_INT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "REAL_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "INT_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "BOOL_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "TIME_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "INT_TO_BOOL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DINT_TO_BOOL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "REAL_TO_BOOL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LREAL_TO_REAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "REAL_TO_LREAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LREAL_TO_INT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LREAL_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LREAL_TO_LINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "INT_TO_LREAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DINT_TO_LREAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LINT_TO_LREAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LREAL_TO_BOOL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "BOOL_TO_LREAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LREAL_TO_TIME", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "TIME_TO_LREAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "INT_TO_SINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "SINT_TO_INT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DINT_TO_SINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "SINT_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LINT_TO_SINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "SINT_TO_LINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "SINT_TO_REAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "REAL_TO_SINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "INT_TO_BYTE", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "BYTE_TO_INT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DINT_TO_BYTE", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "BYTE_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "BYTE_TO_USINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "USINT_TO_BYTE", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "BOOL_TO_BYTE", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "BYTE_TO_BOOL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "INT_TO_WORD", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "WORD_TO_INT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DINT_TO_WORD", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "WORD_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "WORD_TO_UINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "UINT_TO_WORD", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DINT_TO_DWORD", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DWORD_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DWORD_TO_UDINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "UDINT_TO_DWORD", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LINT_TO_LWORD", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LWORD_TO_LINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "ULINT_TO_LWORD", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LWORD_TO_ULINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "USINT_TO_INT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "INT_TO_USINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "UINT_TO_INT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "INT_TO_UINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "UINT_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DINT_TO_UINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "UDINT_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DINT_TO_UDINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "ULINT_TO_LINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LINT_TO_ULINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "INT_TO_LINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LINT_TO_INT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DINT_TO_LINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LINT_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "INT_TO_STRING", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "STRING_TO_INT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "DINT_TO_STRING", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "STRING_TO_DINT", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "REAL_TO_STRING", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "STRING_TO_REAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LREAL_TO_STRING", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "STRING_TO_LREAL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "BOOL_TO_STRING", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "STRING_TO_BOOL", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "TIME_TO_STRING", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "STRING_TO_TIME", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "LEN", min_arity: 1, max_arity: Some(1) },
-    StandardFunctionInfo { name: "CONCAT", min_arity: 2, max_arity: None },
-    StandardFunctionInfo { name: "LEFT", min_arity: 2, max_arity: Some(2) },
-    StandardFunctionInfo { name: "RIGHT", min_arity: 2, max_arity: Some(2) },
-    StandardFunctionInfo { name: "MID", min_arity: 3, max_arity: Some(3) },
-    StandardFunctionInfo { name: "INSERT", min_arity: 3, max_arity: Some(3) },
-    StandardFunctionInfo { name: "DELETE", min_arity: 3, max_arity: Some(3) },
-    StandardFunctionInfo { name: "REPLACE", min_arity: 4, max_arity: Some(4) },
-    StandardFunctionInfo { name: "FIND", min_arity: 2, max_arity: Some(2) },
+    StandardFunctionInfo {
+        name: "ABS",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "SQRT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "SIN",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "COS",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "TAN",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LN",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "EXP",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "EXPT",
+        min_arity: 2,
+        max_arity: Some(2),
+    },
+    StandardFunctionInfo {
+        name: "MIN",
+        min_arity: 2,
+        max_arity: None,
+    },
+    StandardFunctionInfo {
+        name: "MAX",
+        min_arity: 2,
+        max_arity: None,
+    },
+    StandardFunctionInfo {
+        name: "LIMIT",
+        min_arity: 3,
+        max_arity: Some(3),
+    },
+    StandardFunctionInfo {
+        name: "TRUNC",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "ROUND",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "CEIL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "FLOOR",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "ASIN",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "ACOS",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "ATAN",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LOG",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "SEL",
+        min_arity: 3,
+        max_arity: Some(3),
+    },
+    StandardFunctionInfo {
+        name: "MUX",
+        min_arity: 2,
+        max_arity: None,
+    },
+    StandardFunctionInfo {
+        name: "SHL",
+        min_arity: 2,
+        max_arity: Some(2),
+    },
+    StandardFunctionInfo {
+        name: "SHR",
+        min_arity: 2,
+        max_arity: Some(2),
+    },
+    StandardFunctionInfo {
+        name: "ROL",
+        min_arity: 2,
+        max_arity: Some(2),
+    },
+    StandardFunctionInfo {
+        name: "ROR",
+        min_arity: 2,
+        max_arity: Some(2),
+    },
+    StandardFunctionInfo {
+        name: "INT_TO_REAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DINT_TO_REAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "BOOL_TO_REAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "TIME_TO_REAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "REAL_TO_INT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DINT_TO_INT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "BOOL_TO_INT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "REAL_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "INT_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "BOOL_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "TIME_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "INT_TO_BOOL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DINT_TO_BOOL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "REAL_TO_BOOL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LREAL_TO_REAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "REAL_TO_LREAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LREAL_TO_INT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LREAL_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LREAL_TO_LINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "INT_TO_LREAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DINT_TO_LREAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LINT_TO_LREAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LREAL_TO_BOOL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "BOOL_TO_LREAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LREAL_TO_TIME",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "TIME_TO_LREAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "INT_TO_SINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "SINT_TO_INT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DINT_TO_SINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "SINT_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LINT_TO_SINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "SINT_TO_LINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "SINT_TO_REAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "REAL_TO_SINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "INT_TO_BYTE",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "BYTE_TO_INT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DINT_TO_BYTE",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "BYTE_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "BYTE_TO_USINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "USINT_TO_BYTE",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "BOOL_TO_BYTE",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "BYTE_TO_BOOL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "INT_TO_WORD",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "WORD_TO_INT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DINT_TO_WORD",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "WORD_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "WORD_TO_UINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "UINT_TO_WORD",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DINT_TO_DWORD",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DWORD_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DWORD_TO_UDINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "UDINT_TO_DWORD",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LINT_TO_LWORD",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LWORD_TO_LINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "ULINT_TO_LWORD",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LWORD_TO_ULINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "USINT_TO_INT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "INT_TO_USINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "UINT_TO_INT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "INT_TO_UINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "UINT_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DINT_TO_UINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "UDINT_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DINT_TO_UDINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "ULINT_TO_LINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LINT_TO_ULINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "INT_TO_LINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LINT_TO_INT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DINT_TO_LINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LINT_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "INT_TO_STRING",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "STRING_TO_INT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "DINT_TO_STRING",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "STRING_TO_DINT",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "REAL_TO_STRING",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "STRING_TO_REAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LREAL_TO_STRING",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "STRING_TO_LREAL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "BOOL_TO_STRING",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "STRING_TO_BOOL",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "TIME_TO_STRING",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "STRING_TO_TIME",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "LEN",
+        min_arity: 1,
+        max_arity: Some(1),
+    },
+    StandardFunctionInfo {
+        name: "CONCAT",
+        min_arity: 2,
+        max_arity: None,
+    },
+    StandardFunctionInfo {
+        name: "LEFT",
+        min_arity: 2,
+        max_arity: Some(2),
+    },
+    StandardFunctionInfo {
+        name: "RIGHT",
+        min_arity: 2,
+        max_arity: Some(2),
+    },
+    StandardFunctionInfo {
+        name: "MID",
+        min_arity: 3,
+        max_arity: Some(3),
+    },
+    StandardFunctionInfo {
+        name: "INSERT",
+        min_arity: 3,
+        max_arity: Some(3),
+    },
+    StandardFunctionInfo {
+        name: "DELETE",
+        min_arity: 3,
+        max_arity: Some(3),
+    },
+    StandardFunctionInfo {
+        name: "REPLACE",
+        min_arity: 4,
+        max_arity: Some(4),
+    },
+    StandardFunctionInfo {
+        name: "FIND",
+        min_arity: 2,
+        max_arity: Some(2),
+    },
 ];
 
 pub fn lookup_standard_function(name: &str) -> Option<&'static StandardFunctionInfo> {
@@ -339,10 +803,12 @@ impl UserFunction {
 
         for (i, param) in self.inputs.iter().enumerate() {
             let val = if i < args.len() {
-                args[i].coerce_to(param.data_type).map_err(|e| RuntimeError::ExecutionError {
-                    pou: caller_pou.to_string(),
-                    message: format!("Argument type mismatch for '{}': {e}", param.name),
-                })?
+                args[i]
+                    .coerce_to(param.data_type)
+                    .map_err(|e| RuntimeError::ExecutionError {
+                        pou: caller_pou.to_string(),
+                        message: format!("Argument type mismatch for '{}': {e}", param.name),
+                    })?
             } else if let Some(def) = &param.default_value {
                 def.clone()
             } else {
@@ -382,10 +848,11 @@ impl UserFunction {
             })
             .unwrap_or_else(|| self.return_type.default_value());
 
-        ret.coerce_to(self.return_type).map_err(|e| RuntimeError::ExecutionError {
-            pou: self.name.clone(),
-            message: format!("Function return value coercion error: {e}"),
-        })
+        ret.coerce_to(self.return_type)
+            .map_err(|e| RuntimeError::ExecutionError {
+                pou: self.name.clone(),
+                message: format!("Function return value coercion error: {e}"),
+            })
     }
 }
 
@@ -545,7 +1012,9 @@ impl IrExpr {
                 } else {
                     Err(RuntimeError::ExecutionError {
                         pou: pou_name.to_string(),
-                        message: format!("Unknown user function '{function_name}' for named argument call"),
+                        message: format!(
+                            "Unknown user function '{function_name}' for named argument call"
+                        ),
                     })
                 }
             }
@@ -657,7 +1126,8 @@ impl IrExpr {
                             }
                         }
                         "MIN" | "MAX" => {
-                            let first_ty = args[0].infer_type_with_locals(tags, locals, pou_name)?;
+                            let first_ty =
+                                args[0].infer_type_with_locals(tags, locals, pou_name)?;
                             for a in &args[1..] {
                                 let _ = a.infer_type_with_locals(tags, locals, pou_name)?;
                             }
@@ -689,8 +1159,8 @@ impl IrExpr {
                             Ok(in_ty)
                         }
                         "INT_TO_REAL" | "DINT_TO_REAL" | "BOOL_TO_REAL" | "TIME_TO_REAL"
-                        | "SQRT" | "SIN" | "COS" | "TAN" | "LN" | "EXP" | "EXPT"
-                        | "TRUNC" | "ROUND" | "CEIL" | "FLOOR" | "ASIN" | "ACOS" | "ATAN" | "LOG" => {
+                        | "SQRT" | "SIN" | "COS" | "TAN" | "LN" | "EXP" | "EXPT" | "TRUNC"
+                        | "ROUND" | "CEIL" | "FLOOR" | "ASIN" | "ACOS" | "ATAN" | "LOG" => {
                             for a in args {
                                 let _ = a.infer_type_with_locals(tags, locals, pou_name)?;
                             }
@@ -742,7 +1212,11 @@ impl IrExpr {
                                 pou: pou_name.to_string(),
                                 expected: pty,
                                 actual: aty,
-                                context: format!("Argument {} of function '{}'", i + 1, user_fn.name),
+                                context: format!(
+                                    "Argument {} of function '{}'",
+                                    i + 1,
+                                    user_fn.name
+                                ),
                             });
                         }
                     }
@@ -758,12 +1232,11 @@ impl IrExpr {
                 function_name,
                 args,
             } => {
-                let user_fn = get_user_function(function_name).ok_or_else(|| {
-                    IrError::Validation {
+                let user_fn =
+                    get_user_function(function_name).ok_or_else(|| IrError::Validation {
                         pou: pou_name.to_string(),
                         message: format!("Unknown user function '{function_name}'"),
-                    }
-                })?;
+                    })?;
                 for (name, a) in args {
                     let aty = a.infer_type_with_locals(tags, locals, pou_name)?;
                     let param = user_fn
@@ -772,7 +1245,10 @@ impl IrExpr {
                         .find(|p| p.name.eq_ignore_ascii_case(name))
                         .ok_or_else(|| IrError::Validation {
                             pou: pou_name.to_string(),
-                            message: format!("Unknown parameter '{name}' in function '{}'", user_fn.name),
+                            message: format!(
+                                "Unknown parameter '{name}' in function '{}'",
+                                user_fn.name
+                            ),
                         })?;
                     if !types_compatible(param.data_type, aty) {
                         return Err(IrError::TypeMismatch {
@@ -842,7 +1318,10 @@ impl IrExpr {
                     | IrBinaryOp::Le
                     | IrBinaryOp::Gt
                     | IrBinaryOp::Ge => {
-                        if lt == rt || (lt.is_numeric() && rt.is_numeric()) || (lt.is_bit_string() && rt.is_bit_string()) {
+                        if lt == rt
+                            || (lt.is_numeric() && rt.is_numeric())
+                            || (lt.is_bit_string() && rt.is_bit_string())
+                        {
                             Ok(IecType::Bool)
                         } else {
                             Err(IrError::TypeMismatch {
@@ -1341,7 +1820,11 @@ fn eval_math_function(
             };
             let l = args[1].as_dint()?.max(0) as usize;
             let p = args[2].as_dint()?;
-            let start = if p <= 0 { 0 } else { (p as usize).saturating_sub(1) };
+            let start = if p <= 0 {
+                0
+            } else {
+                (p as usize).saturating_sub(1)
+            };
             let chars: Vec<char> = s.chars().collect();
             let res: String = if start < chars.len() {
                 chars[start..].iter().take(l).collect()
@@ -1373,7 +1856,11 @@ fn eval_math_function(
             };
             let l = args[1].as_dint()?.max(0) as usize;
             let p = args[2].as_dint()?;
-            let start = if p <= 0 { 0 } else { (p as usize).saturating_sub(1) };
+            let start = if p <= 0 {
+                0
+            } else {
+                (p as usize).saturating_sub(1)
+            };
             let chars: Vec<char> = s.chars().collect();
             if start >= chars.len() {
                 return Ok(IecValue::String(s));
@@ -1394,7 +1881,11 @@ fn eval_math_function(
             };
             let l = args[2].as_dint()?.max(0) as usize;
             let p = args[3].as_dint()?;
-            let start = if p <= 0 { 0 } else { (p as usize).saturating_sub(1) };
+            let start = if p <= 0 {
+                0
+            } else {
+                (p as usize).saturating_sub(1)
+            };
             let chars: Vec<char> = s1.chars().collect();
             if start >= chars.len() {
                 return Ok(IecValue::String(format!("{s1}{s2}")));
@@ -1857,7 +2348,10 @@ impl IrStmt {
                         break;
                     }
                     iters += 1;
-                    if until_cond.evaluate_with_env(ctx, env, pou_name)?.as_bool()? {
+                    if until_cond
+                        .evaluate_with_env(ctx, env, pou_name)?
+                        .as_bool()?
+                    {
                         break;
                     }
                 }
@@ -1955,7 +2449,8 @@ impl IrStmt {
                     )?;
                     if cond_val.as_bool()? {
                         for stmt in body {
-                            let flow = stmt.execute_with_resolver_and_env(resolver, env, pou_name)?;
+                            let flow =
+                                stmt.execute_with_resolver_and_env(resolver, env, pou_name)?;
                             if flow != StmtControl::None {
                                 return Ok(flow);
                             }
@@ -1976,24 +2471,27 @@ impl IrStmt {
                 arms,
                 else_body,
             } => {
-                let sel_val = selector.evaluate_with_resolver(
-                    &|sym| {
-                        if let Some(v) = env.get(sym) {
-                            return Ok(v.clone());
-                        }
-                        for (k, v) in env.iter() {
-                            if k.eq_ignore_ascii_case(sym) {
+                let sel_val = selector
+                    .evaluate_with_resolver(
+                        &|sym| {
+                            if let Some(v) = env.get(sym) {
                                 return Ok(v.clone());
                             }
-                        }
-                        resolver(sym)
-                    },
-                    pou_name,
-                )?.as_dint()?;
+                            for (k, v) in env.iter() {
+                                if k.eq_ignore_ascii_case(sym) {
+                                    return Ok(v.clone());
+                                }
+                            }
+                            resolver(sym)
+                        },
+                        pou_name,
+                    )?
+                    .as_dint()?;
                 for (labels, body) in arms {
                     if labels.contains(&sel_val) {
                         for stmt in body {
-                            let flow = stmt.execute_with_resolver_and_env(resolver, env, pou_name)?;
+                            let flow =
+                                stmt.execute_with_resolver_and_env(resolver, env, pou_name)?;
                             if flow != StmtControl::None {
                                 return Ok(flow);
                             }
@@ -2016,20 +2514,22 @@ impl IrStmt {
                 step,
                 body,
             } => {
-                let eval_env = |e: &IrExpr| e.evaluate_with_resolver(
-                    &|sym| {
-                        if let Some(v) = env.get(sym) {
-                            return Ok(v.clone());
-                        }
-                        for (k, v) in env.iter() {
-                            if k.eq_ignore_ascii_case(sym) {
+                let eval_env = |e: &IrExpr| {
+                    e.evaluate_with_resolver(
+                        &|sym| {
+                            if let Some(v) = env.get(sym) {
                                 return Ok(v.clone());
                             }
-                        }
-                        resolver(sym)
-                    },
-                    pou_name,
-                );
+                            for (k, v) in env.iter() {
+                                if k.eq_ignore_ascii_case(sym) {
+                                    return Ok(v.clone());
+                                }
+                            }
+                            resolver(sym)
+                        },
+                        pou_name,
+                    )
+                };
                 let start_val = eval_env(start)?.as_dint()?;
                 let end_val = eval_env(end)?.as_dint()?;
                 let step_val = match step {
@@ -2076,20 +2576,23 @@ impl IrStmt {
             Self::While { cond, body } => {
                 let mut iters = 0usize;
                 let max_iters = max_loop_iterations();
-                while cond.evaluate_with_resolver(
-                    &|sym| {
-                        if let Some(v) = env.get(sym) {
-                            return Ok(v.clone());
-                        }
-                        for (k, v) in env.iter() {
-                            if k.eq_ignore_ascii_case(sym) {
+                while cond
+                    .evaluate_with_resolver(
+                        &|sym| {
+                            if let Some(v) = env.get(sym) {
                                 return Ok(v.clone());
                             }
-                        }
-                        resolver(sym)
-                    },
-                    pou_name,
-                )?.as_bool()? {
+                            for (k, v) in env.iter() {
+                                if k.eq_ignore_ascii_case(sym) {
+                                    return Ok(v.clone());
+                                }
+                            }
+                            resolver(sym)
+                        },
+                        pou_name,
+                    )?
+                    .as_bool()?
+                {
                     if iters >= max_iters {
                         return Err(RuntimeError::IterationLimitExceeded {
                             pou: pou_name.to_string(),
@@ -2141,20 +2644,23 @@ impl IrStmt {
                         break;
                     }
                     iters += 1;
-                    if until_cond.evaluate_with_resolver(
-                        &|sym| {
-                            if let Some(v) = env.get(sym) {
-                                return Ok(v.clone());
-                            }
-                            for (k, v) in env.iter() {
-                                if k.eq_ignore_ascii_case(sym) {
+                    if until_cond
+                        .evaluate_with_resolver(
+                            &|sym| {
+                                if let Some(v) = env.get(sym) {
                                     return Ok(v.clone());
                                 }
-                            }
-                            resolver(sym)
-                        },
-                        pou_name,
-                    )?.as_bool()? {
+                                for (k, v) in env.iter() {
+                                    if k.eq_ignore_ascii_case(sym) {
+                                        return Ok(v.clone());
+                                    }
+                                }
+                                resolver(sym)
+                            },
+                            pou_name,
+                        )?
+                        .as_bool()?
+                    {
                         break;
                     }
                 }
@@ -2165,7 +2671,8 @@ impl IrStmt {
             Self::Return => Ok(StmtControl::Return),
             Self::FbCall { .. } => Err(RuntimeError::ExecutionError {
                 pou: pou_name.to_string(),
-                message: "FB calls inside pure functions without ScanContext are not supported".to_string(),
+                message: "FB calls inside pure functions without ScanContext are not supported"
+                    .to_string(),
             }),
         }
     }
@@ -2749,7 +3256,9 @@ mod tests {
         };
         let empty_lookup = |sym: &str| Err(CoreError::UnknownSymbol(sym.to_string()).into());
         let res = k_neg.evaluate_with_resolver(&empty_lookup, "main");
-        assert!(matches!(res, Err(RuntimeError::ExecutionError { message, .. }) if message.contains("out of range")));
+        assert!(
+            matches!(res, Err(RuntimeError::ExecutionError { message, .. }) if message.contains("out of range"))
+        );
 
         let k_high = IrExpr::Call {
             function_name: "MUX".to_string(),
@@ -2760,7 +3269,9 @@ mod tests {
             ],
         };
         let res2 = k_high.evaluate_with_resolver(&empty_lookup, "main");
-        assert!(matches!(res2, Err(RuntimeError::ExecutionError { message, .. }) if message.contains("out of range")));
+        assert!(
+            matches!(res2, Err(RuntimeError::ExecutionError { message, .. }) if message.contains("out of range"))
+        );
     }
 
     #[test]
@@ -2768,10 +3279,7 @@ mod tests {
         let tags = TagTable::new();
         let case_dup = IrStmt::Case {
             selector: IrExpr::Literal(IecValue::Int(1)),
-            arms: vec![
-                (vec![1, 2], vec![]),
-                (vec![2, 3], vec![]),
-            ],
+            arms: vec![(vec![1, 2], vec![]), (vec![2, 3], vec![])],
             else_body: vec![],
         };
         let res = case_dup.validate(&tags, "main", false);
@@ -2796,7 +3304,10 @@ mod tests {
             IrError::CombinationalLoop { cycle, .. } => {
                 assert!(cycle.contains(&"A".to_string()));
                 assert!(cycle.contains(&"B".to_string()));
-                assert!(!cycle.contains(&"C".to_string()), "Downstream node C must not be in cycle report: {cycle:?}");
+                assert!(
+                    !cycle.contains(&"C".to_string()),
+                    "Downstream node C must not be in cycle report: {cycle:?}"
+                );
             }
             other => panic!("Expected CombinationalLoop, got {other:?}"),
         }
