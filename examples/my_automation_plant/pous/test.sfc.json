@@ -1,0 +1,19 @@
+{
+  "name": "test",
+  "comment": "Grafcet POU test",
+  "steps": [
+    {
+      "id": "0",
+      "name": "test_Init",
+      "kind": "initial",
+      "actions": [],
+      "grid_pos": [
+        60,
+        40
+      ],
+      "max_duration": null,
+      "macro_body": []
+    }
+  ],
+  "transitions": []
+}

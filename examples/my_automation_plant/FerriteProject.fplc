@@ -15,6 +15,7 @@ pou_order = [
     "cip_clean",
     "math_pid",
     "pump_ctrl",
+    "test",
 ]
 
 [[pous]]
@@ -41,3 +42,8 @@ path = "pous/math_pid.st"
 name = "pump_ctrl"
 language = "fbd"
 path = "pous/pump_ctrl.fbd.json"
+
+[[pous]]
+name = "test"
+language = "sfc"
+path = "pous/test.sfc.json"
