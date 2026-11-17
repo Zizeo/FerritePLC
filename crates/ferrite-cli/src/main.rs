@@ -12,13 +12,13 @@ use crossterm::terminal::{
 use ferrite_core::{IecType, IecValue, LanguageKind};
 use ferrite_project::Project;
 use ferrite_runtime::PlcRuntime;
-use serde::Serialize;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
+use serde::Serialize;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -520,6 +520,7 @@ fn tui_loop(
     runtime: &mut PlcRuntime,
 ) -> Result<()> {
     let mut running = false;
+    let mut last_error: Option<String> = None;
     let mut selected_idx: usize = 0;
     let mut table_state = TableState::default();
     table_state.select(Some(0));
@@ -539,23 +540,44 @@ fn tui_loop(
                 ])
                 .split(f.area());
 
-            let status_str = if running { "RUNNING" } else { "PAUSED" };
-            let header = Paragraph::new(Line::from(vec![
+            let (status_str, status_color) = if last_error.is_some() {
+                ("FAULT", Color::Red)
+            } else if running {
+                ("RUNNING", Color::Green)
+            } else {
+                ("PAUSED", Color::Yellow)
+            };
+            let mut header_spans = vec![
                 Span::styled(
                     format!(" FerritePLC — {} ", project.manifest.name),
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
+                Span::styled(
+                    format!("| State: {status_str} "),
+                    Style::default()
+                        .fg(status_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(format!(
-                    "| State: {status_str} | Scan: #{} | Virtual Clock: {} ms | Scan Time: {} us (Max: {} us)",
+                    "| Scan: #{} | Virtual Clock: {} ms | Scan Time: {} us (Max: {} us)",
                     runtime.scan_count,
                     runtime.virtual_time_ms,
                     runtime.last_scan_duration_us,
                     runtime.max_scan_duration_us
                 )),
-            ]))
-            .block(Block::default().borders(Borders::ALL).title("Telemetry & Watchdog"));
+            ];
+            if let Some(ref err) = last_error {
+                header_spans.push(Span::styled(
+                    format!(" | FAULT: {err}"),
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+            let header = Paragraph::new(Line::from(header_spans))
+                .block(Block::default().borders(Borders::ALL).title("Telemetry & Watchdog"));
             f.render_widget(header, chunks[0]);
 
             let rows: Vec<Row> = runtime
@@ -651,10 +673,23 @@ fn tui_loop(
         {
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => break,
-                KeyCode::Char(' ') => running = !running,
-                KeyCode::Char('s') => {
-                    let _ = runtime.step_scan();
+                KeyCode::Char(' ') => {
+                    running = !running;
+                    if running {
+                        last_error = None;
+                    }
                 }
+                KeyCode::Char('r') => {
+                    running = true;
+                    last_error = None;
+                }
+                KeyCode::Char('s') => match runtime.step_scan() {
+                    Ok(_) => last_error = None,
+                    Err(e) => {
+                        last_error = Some(e.to_string());
+                        running = false;
+                    }
+                },
                 KeyCode::Down => {
                     if tag_count > 0 {
                         selected_idx = (selected_idx + 1) % tag_count;
@@ -689,7 +724,13 @@ fn tui_loop(
 
         if last_tick.elapsed() >= tick_rate {
             if running {
-                let _ = runtime.step_scan();
+                match runtime.step_scan() {
+                    Ok(_) => last_error = None,
+                    Err(e) => {
+                        last_error = Some(e.to_string());
+                        running = false;
+                    }
+                }
             }
             last_tick = Instant::now();
         }
@@ -706,8 +747,8 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn test_i30_headless_sim_runs_all_scenarios_and_reports_failures(
-    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    fn test_i30_headless_sim_runs_all_scenarios_and_reports_failures()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_cli_test_i30_{}",
             std::time::SystemTime::now()
@@ -759,7 +800,10 @@ mod tests {
             panic!("run_headless_sim must return Err when any scenario fails");
         };
         let err_msg = err.to_string();
-        assert!(err_msg.contains("failed"), "Error message should indicate scenario failures: {err_msg}");
+        assert!(
+            err_msg.contains("failed"),
+            "Error message should indicate scenario failures: {err_msg}"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
