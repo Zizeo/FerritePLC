@@ -1,21 +1,17 @@
-pub mod draw;
 pub mod model;
-pub mod theme;
 pub mod workspace;
 
-pub use draw::{draw_canvas_element, draw_selection_overlay};
 pub use model::{
-    AccessMode, ActiveResize, ActuatorKind, BlinkConfig, ButtonActionMode, CanvasElement,
-    ColorEditTarget, ElementKind, ResizeHandle, ShapeType, SharedIoHandle, SharedIoSnapshot,
-    SharedIoState, TwinMode, VariableBinding, hex_to_rgb, hsv_to_rgb, rgb_to_hex, rgb_to_hsv,
+    AccessMode, ActiveResize, ActuatorKind, BlinkConfig, ButtonActionMode, CanvasElement, Color32,
+    ColorEditTarget, CursorIcon, ElementKind, Pos2, Rect, ResizeHandle, ShapeType, SharedIoHandle,
+    SharedIoSnapshot, SharedIoState, TwinMode, VariableBinding, hex_to_rgb, hsv_to_rgb, pos2,
+    rgb_to_hex, rgb_to_hsv,
 };
-pub use theme::TwinTheme;
 pub use workspace::{DigitalTwinWorkspace, TwinError};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui::{Color32, pos2};
     use ferrite_core::types::{IecType, IecValue};
     use std::sync::{Arc, RwLock};
 
@@ -92,19 +88,10 @@ mod tests {
         assert_eq!(elem.hit_test_handle(pos2(200.0, 175.0), 8.0), None);
 
         // Verify cursor mappings
-        assert_eq!(ResizeHandle::TopLeft.cursor(), egui::CursorIcon::ResizeNwSe);
-        assert_eq!(
-            ResizeHandle::BottomRight.cursor(),
-            egui::CursorIcon::ResizeNwSe
-        );
-        assert_eq!(
-            ResizeHandle::TopRight.cursor(),
-            egui::CursorIcon::ResizeNeSw
-        );
-        assert_eq!(
-            ResizeHandle::BottomLeft.cursor(),
-            egui::CursorIcon::ResizeNeSw
-        );
+        assert_eq!(ResizeHandle::TopLeft.cursor(), CursorIcon::ResizeNwSe);
+        assert_eq!(ResizeHandle::BottomRight.cursor(), CursorIcon::ResizeNwSe);
+        assert_eq!(ResizeHandle::TopRight.cursor(), CursorIcon::ResizeNeSw);
+        assert_eq!(ResizeHandle::BottomLeft.cursor(), CursorIcon::ResizeNeSw);
     }
 
     #[test]
@@ -146,7 +133,8 @@ mod tests {
     }
 
     #[test]
-    fn test_twin_rotated_hit_test_and_line_square_shapes() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_twin_rotated_hit_test_and_line_square_shapes() -> Result<(), Box<dyn std::error::Error>>
+    {
         let mut ws = DigitalTwinWorkspace::default();
         let line_id = ws.spawn_element_at(
             ElementKind::BasicShape(ShapeType::Line),
@@ -254,10 +242,7 @@ mod tests {
         assert_eq!(binding.variable_id, "Alarm_Out");
         assert_eq!(binding.active_color, [10, 240, 80, 255]);
         assert_eq!(binding.inactive_color, [255, 0, 0, 255]);
-        assert_eq!(
-            binding.blink.as_ref().map(|b| b.interval_ms),
-            Some(250)
-        );
+        assert_eq!(binding.blink.as_ref().map(|b| b.interval_ms), Some(250));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
@@ -315,8 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn test_save_to_unwritable_path_returns_save_error() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn test_save_to_unwritable_path_returns_save_error() -> Result<(), Box<dyn std::error::Error>> {
         let dir = unique_temp_dir("unwritable")?;
         // A regular file where the project root should be a directory.
         let blocker = dir.join("not_a_dir");

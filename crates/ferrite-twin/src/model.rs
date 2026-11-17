@@ -1,9 +1,118 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use egui::{Color32, Pos2, Rect, pos2, vec2};
 use ferrite_core::types::{IecType, IecValue};
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct Pos2 {
+    pub x: f32,
+    pub y: f32,
+}
+
+pub const fn pos2(x: f32, y: f32) -> Pos2 {
+    Pos2 { x, y }
+}
+
+impl From<(f32, f32)> for Pos2 {
+    fn from((x, y): (f32, f32)) -> Self {
+        Self { x, y }
+    }
+}
+
+impl std::ops::Sub for Pos2 {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Rect {
+    pub min: Pos2,
+    pub max: Pos2,
+}
+
+impl Rect {
+    pub fn from_min_size(min: Pos2, size: (f32, f32)) -> Self {
+        Self {
+            min,
+            max: Pos2 {
+                x: min.x + size.0,
+                y: min.y + size.1,
+            },
+        }
+    }
+
+    pub fn from_center_size(center: Pos2, size: (f32, f32)) -> Self {
+        let hw = size.0 * 0.5;
+        let hh = size.1 * 0.5;
+        Self {
+            min: Pos2 {
+                x: center.x - hw,
+                y: center.y - hh,
+            },
+            max: Pos2 {
+                x: center.x + hw,
+                y: center.y + hh,
+            },
+        }
+    }
+
+    pub fn left_top(&self) -> Pos2 {
+        self.min
+    }
+
+    pub fn right_top(&self) -> Pos2 {
+        Pos2 {
+            x: self.max.x,
+            y: self.min.y,
+        }
+    }
+
+    pub fn left_bottom(&self) -> Pos2 {
+        Pos2 {
+            x: self.min.x,
+            y: self.max.y,
+        }
+    }
+
+    pub fn right_bottom(&self) -> Pos2 {
+        self.max
+    }
+
+    pub fn contains(&self, p: Pos2) -> bool {
+        p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Color32([u8; 4]);
+
+impl Color32 {
+    pub const GRAY: Self = Self([160, 160, 160, 255]);
+
+    pub const fn from_rgb(r: u8, g: u8, b: u8) -> Self {
+        Self([r, g, b, 255])
+    }
+
+    pub const fn from_rgba_premultiplied(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self([r, g, b, a])
+    }
+
+    pub const fn to_array(self) -> [u8; 4] {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorIcon {
+    ResizeNwSe,
+    ResizeNeSw,
+}
 
 /// Lightweight read-only snapshot of shared process I/O.
 /// Allows zero-lock rendering so UI interactions can write without deadlocks.
@@ -190,10 +299,10 @@ pub enum ResizeHandle {
 }
 
 impl ResizeHandle {
-    pub fn cursor(self) -> egui::CursorIcon {
+    pub fn cursor(self) -> CursorIcon {
         match self {
-            Self::TopLeft | Self::BottomRight => egui::CursorIcon::ResizeNwSe,
-            Self::TopRight | Self::BottomLeft => egui::CursorIcon::ResizeNeSw,
+            Self::TopLeft | Self::BottomRight => CursorIcon::ResizeNwSe,
+            Self::TopRight | Self::BottomLeft => CursorIcon::ResizeNeSw,
         }
     }
 }
@@ -271,7 +380,7 @@ impl CanvasElement {
     pub fn rect(&self) -> Rect {
         Rect::from_min_size(
             pos2(self.position.0, self.position.1),
-            vec2(self.size.0, self.size.1),
+            (self.size.0, self.size.1),
         )
     }
 
@@ -295,7 +404,7 @@ impl CanvasElement {
         ];
         pts.map(|(handle, pt)| {
             let handle_rect =
-                Rect::from_center_size(pt, vec2(handle_radius * 2.0, handle_radius * 2.0));
+                Rect::from_center_size(pt, (handle_radius * 2.0, handle_radius * 2.0));
             (handle, pt, handle_rect)
         })
     }
