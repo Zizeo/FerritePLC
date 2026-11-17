@@ -271,18 +271,29 @@ impl FbdProgram {
                             },
                         });
                     };
-                    let has_pin = |pin: &str| {
-                        blk.inputs.keys().any(|k| k.eq_ignore_ascii_case(pin))
-                    };
+                    let has_pin =
+                        |pin: &str| blk.inputs.keys().any(|k| k.eq_ignore_ascii_case(pin));
                     let missing = match fb.kind {
                         StandardFbKind::Ton | StandardFbKind::Tof | StandardFbKind::Tp => {
-                            if !has_pin("IN") { Some("IN") } else { None }
+                            if !has_pin("IN") {
+                                Some("IN")
+                            } else {
+                                None
+                            }
                         }
                         StandardFbKind::Ctu => {
-                            if !has_pin("CU") { Some("CU") } else { None }
+                            if !has_pin("CU") {
+                                Some("CU")
+                            } else {
+                                None
+                            }
                         }
                         StandardFbKind::Ctd => {
-                            if !has_pin("CD") { Some("CD") } else { None }
+                            if !has_pin("CD") {
+                                Some("CD")
+                            } else {
+                                None
+                            }
                         }
                         StandardFbKind::Ctud => {
                             if !has_pin("CU") {
@@ -294,7 +305,11 @@ impl FbdProgram {
                             }
                         }
                         StandardFbKind::RTrig | StandardFbKind::FTrig => {
-                            if !has_pin("CLK") && !has_pin("IN") { Some("CLK") } else { None }
+                            if !has_pin("CLK") && !has_pin("IN") {
+                                Some("CLK")
+                            } else {
+                                None
+                            }
                         }
                         StandardFbKind::Sr => {
                             if !has_pin("S1") && !has_pin("S") {
@@ -386,7 +401,9 @@ impl FbdProgram {
                     }
                     FbdBlockKind::Composite { type_name } => {
                         if let Some(comp) = self.composites.iter().find(|c| &c.name == type_name) {
-                            comp.output_pins.iter().any(|p| p.eq_ignore_ascii_case(&pin_upper))
+                            comp.output_pins
+                                .iter()
+                                .any(|p| p.eq_ignore_ascii_case(&pin_upper))
                         } else {
                             false
                         }
@@ -402,9 +419,9 @@ impl FbdProgram {
                 let _ =
                     SymbolResolver::validate_writable_symbol(tags, target_sym, &self.name, false)
                         .map_err(|source| FbdError::Ir {
-                            pou: self.name.clone(),
-                            source,
-                        })?;
+                        pou: self.name.clone(),
+                        source,
+                    })?;
             }
         }
 
@@ -443,10 +460,7 @@ impl FbdProgram {
                         Ok(val) => CompiledInputSource::Literal(val),
                         Err(_) => {
                             let trimmed = expr.trim();
-                            CompiledInputSource::Symbol(
-                                trimmed.to_string(),
-                                tags.tag_id(trimmed),
-                            )
+                            CompiledInputSource::Symbol(trimmed.to_string(), tags.tag_id(trimmed))
                         }
                     },
                     FbdInputSource::Link {
@@ -500,8 +514,13 @@ impl FbdProgram {
 
             let compiled_st_stmts = if let Some(ref def) = composite_local_fbs {
                 if let Some(ref code) = def.st_code {
-                    let st_stmts = ferrite_lang_st::parse_st_statements(code, &def.name)
-                        .map_err(|e| FbdError::Validation(format!("ST syntax error in composite block '{}': {e}", def.name)))?;
+                    let st_stmts =
+                        ferrite_lang_st::parse_st_statements(code, &def.name).map_err(|e| {
+                            FbdError::Validation(format!(
+                                "ST syntax error in composite block '{}': {e}",
+                                def.name
+                            ))
+                        })?;
                     Some(st_stmts)
                 } else {
                     None
@@ -514,8 +533,7 @@ impl FbdProgram {
                 && compiled_st_stmts.is_none()
                 && !def.blocks.is_empty()
             {
-                let (sub_prog, sub_tags) =
-                    build_composite_sub_program(def, &self.composites, tags);
+                let (sub_prog, sub_tags) = build_composite_sub_program(def, &self.composites, tags);
                 let compiled_sub = sub_prog.compile(&sub_tags)?;
                 Some((Box::new(compiled_sub), sub_tags, ProcessImage::default()))
             } else {
@@ -741,8 +759,7 @@ impl ExecutablePou for CompiledFbdPou {
                     };
                     let in_len = current_block.inputs.len();
                     if in_len >= 2 {
-                        let v1 =
-                            Self::read_input(prev_blocks, &current_block.inputs[0].1, ctx)?;
+                        let v1 = Self::read_input(prev_blocks, &current_block.inputs[0].1, ctx)?;
                         let mut acc = v1;
                         for inp_idx in 1..in_len {
                             let vn = Self::read_input(
@@ -759,11 +776,8 @@ impl ExecutablePou for CompiledFbdPou {
                 FbdBlockKind::StandardFb { instance, .. } => {
                     let in_len = current_block.inputs.len();
                     for inp_idx in 0..in_len {
-                        let val = Self::read_input(
-                            prev_blocks,
-                            &current_block.inputs[inp_idx].1,
-                            ctx,
-                        )?;
+                        let val =
+                            Self::read_input(prev_blocks, &current_block.inputs[inp_idx].1, ctx)?;
                         let pin_name = &current_block.inputs[inp_idx].0;
                         let fb_opt = match current_block.fb_id {
                             Some(id) => ctx.tags.get_fb_mut_by_id(id),
@@ -837,7 +851,9 @@ impl ExecutablePou for CompiledFbdPou {
                                 if let Some(slot) = current_block.custom_slots.get_mut(out_pin) {
                                     *slot = v.clone();
                                 } else {
-                                    current_block.custom_slots.insert(out_pin.clone(), v.clone());
+                                    current_block
+                                        .custom_slots
+                                        .insert(out_pin.clone(), v.clone());
                                 }
                                 if out_pin.eq_ignore_ascii_case("OUT")
                                     || (!primary_set && out_count == 1)
@@ -1281,7 +1297,10 @@ mod tests {
 
         // Verify downstream link was rewired
         match &prog.blocks[1].inputs["IN1"] {
-            FbdInputSource::Link { from_block, from_pin } => {
+            FbdInputSource::Link {
+                from_block,
+                from_pin,
+            } => {
                 assert_eq!(from_block, "Sensor_Block");
                 assert_eq!(from_pin, "OUT");
             }
@@ -1343,7 +1362,8 @@ mod tests {
     }
 
     #[test]
-    fn test_composite_st_block_compilation_and_execution() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_composite_st_block_compilation_and_execution() -> Result<(), Box<dyn std::error::Error>>
+    {
         let mut img = ProcessImage::default();
         let mut tags = TagTable::new();
 
@@ -1374,7 +1394,9 @@ mod tests {
             description: "2-channel safety validator".to_string(),
             input_pins: vec!["CH1".to_string(), "CH2".to_string()],
             output_pins: vec!["OK".to_string()],
-            st_code: Some("IF CH1 AND CH2 THEN\n    OK := TRUE;\nELSE\n    OK := FALSE;\nEND_IF;".to_string()),
+            st_code: Some(
+                "IF CH1 AND CH2 THEN\n    OK := TRUE;\nELSE\n    OK := FALSE;\nEND_IF;".to_string(),
+            ),
             blocks: vec![],
         };
 
@@ -1387,9 +1409,21 @@ mod tests {
             outputs: HashMap::new(),
             grid_pos: None,
         };
-        block.inputs.insert("CH1".to_string(), FbdInputSource::Value { expr: "Permissive_A".to_string() });
-        block.inputs.insert("CH2".to_string(), FbdInputSource::Value { expr: "Permissive_B".to_string() });
-        block.outputs.insert("OK".to_string(), "Safety_Status".to_string());
+        block.inputs.insert(
+            "CH1".to_string(),
+            FbdInputSource::Value {
+                expr: "Permissive_A".to_string(),
+            },
+        );
+        block.inputs.insert(
+            "CH2".to_string(),
+            FbdInputSource::Value {
+                expr: "Permissive_B".to_string(),
+            },
+        );
+        block
+            .outputs
+            .insert("OK".to_string(), "Safety_Status".to_string());
 
         let prog = FbdProgram {
             name: "SafetyCheck".to_string(),
@@ -1416,9 +1450,19 @@ mod tests {
     fn test_i8_fbd_duplicate_block_id_rejected() {
         let tags = TagTable::new();
         let mut inp1 = HashMap::new();
-        inp1.insert("IN".to_string(), FbdInputSource::Value { expr: "TRUE".to_string() });
+        inp1.insert(
+            "IN".to_string(),
+            FbdInputSource::Value {
+                expr: "TRUE".to_string(),
+            },
+        );
         let mut inp2 = HashMap::new();
-        inp2.insert("IN".to_string(), FbdInputSource::Value { expr: "FALSE".to_string() });
+        inp2.insert(
+            "IN".to_string(),
+            FbdInputSource::Value {
+                expr: "FALSE".to_string(),
+            },
+        );
 
         let prog = FbdProgram {
             name: "dup_test".to_string(),
@@ -1441,7 +1485,10 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(prog.validate(&tags), Err(FbdError::DuplicateBlockId("BLK1".to_string())));
+        assert_eq!(
+            prog.validate(&tags),
+            Err(FbdError::DuplicateBlockId("BLK1".to_string()))
+        );
     }
 
     #[test]
@@ -1453,15 +1500,13 @@ mod tests {
             input_pins: vec!["IN1".to_string()],
             output_pins: vec!["OUT".to_string()],
             st_code: None,
-            blocks: vec![
-                FbdBlock {
-                    id: "SUB1".to_string(),
-                    kind: FbdBlockKind::Not,
-                    inputs: HashMap::new(),
-                    outputs: HashMap::new(),
-                    grid_pos: None,
-                },
-            ],
+            blocks: vec![FbdBlock {
+                id: "SUB1".to_string(),
+                kind: FbdBlockKind::Not,
+                inputs: HashMap::new(),
+                outputs: HashMap::new(),
+                grid_pos: None,
+            }],
         };
         let prog = FbdProgram {
             name: "comp_test".to_string(),
@@ -1470,20 +1515,50 @@ mod tests {
             blocks: vec![],
         };
         let res = prog.validate(&tags);
-        assert!(matches!(res, Err(FbdError::Validation(msg)) if msg.contains("invalid graphical sub-network")));
+        assert!(
+            matches!(res, Err(FbdError::Validation(msg)) if msg.contains("invalid graphical sub-network"))
+        );
     }
 
     #[test]
     fn test_composite_graphical_subnetwork_execution() -> Result<(), Box<dyn std::error::Error>> {
         let mut tags = TagTable::new();
-        tags.register_tag(TagEntry::new("A", IecType::Bool, None, IecValue::Bool(true), ""))?;
-        tags.register_tag(TagEntry::new("B", IecType::Bool, None, IecValue::Bool(true), ""))?;
-        tags.register_tag(TagEntry::new("Out", IecType::Bool, None, IecValue::Bool(false), ""))?;
+        tags.register_tag(TagEntry::new(
+            "A",
+            IecType::Bool,
+            None,
+            IecValue::Bool(true),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "B",
+            IecType::Bool,
+            None,
+            IecValue::Bool(true),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "Out",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
 
         // NAND composite implemented purely as graphical FBD sub-network (AND -> NOT)
         let mut and_in = HashMap::new();
-        and_in.insert("IN1".to_string(), FbdInputSource::Value { expr: "IN1".to_string() });
-        and_in.insert("IN2".to_string(), FbdInputSource::Value { expr: "IN2".to_string() });
+        and_in.insert(
+            "IN1".to_string(),
+            FbdInputSource::Value {
+                expr: "IN1".to_string(),
+            },
+        );
+        and_in.insert(
+            "IN2".to_string(),
+            FbdInputSource::Value {
+                expr: "IN2".to_string(),
+            },
+        );
 
         let mut not_in = HashMap::new();
         not_in.insert(
@@ -1521,8 +1596,18 @@ mod tests {
         };
 
         let mut blk_in = HashMap::new();
-        blk_in.insert("IN1".to_string(), FbdInputSource::Value { expr: "A".to_string() });
-        blk_in.insert("IN2".to_string(), FbdInputSource::Value { expr: "B".to_string() });
+        blk_in.insert(
+            "IN1".to_string(),
+            FbdInputSource::Value {
+                expr: "A".to_string(),
+            },
+        );
+        blk_in.insert(
+            "IN2".to_string(),
+            FbdInputSource::Value {
+                expr: "B".to_string(),
+            },
+        );
         let mut blk_out = HashMap::new();
         blk_out.insert("OUT".to_string(), "Out".to_string());
 
@@ -1549,7 +1634,10 @@ mod tests {
             let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
             compiled.execute(&mut ctx)?;
         }
-        assert_eq!(tags.get_tag("Out").map(|t| t.current_value()), Some(&IecValue::Bool(false)));
+        assert_eq!(
+            tags.get_tag("Out").map(|t| t.current_value()),
+            Some(&IecValue::Bool(false))
+        );
 
         // TRUE NAND FALSE = TRUE
         if let Some(t) = tags.get_tag_mut("B") {
@@ -1559,7 +1647,10 @@ mod tests {
             let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 2);
             compiled.execute(&mut ctx)?;
         }
-        assert_eq!(tags.get_tag("Out").map(|t| t.current_value()), Some(&IecValue::Bool(true)));
+        assert_eq!(
+            tags.get_tag("Out").map(|t| t.current_value()),
+            Some(&IecValue::Bool(true))
+        );
         Ok(())
     }
 
@@ -1572,57 +1663,67 @@ mod tests {
             name: "test_not".to_string(),
             comment: "".to_string(),
             composites: vec![],
-            blocks: vec![
-                FbdBlock {
-                    id: "N1".to_string(),
-                    kind: FbdBlockKind::Not,
-                    inputs: HashMap::new(),
-                    outputs: HashMap::new(),
-                    grid_pos: None,
-                },
-            ],
+            blocks: vec![FbdBlock {
+                id: "N1".to_string(),
+                kind: FbdBlockKind::Not,
+                inputs: HashMap::new(),
+                outputs: HashMap::new(),
+                grid_pos: None,
+            }],
         };
-        assert!(matches!(not_zero.validate(&tags), Err(FbdError::Validation(msg)) if msg.contains("expects exactly 1 input")));
+        assert!(
+            matches!(not_zero.validate(&tags), Err(FbdError::Validation(msg)) if msg.contains("expects exactly 1 input"))
+        );
 
         // AND block with 1 input
         let mut and_inputs = HashMap::new();
-        and_inputs.insert("IN1".to_string(), FbdInputSource::Value { expr: "TRUE".to_string() });
+        and_inputs.insert(
+            "IN1".to_string(),
+            FbdInputSource::Value {
+                expr: "TRUE".to_string(),
+            },
+        );
         let and_one = FbdProgram {
             name: "test_and".to_string(),
             comment: "".to_string(),
             composites: vec![],
-            blocks: vec![
-                FbdBlock {
-                    id: "A1".to_string(),
-                    kind: FbdBlockKind::And,
-                    inputs: and_inputs,
-                    outputs: HashMap::new(),
-                    grid_pos: None,
-                },
-            ],
+            blocks: vec![FbdBlock {
+                id: "A1".to_string(),
+                kind: FbdBlockKind::And,
+                inputs: and_inputs,
+                outputs: HashMap::new(),
+                grid_pos: None,
+            }],
         };
-        assert!(matches!(and_one.validate(&tags), Err(FbdError::Validation(msg)) if msg.contains("expects at least 2 inputs")));
+        assert!(
+            matches!(and_one.validate(&tags), Err(FbdError::Validation(msg)) if msg.contains("expects at least 2 inputs"))
+        );
 
         // Block with unknown output pin
         let mut not_valid_in = HashMap::new();
-        not_valid_in.insert("IN".to_string(), FbdInputSource::Value { expr: "TRUE".to_string() });
+        not_valid_in.insert(
+            "IN".to_string(),
+            FbdInputSource::Value {
+                expr: "TRUE".to_string(),
+            },
+        );
         let mut bad_out = HashMap::new();
         bad_out.insert("INVALID_OUT_PIN".to_string(), "Some_Tag".to_string());
         let bad_out_prog = FbdProgram {
             name: "test_bad_out".to_string(),
             comment: "".to_string(),
             composites: vec![],
-            blocks: vec![
-                FbdBlock {
-                    id: "N2".to_string(),
-                    kind: FbdBlockKind::Not,
-                    inputs: not_valid_in,
-                    outputs: bad_out,
-                    grid_pos: None,
-                },
-            ],
+            blocks: vec![FbdBlock {
+                id: "N2".to_string(),
+                kind: FbdBlockKind::Not,
+                inputs: not_valid_in,
+                outputs: bad_out,
+                grid_pos: None,
+            }],
         };
-        assert!(matches!(bad_out_prog.validate(&tags), Err(FbdError::Validation(msg)) if msg.contains("unknown or invalid output pin")));
+        assert!(
+            matches!(bad_out_prog.validate(&tags), Err(FbdError::Validation(msg)) if msg.contains("unknown or invalid output pin"))
+        );
     }
 
     #[test]
@@ -1646,7 +1747,7 @@ mod tests {
         assert_eq!(parsed, block);
 
         // A block without a position must not emit the key at all.
-        let mut unpinned = block.clone();
+        let mut unpinned = block;
         unpinned.grid_pos = None;
         let json_none = serde_json::to_string(&unpinned)?;
         assert!(
