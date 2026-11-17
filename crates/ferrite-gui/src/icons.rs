@@ -73,6 +73,42 @@ pub fn icon_save() -> &'static str {
     }
 }
 
+/// Returns the left-pointing chevron (collapse panel to the left).
+pub fn icon_chevron_left() -> &'static str {
+    if crate::is_nerd_font_available() {
+        "\u{f053}" // nf-fa-chevron_left
+    } else {
+        "◀"
+    }
+}
+
+/// Returns the right-pointing chevron (expand panel to the right).
+pub fn icon_chevron_right() -> &'static str {
+    if crate::is_nerd_font_available() {
+        "\u{f054}" // nf-fa-chevron_right
+    } else {
+        "▶"
+    }
+}
+
+/// Returns the down-pointing chevron (collapse panel downward).
+pub fn icon_chevron_down() -> &'static str {
+    if crate::is_nerd_font_available() {
+        "\u{f078}" // nf-fa-chevron_down
+    } else {
+        "▼"
+    }
+}
+
+/// Returns the up-pointing chevron (expand panel upward).
+pub fn icon_chevron_up() -> &'static str {
+    if crate::is_nerd_font_available() {
+        "\u{f077}" // nf-fa-chevron_up
+    } else {
+        "▲"
+    }
+}
+
 /// Returns the drag grip handle icon (nf-fa-bars / unicode ⠿ or ≡).
 pub fn icon_grip() -> &'static str {
     if crate::is_nerd_font_available() {

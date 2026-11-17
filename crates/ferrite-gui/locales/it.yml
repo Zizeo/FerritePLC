@@ -39,6 +39,8 @@ menu:
     detach_io: "Sgancia Rack I/O"
     dock_dock: "Aggancia Pannello inferiore"
     detach_dock: "Sgancia Pannello inferiore"
+    collapse: "Comprimi pannello"
+    expand: "Espandi pannello"
     library: "Libreria Blocchi Funzione"
     twin: "Gemello Digitale 2D"
   options:

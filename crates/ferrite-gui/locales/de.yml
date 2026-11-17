@@ -39,6 +39,8 @@ menu:
     detach_io: "E/A abdocken"
     dock_dock: "Unteres Panel andocken"
     detach_dock: "Unteres Panel abdocken"
+    collapse: "Panel einklappen"
+    expand: "Panel ausklappen"
     library: "Funktionsbaustein-Bibliothek"
     twin: "Digitaler Zwilling 2D"
   options:

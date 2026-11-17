@@ -7291,22 +7291,34 @@ impl FerriteStudioApp {
 
         let mut body_row = row![];
 
-        if self.show_left_explorer && !self.detach_left_explorer {
-            body_row = body_row.push(self.view_left_explorer());
+        if !self.detach_left_explorer {
+            body_row = body_row.push(if self.show_left_explorer {
+                self.view_left_explorer()
+            } else {
+                self.view_collapsed_left()
+            });
         }
 
         body_row = body_row.push(self.view_center_workspace());
 
-        if self.show_right_io && !self.detach_right_io {
-            body_row = body_row.push(self.view_right_io());
+        if !self.detach_right_io {
+            body_row = body_row.push(if self.show_right_io {
+                self.view_right_io()
+            } else {
+                self.view_collapsed_right()
+            });
         }
 
         let main_area = container(body_row).width(Length::Fill).height(Length::Fill);
 
         let mut root_col = column![header, main_area];
 
-        if self.show_bottom_dock && !self.detach_bottom_dock {
-            root_col = root_col.push(self.view_bottom_dock());
+        if !self.detach_bottom_dock {
+            root_col = root_col.push(if self.show_bottom_dock {
+                self.view_bottom_dock()
+            } else {
+                self.view_collapsed_bottom()
+            });
         }
 
         let base_content: Element<'_, Message> = container(root_col)
@@ -7824,17 +7836,48 @@ impl FerriteStudioApp {
         .into()
     }
 
+    /// Small chevron button used to collapse or expand a docked panel.
+    fn panel_toggle_arrow(
+        &self,
+        icon: &'static str,
+        tooltip_key: &'static str,
+        message: Message,
+    ) -> Element<'_, Message> {
+        iced::widget::tooltip(
+            button(
+                text(icon)
+                    .size(10.5)
+                    .shaping(iced::widget::text::Shaping::Advanced),
+            )
+            .on_press(message)
+            .style(StudioTheme::ghost_button)
+            .padding([1, 4]),
+            container(text(crate::tr!(tooltip_key, self.ui_lang)).size(11))
+                .padding([4, 7])
+                .style(StudioTheme::card_style),
+            iced::widget::tooltip::Position::Bottom,
+        )
+        .gap(4)
+        .into()
+    }
+
     fn view_left_explorer(&self) -> Element<'_, Message> {
         let header = row![
             text(self.ui_lang.tr("EXPLORER", "EXPLORATEUR"))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED),
             iced::widget::Space::with_width(Length::Fill),
+            self.panel_toggle_arrow(
+                crate::icons::icon_chevron_left(),
+                "menu.panels.collapse",
+                Message::ToggleLeftExplorer,
+            ),
             button(text(self.ui_lang.tr("Detach", "Détacher")).size(10.5))
                 .on_press(Message::DetachLeftExplorer)
                 .style(StudioTheme::ghost_button)
                 .padding([1, 4]),
         ]
+        .spacing(2)
         .align_y(Alignment::Center);
 
         container(
@@ -7844,6 +7887,21 @@ impl FerriteStudioApp {
         )
         .width(260)
         .height(Length::Fill)
+        .style(StudioTheme::sidebar_container_style)
+        .into()
+    }
+
+    /// Narrow rail left behind when the Explorer panel is collapsed.
+    fn view_collapsed_left(&self) -> Element<'_, Message> {
+        container(self.panel_toggle_arrow(
+            crate::icons::icon_chevron_right(),
+            "menu.panels.expand",
+            Message::ToggleLeftExplorer,
+        ))
+        .width(24)
+        .height(Length::Fill)
+        .padding([8, 2])
+        .align_x(Alignment::Center)
         .style(StudioTheme::sidebar_container_style)
         .into()
     }
@@ -8172,11 +8230,17 @@ impl FerriteStudioApp {
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED),
             iced::widget::Space::with_width(Length::Fill),
+            self.panel_toggle_arrow(
+                crate::icons::icon_chevron_right(),
+                "menu.panels.collapse",
+                Message::ToggleRightIo,
+            ),
             button(text(self.ui_lang.tr("Detach", "Détacher")).size(10.5))
                 .on_press(Message::DetachRightIo)
                 .style(StudioTheme::ghost_button)
                 .padding([1, 4]),
         ]
+        .spacing(2)
         .align_y(Alignment::Center);
 
         container(
@@ -8186,6 +8250,21 @@ impl FerriteStudioApp {
         )
         .width(295)
         .height(Length::Fill)
+        .style(StudioTheme::sidebar_container_style)
+        .into()
+    }
+
+    /// Narrow rail left behind when the Memory & I/O panel is collapsed.
+    fn view_collapsed_right(&self) -> Element<'_, Message> {
+        container(self.panel_toggle_arrow(
+            crate::icons::icon_chevron_left(),
+            "menu.panels.expand",
+            Message::ToggleRightIo,
+        ))
+        .width(24)
+        .height(Length::Fill)
+        .padding([8, 2])
+        .align_x(Alignment::Center)
         .style(StudioTheme::sidebar_container_style)
         .into()
     }
@@ -8499,7 +8578,7 @@ impl FerriteStudioApp {
                 .padding([2, 5])
         };
 
-        row![
+        let mut tabs = row![
             button(text(self.ui_lang.tr("Diagnostics", "Diagnostics")).size(11))
                 .on_press(Message::SelectBottomTab(BottomDockTab::Diagnostics))
                 .style(StudioTheme::tab_button(
@@ -8537,11 +8616,19 @@ impl FerriteStudioApp {
                 ))
                 .padding([4, 10]),
             iced::widget::Space::with_width(Length::Fill),
-            detach_btn,
         ]
         .spacing(6)
-        .align_y(Alignment::Center)
-        .into()
+        .align_y(Alignment::Center);
+
+        if !is_detached {
+            tabs = tabs.push(self.panel_toggle_arrow(
+                crate::icons::icon_chevron_down(),
+                "menu.panels.collapse",
+                Message::ToggleBottomDock,
+            ));
+        }
+
+        tabs.push(detach_btn).into()
     }
 
     fn view_bottom_dock(&self) -> Element<'_, Message> {
@@ -8554,6 +8641,21 @@ impl FerriteStudioApp {
         .style(StudioTheme::header_container_style)
         .width(Length::Fill)
         .height(Length::Shrink)
+        .into()
+    }
+
+    /// Thin bar left behind when the bottom dock is collapsed.
+    fn view_collapsed_bottom(&self) -> Element<'_, Message> {
+        container(self.panel_toggle_arrow(
+            crate::icons::icon_chevron_up(),
+            "menu.panels.expand",
+            Message::ToggleBottomDock,
+        ))
+        .width(Length::Fill)
+        .height(Length::Shrink)
+        .padding([4, 16])
+        .align_x(Alignment::Center)
+        .style(StudioTheme::header_container_style)
         .into()
     }
 
@@ -9363,6 +9465,29 @@ mod menu_alignment_tests {
             menu_dropdown_x_offset(ActiveMenu::File, crate::i18n::UiLanguage::De),
             88.0
         );
+    }
+
+    #[test]
+    fn test_panel_toggle_messages_collapse_independently() {
+        let mut app = FerriteStudioApp::new_test_app();
+        assert!(app.show_left_explorer);
+        assert!(app.show_right_io);
+        assert!(app.show_bottom_dock);
+
+        let _ = app.update(Message::ToggleLeftExplorer);
+        assert!(!app.show_left_explorer);
+        assert!(app.show_right_io);
+        assert!(app.show_bottom_dock);
+
+        let _ = app.update(Message::ToggleRightIo);
+        assert!(!app.show_right_io);
+
+        let _ = app.update(Message::ToggleBottomDock);
+        assert!(!app.show_bottom_dock);
+
+        // A second click on the same arrow expands the panel again.
+        let _ = app.update(Message::ToggleLeftExplorer);
+        assert!(app.show_left_explorer);
     }
 }
 

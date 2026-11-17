@@ -39,6 +39,8 @@ menu:
     detach_io: "Détacher Baie E/S"
     dock_dock: "Ancrer Panneau Inférieur"
     detach_dock: "Détacher Panneau Inférieur"
+    collapse: "Réduire le panneau"
+    expand: "Développer le panneau"
     library: "Bibliothèque Blocs Fonction"
     twin: "Jumeau Numérique 2D"
   options:

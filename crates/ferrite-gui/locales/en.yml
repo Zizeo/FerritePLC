@@ -39,6 +39,8 @@ menu:
     detach_io: "Detach I/O Rack"
     dock_dock: "Dock Bottom Dock"
     detach_dock: "Detach Bottom Dock"
+    collapse: "Collapse Panel"
+    expand: "Expand Panel"
     library: "Function Block Library"
     twin: "Digital Twin 2D"
   options:

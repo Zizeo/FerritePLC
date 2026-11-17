@@ -39,6 +39,8 @@ menu:
     detach_io: "Desacoplar rack de E/S"
     dock_dock: "Acoplar panel inferior"
     detach_dock: "Desacoplar panel inferior"
+    collapse: "Contraer panel"
+    expand: "Expandir panel"
     library: "Biblioteca de bloques de función"
     twin: "Gemelo digital 2D"
   options:
