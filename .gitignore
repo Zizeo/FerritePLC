@@ -10,3 +10,5 @@ GAP_ANALYSIS_OPENPLC_VISUALPLC.md
 AGENTS.md
 GEMINI.md
 NEW_UI.md
+# Cross-compilation toolchain build artifacts
+tools/pkgconfig-shim/*.pdb

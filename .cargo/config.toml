@@ -1,0 +1,27 @@
+# Cross-compilation config: build Linux binaries from Windows with zigbuild.
+#
+#   rustup target add x86_64-unknown-linux-gnu
+#   cargo install cargo-zigbuild          # needs `zig` on PATH
+#   pwsh -File scripts/build-linux.ps1    # or:
+#   cargo zigbuild --release --workspace --bins --target x86_64-unknown-linux-gnu
+#
+# `serialport` (via ferrite-fieldbus-modbus) pulls in `libudev-sys`, which asks
+# pkg-config where libudev lives. Zig's bundled glibc sysroot ships no libudev,
+# so a stub is vendored in tools/linux-sysroot and a tiny pkg-config shim
+# (tools/pkgconfig-shim) answers that single query. The stub keeps ELF SONAME
+# `libudev.so.1`, so the produced binary resolves the real library at runtime.
+[env]
+PKG_CONFIG = { value = "tools/pkgconfig-shim/pkg-config.exe", relative = true }
+PKG_CONFIG_ALLOW_CROSS = "1"
+
+# Fully static Linux binaries with nothing but the Rust toolchain:
+#   rustup target add x86_64-unknown-linux-musl
+#   cargo build --release --workspace --bins --target x86_64-unknown-linux-musl
+# rustup ships a self-contained musl std plus rust-lld, so no zig, no WSL, no
+# system sysroot is involved. Trade-off versus the gnu build: static binaries
+# cannot dlopen system libraries, so the GUI (X11/Wayland) needs the gnu build.
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"
+# winit/clipboard crates emit `-ldl`, which does not exist in musl (dlopen lives
+# in libc). An empty archive satisfies the lookup: tools/linux-sysroot/.../libdl.a
+rustflags = ["-L", "native=tools/linux-sysroot/usr/lib/x86_64-linux-gnu"]
