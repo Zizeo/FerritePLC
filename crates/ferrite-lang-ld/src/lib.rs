@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
 use ferrite_core::{
-    ExecutablePou, IecType, IecValue, LanguageKind, PouId, RuntimeError, ScanContext, TagTable,
+    ExecutablePou, FbId, IecType, IecValue, LanguageKind, PouId, RuntimeError, ScanContext, TagId,
+    TagTable,
 };
 use ferrite_ir::{IrBinaryOp, IrError, PouGraph, SymbolResolver, eval_binary_op, types_compatible};
 use serde::{Deserialize, Serialize};
@@ -309,9 +310,7 @@ impl LdProgram {
                 }
             }
             LdElement::InlineFb {
-                inputs,
-                outputs,
-                ..
+                inputs, outputs, ..
             } => {
                 for (_, val_or_sym) in inputs {
                     if IecValue::parse_literal(val_or_sym, None).is_err() {
@@ -459,20 +458,22 @@ impl LdProgram {
                 let lty = if let Ok(v) = IecValue::parse_literal(left, None) {
                     v.iec_type()
                 } else {
-                    SymbolResolver::validate_readable_symbol(tags, left, &self.name)
-                        .map_err(|source| LdError::Ir {
+                    SymbolResolver::validate_readable_symbol(tags, left, &self.name).map_err(
+                        |source| LdError::Ir {
                             pou: self.name.clone(),
                             source,
-                        })?
+                        },
+                    )?
                 };
                 let rty = if let Ok(v) = IecValue::parse_literal(right, None) {
                     v.iec_type()
                 } else {
-                    SymbolResolver::validate_readable_symbol(tags, right, &self.name)
-                        .map_err(|source| LdError::Ir {
+                    SymbolResolver::validate_readable_symbol(tags, right, &self.name).map_err(
+                        |source| LdError::Ir {
                             pou: self.name.clone(),
                             source,
-                        })?
+                        },
+                    )?
                 };
                 if (lty == IecType::Bool && rty != IecType::Bool)
                     || (rty == IecType::Bool && lty != IecType::Bool)
@@ -496,11 +497,12 @@ impl LdProgram {
                 input2,
                 dest,
             } => {
-                let dest_ty = SymbolResolver::validate_writable_symbol(tags, dest, &self.name, false)
-                    .map_err(|source| LdError::Ir {
-                        pou: self.name.clone(),
-                        source,
-                    })?;
+                let dest_ty =
+                    SymbolResolver::validate_writable_symbol(tags, dest, &self.name, false)
+                        .map_err(|source| LdError::Ir {
+                            pou: self.name.clone(),
+                            source,
+                        })?;
                 let in1_ty = if let Ok(v) = IecValue::parse_literal(input1, Some(dest_ty)) {
                     v.iec_type()
                 } else if let Ok(v) = IecValue::parse_literal(input1, None) {
@@ -602,6 +604,7 @@ impl LdProgram {
                         };
                         CompiledCoil {
                             symbol: c.symbol.clone(),
+                            tag_id: tags.tag_id(c.symbol.trim()),
                             kind: c.kind,
                             edge_idx,
                         }
@@ -616,13 +619,14 @@ impl LdProgram {
         })
     }
 
-    fn compile_binding(raw: &str, hint: Option<IecType>) -> FbInputBinding {
+    fn compile_binding(raw: &str, hint: Option<IecType>, tags: &TagTable) -> FbInputBinding {
         if let Ok(val) = IecValue::parse_literal(raw, hint) {
             FbInputBinding::Literal(val)
         } else if let Ok(val) = IecValue::parse_literal(raw, None) {
             FbInputBinding::Literal(val)
         } else {
-            FbInputBinding::Symbol(raw.trim().to_string())
+            let trimmed = raw.trim();
+            FbInputBinding::Symbol(trimmed.to_string(), tags.tag_id(trimmed))
         }
     }
 
@@ -643,6 +647,7 @@ impl LdProgram {
                 };
                 CompiledElement::Contact {
                     symbol: symbol.clone(),
+                    tag_id: tags.tag_id(symbol.trim()),
                     kind: *kind,
                     edge_idx,
                 }
@@ -663,25 +668,34 @@ impl LdProgram {
                 inputs,
                 outputs,
             } => {
-                let fb_kind = tags.get_fb(instance).map(|f| f.kind);
+                let fb_id = tags.fb_id(instance.trim());
+                let fb_kind = fb_id
+                    .and_then(|id| tags.get_fb_by_id(id))
+                    .or_else(|| tags.get_fb(instance))
+                    .map(|f| f.kind);
                 let compiled_inputs = inputs
                     .iter()
                     .map(|(pin, raw)| {
                         let pty = fb_kind.and_then(|k| k.pin_type(pin));
-                        (pin.clone(), Self::compile_binding(raw, pty))
+                        (pin.clone(), Self::compile_binding(raw, pty, tags))
                     })
+                    .collect();
+                let compiled_outputs = outputs
+                    .iter()
+                    .map(|(pin, target)| (pin.clone(), target.clone(), tags.tag_id(target.trim())))
                     .collect();
                 CompiledElement::InlineFb {
                     instance: instance.clone(),
+                    fb_id,
                     enable_pin: enable_pin.clone(),
                     inputs: compiled_inputs,
-                    outputs: outputs.clone(),
+                    outputs: compiled_outputs,
                 }
             }
             LdElement::Compare { op, left, right } => CompiledElement::Compare {
                 op: *op,
-                left: Self::compile_binding(left, None),
-                right: Self::compile_binding(right, None),
+                left: Self::compile_binding(left, None, tags),
+                right: Self::compile_binding(right, None, tags),
             },
             LdElement::MathMove {
                 op,
@@ -690,15 +704,16 @@ impl LdProgram {
                 dest,
             } => {
                 let dest_ty = tags.symbol_type(dest).ok();
-                let in1 = Self::compile_binding(input1, dest_ty);
+                let in1 = Self::compile_binding(input1, dest_ty, tags);
                 let in2 = input2
                     .as_deref()
-                    .map(|s| Self::compile_binding(s, dest_ty));
+                    .map(|s| Self::compile_binding(s, dest_ty, tags));
                 CompiledElement::MathMove {
                     op: *op,
                     input1: in1,
                     input2: in2,
                     dest: dest.clone(),
+                    dest_tag_id: tags.tag_id(dest.trim()),
                     dest_ty,
                 }
             }
@@ -709,14 +724,15 @@ impl LdProgram {
 #[derive(Debug, Clone)]
 enum FbInputBinding {
     Literal(IecValue),
-    Symbol(String),
+    Symbol(String, Option<TagId>),
 }
 
 impl FbInputBinding {
     fn resolve(&self, ctx: &ScanContext<'_>) -> Result<IecValue, RuntimeError> {
         match self {
             Self::Literal(v) => Ok(v.clone()),
-            Self::Symbol(sym) => ctx.read_symbol(sym),
+            Self::Symbol(_sym, Some(id)) => ctx.read_tag_id(*id),
+            Self::Symbol(sym, None) => ctx.read_symbol(sym),
         }
     }
 }
@@ -725,6 +741,7 @@ impl FbInputBinding {
 enum CompiledElement {
     Contact {
         symbol: String,
+        tag_id: Option<TagId>,
         kind: ContactKind,
         edge_idx: Option<usize>,
     },
@@ -733,9 +750,10 @@ enum CompiledElement {
     },
     InlineFb {
         instance: String,
+        fb_id: Option<FbId>,
         enable_pin: Option<String>,
         inputs: Vec<(String, FbInputBinding)>,
-        outputs: Vec<(String, String)>,
+        outputs: Vec<(String, String, Option<TagId>)>,
     },
     Compare {
         op: LdCompareOp,
@@ -747,6 +765,7 @@ enum CompiledElement {
         input1: FbInputBinding,
         input2: Option<FbInputBinding>,
         dest: String,
+        dest_tag_id: Option<TagId>,
         dest_ty: Option<IecType>,
     },
 }
@@ -754,6 +773,7 @@ enum CompiledElement {
 #[derive(Debug, Clone)]
 struct CompiledCoil {
     symbol: String,
+    tag_id: Option<TagId>,
     kind: CoilKind,
     edge_idx: Option<usize>,
 }
@@ -773,6 +793,19 @@ pub struct CompiledLdPou {
 }
 
 impl CompiledLdPou {
+    fn write_resolved(
+        ctx: &mut ScanContext<'_>,
+        sym: &str,
+        tag_id: Option<TagId>,
+        val: IecValue,
+    ) -> Result<(), RuntimeError> {
+        if let Some(id) = tag_id {
+            ctx.write_tag_id(id, val)
+        } else {
+            ctx.write_symbol(sym, val)
+        }
+    }
+
     fn eval_elements(
         elements: &[CompiledElement],
         mut power: bool,
@@ -796,10 +829,14 @@ impl CompiledLdPou {
         match elem {
             CompiledElement::Contact {
                 symbol,
+                tag_id,
                 kind,
                 edge_idx,
             } => {
-                let sig = ctx.read_bool(symbol)?;
+                let sig = match tag_id {
+                    Some(id) => ctx.read_tag_id(*id)?.as_bool()?,
+                    None => ctx.read_bool(symbol)?,
+                };
                 let cond = match kind {
                     ContactKind::NormallyOpen => sig,
                     ContactKind::NormallyClosed => !sig,
@@ -830,29 +867,50 @@ impl CompiledLdPou {
             }
             CompiledElement::InlineFb {
                 instance,
+                fb_id,
                 enable_pin,
                 inputs,
                 outputs,
             } => {
                 let en_pin = enable_pin.as_deref().unwrap_or("IN");
-                if let Some(fb) = ctx.tags.get_fb_mut(instance) {
+                let fb_opt = match fb_id {
+                    Some(id) => ctx.tags.get_fb_mut_by_id(*id),
+                    None => ctx.tags.get_fb_mut(instance),
+                };
+                if let Some(fb) = fb_opt {
                     fb.write_pin(en_pin, &IecValue::Bool(power_in))?;
                 }
                 for (pin, binding) in inputs {
                     let val = binding.resolve(ctx)?;
-                    if let Some(fb) = ctx.tags.get_fb_mut(instance) {
+                    let fb_opt = match fb_id {
+                        Some(id) => ctx.tags.get_fb_mut_by_id(*id),
+                        None => ctx.tags.get_fb_mut(instance),
+                    };
+                    if let Some(fb) = fb_opt {
                         fb.write_pin(pin, &val)?;
                     }
                 }
-                ctx.evaluate_fb(instance)?;
-                for (pin, target) in outputs {
-                    let out_val = match ctx.tags.get_fb(instance) {
+                if let Some(id) = fb_id {
+                    ctx.evaluate_fb_id(*id)?;
+                } else {
+                    ctx.evaluate_fb(instance)?;
+                }
+                for (pin, target, target_id) in outputs {
+                    let fb_opt = match fb_id {
+                        Some(id) => ctx.tags.get_fb_by_id(*id),
+                        None => ctx.tags.get_fb(instance),
+                    };
+                    let out_val = match fb_opt {
                         Some(fb) => fb.read_pin(pin)?,
                         None => IecValue::Bool(false),
                     };
-                    ctx.write_symbol(target, out_val)?;
+                    Self::write_resolved(ctx, target, *target_id, out_val)?;
                 }
-                let q_out = match ctx.tags.get_fb(instance) {
+                let fb_opt = match fb_id {
+                    Some(id) => ctx.tags.get_fb_by_id(*id),
+                    None => ctx.tags.get_fb(instance),
+                };
+                let q_out = match fb_opt {
                     Some(fb) => fb.q,
                     None => power_in,
                 };
@@ -872,6 +930,7 @@ impl CompiledLdPou {
                 input1,
                 input2,
                 dest,
+                dest_tag_id,
                 dest_ty,
             } => {
                 if !power_in {
@@ -907,7 +966,7 @@ impl CompiledLdPou {
                     (Some(IecType::Time), _) => IecValue::Time(raw_result.as_time_ms()?),
                     _ => raw_result,
                 };
-                ctx.write_symbol(dest, coerced)?;
+                Self::write_resolved(ctx, dest, *dest_tag_id, coerced)?;
                 Ok(true)
             }
         }
@@ -931,32 +990,62 @@ impl ExecutablePou for CompiledLdPou {
             for coil in &rung.coils {
                 match coil.kind {
                     CoilKind::Normal => {
-                        ctx.write_symbol(&coil.symbol, IecValue::Bool(power))?;
+                        Self::write_resolved(
+                            ctx,
+                            &coil.symbol,
+                            coil.tag_id,
+                            IecValue::Bool(power),
+                        )?;
                     }
                     CoilKind::Negated => {
-                        ctx.write_symbol(&coil.symbol, IecValue::Bool(!power))?;
+                        Self::write_resolved(
+                            ctx,
+                            &coil.symbol,
+                            coil.tag_id,
+                            IecValue::Bool(!power),
+                        )?;
                     }
                     CoilKind::Set => {
                         if power {
-                            ctx.write_symbol(&coil.symbol, IecValue::Bool(true))?;
+                            Self::write_resolved(
+                                ctx,
+                                &coil.symbol,
+                                coil.tag_id,
+                                IecValue::Bool(true),
+                            )?;
                         }
                     }
                     CoilKind::Reset => {
                         if power {
-                            ctx.write_symbol(&coil.symbol, IecValue::Bool(false))?;
+                            Self::write_resolved(
+                                ctx,
+                                &coil.symbol,
+                                coil.tag_id,
+                                IecValue::Bool(false),
+                            )?;
                         }
                     }
                     CoilKind::RisingEdge => {
                         let idx = coil.edge_idx.unwrap_or(0);
                         let prev = self.edge_states[idx];
                         self.edge_states[idx] = power;
-                        ctx.write_symbol(&coil.symbol, IecValue::Bool(power && !prev))?;
+                        Self::write_resolved(
+                            ctx,
+                            &coil.symbol,
+                            coil.tag_id,
+                            IecValue::Bool(power && !prev),
+                        )?;
                     }
                     CoilKind::FallingEdge => {
                         let idx = coil.edge_idx.unwrap_or(0);
                         let prev = self.edge_states[idx];
                         self.edge_states[idx] = power;
-                        ctx.write_symbol(&coil.symbol, IecValue::Bool(!power && prev))?;
+                        Self::write_resolved(
+                            ctx,
+                            &coil.symbol,
+                            coil.tag_id,
+                            IecValue::Bool(!power && prev),
+                        )?;
                     }
                 }
             }
@@ -1165,7 +1254,8 @@ mod tests {
     }
 
     #[test]
-    fn test_ld_math_add_with_mixed_int_and_real_numbers() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_ld_math_add_with_mixed_int_and_real_numbers() -> Result<(), Box<dyn std::error::Error>>
+    {
         let mut img = ProcessImage::default();
         let mut tags = TagTable::default();
 
@@ -1233,8 +1323,20 @@ mod tests {
     #[test]
     fn test_i10_combinational_loop_detection() -> Result<(), Box<dyn std::error::Error>> {
         let mut tags = TagTable::new();
-        tags.register_tag(TagEntry::new("A", IecType::Bool, None, IecValue::Bool(false), ""))?;
-        tags.register_tag(TagEntry::new("B", IecType::Bool, None, IecValue::Bool(false), ""))?;
+        tags.register_tag(TagEntry::new(
+            "A",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "B",
+            IecType::Bool,
+            None,
+            IecValue::Bool(false),
+            "",
+        ))?;
 
         let ld = LdProgram {
             name: "loop_prog".to_string(),
@@ -1318,7 +1420,13 @@ mod tests {
     #[test]
     fn test_ld_compare_bool_numeric_mismatch() -> Result<(), Box<dyn std::error::Error>> {
         let mut tags = TagTable::new();
-        tags.register_tag(TagEntry::new("BoolTag", IecType::Bool, None, IecValue::Bool(true), ""))?;
+        tags.register_tag(TagEntry::new(
+            "BoolTag",
+            IecType::Bool,
+            None,
+            IecValue::Bool(true),
+            "",
+        ))?;
 
         let ld = LdProgram {
             name: "cmp_mismatch".to_string(),
@@ -1348,7 +1456,13 @@ mod tests {
     #[test]
     fn test_ld_div_missing_input2_or_zero() -> Result<(), Box<dyn std::error::Error>> {
         let mut tags = TagTable::new();
-        tags.register_tag(TagEntry::new("Val", IecType::Int, None, IecValue::Int(10), ""))?;
+        tags.register_tag(TagEntry::new(
+            "Val",
+            IecType::Int,
+            None,
+            IecValue::Int(10),
+            "",
+        ))?;
 
         // DIV without input2
         let ld_no_in2 = LdProgram {
@@ -1405,8 +1519,20 @@ mod tests {
     fn test_ld_real_to_int_rounding_coercion() -> Result<(), Box<dyn std::error::Error>> {
         let mut img = ProcessImage::default();
         let mut tags = TagTable::new();
-        tags.register_tag(TagEntry::new("RealIn", IecType::Real, None, IecValue::Real(3.7), ""))?;
-        tags.register_tag(TagEntry::new("IntOut", IecType::Int, None, IecValue::Int(0), ""))?;
+        tags.register_tag(TagEntry::new(
+            "RealIn",
+            IecType::Real,
+            None,
+            IecValue::Real(3.7),
+            "",
+        ))?;
+        tags.register_tag(TagEntry::new(
+            "IntOut",
+            IecType::Int,
+            None,
+            IecValue::Int(0),
+            "",
+        ))?;
 
         let ld = LdProgram {
             name: "round_test".to_string(),
