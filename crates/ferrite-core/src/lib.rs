@@ -337,12 +337,65 @@ mod tests {
     #[test]
     fn test_coerce_real_to_int_rounds_to_nearest() {
         use IecValue::Real;
-        assert_eq!(Real(1.7).coerce_to(IecType::Int).ok(), Some(IecValue::Int(2)));
-        assert_eq!(Real(1.4).coerce_to(IecType::Int).ok(), Some(IecValue::Int(1)));
-        assert_eq!(Real(-1.5).coerce_to(IecType::Dint).ok(), Some(IecValue::Dint(-2)));
+        assert_eq!(
+            Real(1.7).coerce_to(IecType::Int).ok(),
+            Some(IecValue::Int(2))
+        );
+        assert_eq!(
+            Real(1.4).coerce_to(IecType::Int).ok(),
+            Some(IecValue::Int(1))
+        );
+        assert_eq!(
+            Real(-1.5).coerce_to(IecType::Dint).ok(),
+            Some(IecValue::Dint(-2))
+        );
         assert_eq!(
             IecValue::parse_literal("1.7", Some(IecType::Int)).ok(),
             Some(IecValue::Int(2))
         );
+    }
+
+    #[test]
+    fn test_addr_index_lookup_and_direct_write_sync() -> Result<(), RuntimeError> {
+        let mut img = ProcessImage::default();
+        let mut tags = TagTable::new();
+
+        let mw10: DirectAddress = "%MW10".parse()?;
+        let mw12: DirectAddress = "%MW12".parse()?;
+
+        let id_a = tags.register_tag(TagEntry::new(
+            "Level_A",
+            IecType::Int,
+            Some(mw10),
+            IecValue::Int(0),
+            "",
+        ))?;
+        let id_b = tags.register_tag(TagEntry::new(
+            "Level_B",
+            IecType::Int,
+            Some(mw10),
+            IecValue::Int(0),
+            "",
+        ))?;
+        assert_eq!(tags.tags_for_address(mw10), &[id_a, id_b]);
+        assert!(tags.tags_for_address(mw12).is_empty());
+
+        // Re-registering Level_B on %MW12 updates addr_index cleanly
+        tags.register_tag(TagEntry::new(
+            "Level_B",
+            IecType::Int,
+            Some(mw12),
+            IecValue::Int(0),
+            "",
+        ))?;
+        assert_eq!(tags.tags_for_address(mw10), &[id_a]);
+        assert_eq!(tags.tags_for_address(mw12), &[id_b]);
+
+        // Direct-address write syncs bound tag in O(1)
+        let mut ctx = ScanContext::new(&mut img, &mut tags, 10, 1);
+        ctx.write_symbol("%MW10", IecValue::Int(42))?;
+        assert_eq!(ctx.read_tag_id(id_a)?, IecValue::Int(42));
+        assert_eq!(ctx.read_tag_id(id_b)?, IecValue::Int(0));
+        Ok(())
     }
 }

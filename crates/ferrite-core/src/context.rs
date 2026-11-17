@@ -214,12 +214,11 @@ impl<'a> ScanContext<'a> {
         if trimmed.starts_with('%') {
             let addr: DirectAddress = trimmed.parse()?;
             self.process_image.write(addr, &val)?;
-            // Keep any tag bound to this exact address in sync
-            let count = self.tags.tags().len();
-            for idx in 0..count {
-                let id = TagId(idx);
+            // Keep any tag bound to this exact address in sync in O(1) via addr_index
+            let bound_len = self.tags.tags_for_address(addr).len();
+            for i in 0..bound_len {
+                let id = self.tags.tags_for_address(addr)[i];
                 if let Some(t) = self.tags.get_tag_by_id(id)
-                    && t.address == Some(addr)
                     && t.forced.is_none()
                     && let Ok(coerced) = val.coerce_to(t.data_type)
                     && let Some(tm) = self.tags.get_tag_mut_by_id(id)

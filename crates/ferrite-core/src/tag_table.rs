@@ -104,6 +104,7 @@ impl TagEntry {
 pub struct TagTable {
     tags: Vec<TagEntry>,
     tag_index: HashMap<String, TagId>,
+    addr_index: HashMap<DirectAddress, Vec<TagId>>,
     fbs: Vec<FbInstance>,
     fb_index: HashMap<String, FbId>,
     #[allow(dead_code)]
@@ -135,14 +136,40 @@ impl TagTable {
         let coerced = entry.initial_value.coerce_to(entry.data_type)?;
         entry.initial_value = coerced.clone();
         entry.value = Some(coerced);
+        let new_addr = entry.address;
         if let Some(&existing_id) = self.tag_index.get(&entry.name) {
+            let old_addr = self.tags[existing_id.0].address;
+            if old_addr != new_addr {
+                if let Some(prev) = old_addr
+                    && let Some(list) = self.addr_index.get_mut(&prev)
+                {
+                    list.retain(|&tid| tid != existing_id);
+                    if list.is_empty() {
+                        self.addr_index.remove(&prev);
+                    }
+                }
+                if let Some(addr) = new_addr {
+                    let list = self.addr_index.entry(addr).or_default();
+                    if !list.contains(&existing_id) {
+                        list.push(existing_id);
+                    }
+                }
+            }
             self.tags[existing_id.0] = entry;
             return Ok(existing_id);
         }
         let id = TagId(self.tags.len());
         self.tag_index.insert(entry.name.clone(), id);
+        if let Some(addr) = new_addr {
+            self.addr_index.entry(addr).or_default().push(id);
+        }
         self.tags.push(entry);
         Ok(id)
+    }
+
+    /// Returns all `TagId`s bound to the given direct address in `O(1)`.
+    pub fn tags_for_address(&self, addr: DirectAddress) -> &[TagId] {
+        self.addr_index.get(&addr).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// Registers Grafcet introspection symbols `X<i>.state` (`BOOL`) and `X<i>.t` (`TIME`)
@@ -527,7 +554,9 @@ impl TagTable {
                         field_ty,
                         None,
                         initial_val,
-                        format!("Struct field {instance_name}.{field_name} of type {struct_type_name}"),
+                        format!(
+                            "Struct field {instance_name}.{field_name} of type {struct_type_name}"
+                        ),
                     );
                     ids.push(self.register_tag(entry)?);
                 }
@@ -550,7 +579,8 @@ impl TagTable {
         size: usize,
         default_val: Option<IecValue>,
     ) -> Result<Vec<TagId>, CoreError> {
-        self.arrays.insert(instance_name.to_string(), (elem_type, size));
+        self.arrays
+            .insert(instance_name.to_string(), (elem_type, size));
         let mut ids = Vec::with_capacity(size);
         for i in 0..size {
             let tag_name = format!("{instance_name}[{i}]");
@@ -651,9 +681,7 @@ impl TagTable {
             DerivedTypeKey::Struct { .. } => {
                 self.register_struct_instance(instance_name, type_name)
             }
-            DerivedTypeKey::Array { .. } => {
-                self.register_array_from_type(instance_name, type_name)
-            }
+            DerivedTypeKey::Array { .. } => self.register_array_from_type(instance_name, type_name),
             DerivedTypeKey::Enumeration { .. } => {
                 let id = self.register_enum_instance(instance_name, type_name, None)?;
                 Ok(vec![id])
@@ -685,8 +713,7 @@ impl TagTable {
             });
         }
         let sym = format!("{array_name}[{index}]");
-        self.get_tag(&sym)
-            .ok_or(CoreError::UnknownSymbol(sym))
+        self.get_tag(&sym).ok_or(CoreError::UnknownSymbol(sym))
     }
 
     /// Bounds-checked array element value lookup.
@@ -730,9 +757,7 @@ impl TagTable {
             .ok_or_else(|| CoreError::UnknownSymbol(enum_type.to_string()))?;
         match dt {
             DerivedTypeKey::Enumeration {
-                members,
-                values,
-                ..
+                members, values, ..
             } => {
                 let idx = members
                     .iter()
@@ -754,7 +779,8 @@ mod tests {
     use crate::process_image::ProcessImage;
 
     #[test]
-    fn test_regression_i2_set_tag_value_protects_sfc_and_propagates_image() -> Result<(), CoreError> {
+    fn test_regression_i2_set_tag_value_protects_sfc_and_propagates_image() -> Result<(), CoreError>
+    {
         let mut tags = TagTable::new();
         let mut pi = ProcessImage::default();
 
@@ -818,8 +844,14 @@ mod tests {
         assert_eq!(tags.symbol_type("Pump1.Status")?, IecType::Word);
 
         // Verify default value applied
-        assert_eq!(tags.get_tag_value("Pump1.Speed"), Some(&IecValue::Real(50.0)));
-        assert_eq!(tags.get_tag_value("Pump1.Cmd"), Some(&IecValue::Bool(false)));
+        assert_eq!(
+            tags.get_tag_value("Pump1.Speed"),
+            Some(&IecValue::Real(50.0))
+        );
+        assert_eq!(
+            tags.get_tag_value("Pump1.Cmd"),
+            Some(&IecValue::Bool(false))
+        );
 
         // Mutate member
         tags.set_tag_value("Pump1.Cmd", IecValue::Bool(true))?;
@@ -833,29 +865,50 @@ mod tests {
         let mut tags = TagTable::new();
 
         // Register array Recipe.Steps of 4 elements (INT)
-        let ids = tags.register_array_instance("Recipe.Steps", IecType::Int, 4, Some(IecValue::Int(10)))?;
+        let ids =
+            tags.register_array_instance("Recipe.Steps", IecType::Int, 4, Some(IecValue::Int(10)))?;
         assert_eq!(ids.len(), 4);
 
         // Verify flattened tags exist
-        assert_eq!(tags.get_tag_value("Recipe.Steps[0]"), Some(&IecValue::Int(10)));
-        assert_eq!(tags.get_tag_value("Recipe.Steps[3]"), Some(&IecValue::Int(10)));
+        assert_eq!(
+            tags.get_tag_value("Recipe.Steps[0]"),
+            Some(&IecValue::Int(10))
+        );
+        assert_eq!(
+            tags.get_tag_value("Recipe.Steps[3]"),
+            Some(&IecValue::Int(10))
+        );
 
         // Test bounds-checked array access API
-        assert_eq!(tags.get_array_element_value("Recipe.Steps", 2)?, &IecValue::Int(10));
+        assert_eq!(
+            tags.get_array_element_value("Recipe.Steps", 2)?,
+            &IecValue::Int(10)
+        );
         tags.set_array_element_value("Recipe.Steps", 2, IecValue::Int(99))?;
-        assert_eq!(tags.get_array_element_value("Recipe.Steps", 2)?, &IecValue::Int(99));
+        assert_eq!(
+            tags.get_array_element_value("Recipe.Steps", 2)?,
+            &IecValue::Int(99)
+        );
 
         // Test out-of-bounds error
         let err = tags.get_array_element_value("Recipe.Steps", 4);
         assert!(matches!(
             err,
-            Err(CoreError::IndexOutOfBounds { index: 4, size: 4, .. })
+            Err(CoreError::IndexOutOfBounds {
+                index: 4,
+                size: 4,
+                ..
+            })
         ));
 
         let set_err = tags.set_array_element_value("Recipe.Steps", 10, IecValue::Int(5));
         assert!(matches!(
             set_err,
-            Err(CoreError::IndexOutOfBounds { index: 10, size: 4, .. })
+            Err(CoreError::IndexOutOfBounds {
+                index: 10,
+                size: 4,
+                ..
+            })
         ));
 
         Ok(())
