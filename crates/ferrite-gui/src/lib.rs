@@ -812,12 +812,21 @@ mod tests {
         ));
         app.recompile_runtime();
         assert!(app.runtime.is_some());
-        assert!(app.status_banner.contains("recompiled successfully") || app.status_banner.contains("recompil"));
+        assert!(
+            app.status_banner.contains("recompiled successfully")
+                || app.status_banner.contains("recompil")
+        );
 
         // 5. Verify render_sfc_editor renders without panic with both trees
         if let Some(PouSource::Sfc(s)) = app.project.pous.get("parallel_sfc") {
-            let _elem =
-                canvas_sfc::render_sfc_editor(s, app.runtime.as_ref(), app.ui_lang, None, &[], None);
+            let _elem = canvas_sfc::render_sfc_editor(
+                s,
+                app.runtime.as_ref(),
+                app.ui_lang,
+                None,
+                &[],
+                None,
+            );
         }
 
         // 6. Test StepKind::Macro toggle and drill-down navigation
@@ -831,17 +840,17 @@ mod tests {
             assert!(s.steps[1].macro_sfc.is_some());
         }
 
-        let _ = app.update(Message::SfcEnterMacro("parallel_sfc".to_string(), "1".to_string()));
+        let _ = app.update(Message::SfcEnterMacro(
+            "parallel_sfc".to_string(),
+            "1".to_string(),
+        ));
         assert_eq!(
             app.sfc_drill_down_path.get("parallel_sfc"),
             Some(&vec!["1".to_string()])
         );
 
         let _ = app.update(Message::SfcExitMacro("parallel_sfc".to_string()));
-        assert_eq!(
-            app.sfc_drill_down_path.get("parallel_sfc"),
-            Some(&vec![])
-        );
+        assert_eq!(app.sfc_drill_down_path.get("parallel_sfc"), Some(&vec![]));
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
@@ -1326,28 +1335,22 @@ mod tests {
             panic!("Expected FBD POU pump_ctrl");
         };
         let initial_b0 = fbd.blocks[0].id.clone();
-        let initial_b1 = fbd.blocks[1].id.clone();
 
-        // Test Reordering: Move block 0 down
-        let _ = app.update(Message::FbdMoveBlockDown(pou_name.clone(), 0));
+        // Test Canvas Position Move
+        let _ = app.update(Message::FbdBlockMoved(
+            pou_name.clone(),
+            initial_b0.clone(),
+            [180, 120],
+        ));
         let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
             panic!("Expected FBD POU");
         };
-        assert_eq!(fbd.blocks[0].id, initial_b1);
-        assert_eq!(fbd.blocks[1].id, initial_b0);
-
-        // Move block 1 up -> restores order
-        let _ = app.update(Message::FbdMoveBlockUp(pou_name.clone(), 1));
-        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
-            panic!("Expected FBD POU");
-        };
-        assert_eq!(fbd.blocks[0].id, initial_b0);
-        assert_eq!(fbd.blocks[1].id, initial_b1);
+        assert_eq!(fbd.blocks[0].grid_pos, Some([180, 120]));
 
         // Test Renaming
         let _ = app.update(Message::FbdBlockIdChanged(
             pou_name.clone(),
-            initial_b0.clone(),
+            initial_b0,
             "Block_Renamed_Test".to_string(),
         ));
         let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) else {
@@ -1455,7 +1458,7 @@ mod tests {
         let target_block_id = fbd.blocks[1].id.clone();
         let _ = app.update(Message::FbdInputSourceChanged(
             pou_name.clone(),
-            block_id.clone(),
+            block_id,
             "IN1".to_string(),
             format!("{target_block_id}.OUT"),
         ));
@@ -2085,8 +2088,8 @@ mod tests {
             kind: ferrite_lang_sfc::StepKind::Initial,
             actions: Vec::new(),
             grid_pos: Some((10, 10)),
-                    ..Default::default()
-                };
+            ..Default::default()
+        };
         let trans = ferrite_lang_sfc::SfcTransition {
             id: "Trans_1".to_string(),
             receptivity: "Sensor_1".to_string(),
@@ -2150,7 +2153,13 @@ mod tests {
 
         let pou_name = "pump_ctrl".to_string();
         app.active_tab = WorkspaceTab::Pou(pou_name.clone());
-        app.fbd_selected_block_idx = Some(0);
+        let first_id =
+            if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
+                fbd.blocks[0].id.clone()
+            } else {
+                panic!("Expected FBD POU");
+            };
+        app.fbd_selected_block = Some(first_id);
 
         let initial_blocks =
             if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
@@ -2164,7 +2173,7 @@ mod tests {
             kind: ferrite_lang_fbd::FbdBlockKind::And,
             inputs: std::collections::HashMap::new(),
             outputs: std::collections::HashMap::new(),
-            grid_pos: None,
+            grid_pos: Some([100, 120]),
         };
         let payload =
             crate::clipboard::serialize_clipboard(crate::clipboard::FerriteClipboardData::Fbd {
@@ -2177,7 +2186,11 @@ mod tests {
             assert_eq!(fbd.blocks.len(), initial_blocks + 1);
             let pasted_block = &fbd.blocks[1];
             assert_ne!(pasted_block.id, "TON_1");
-            assert_eq!(app.fbd_selected_block_idx, Some(1));
+            assert_eq!(pasted_block.grid_pos, Some([140, 160]));
+            assert_eq!(
+                app.fbd_selected_block.as_deref(),
+                Some(pasted_block.id.as_str())
+            );
         } else {
             panic!("Expected FBD POU");
         }
@@ -2187,51 +2200,41 @@ mod tests {
     }
 
     #[test]
-    fn test_fbd_block_drag_and_drop_reorders_blocks() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_fbd_block_move_persists_grid_pos() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
-            "ferrite_test_fbd_reorder_{}",
+            "ferrite_test_fbd_move_{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_nanos()
         ));
-        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_fbd_reorder")?;
+        let proj = ferrite_project::Project::scaffold(&temp_dir, "test_fbd_move")?;
         let mut app = FerriteStudioApp::new(proj);
 
         let pou_name = "pump_ctrl".to_string();
         app.active_tab = WorkspaceTab::Pou(pou_name.clone());
 
-        let initial_blocks =
-            if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
-                fbd.blocks.len()
-            } else {
-                0
-            };
-        assert!(
-            initial_blocks >= 2,
-            "pump_ctrl should have at least 2 blocks"
-        );
-
         let first_id =
             if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
+                assert!(!fbd.blocks.is_empty());
                 fbd.blocks[0].id.clone()
             } else {
-                String::new()
+                panic!("Expected FBD POU");
             };
 
-        // Drag block 0 onto block 1
-        let _ = app.update(Message::FbdBlockDragStarted(pou_name.clone(), 0));
-        assert_eq!(app.fbd_dragging_block, Some(0));
+        let _ = app.update(Message::FbdBlockSelected(
+            pou_name.clone(),
+            Some(first_id.clone()),
+        ));
+        assert_eq!(app.fbd_selected_block.as_deref(), Some(first_id.as_str()));
 
-        let _ = app.update(Message::FbdBlockDragHovered(pou_name.clone(), 1));
-        assert_eq!(app.fbd_drag_hover_block, Some(1));
+        let _ = app.update(Message::FbdBlockMoved(
+            pou_name.clone(),
+            first_id,
+            [240, 160],
+        ));
 
-        let _ = app.update(Message::FbdBlockDragDropped);
-        assert_eq!(app.fbd_dragging_block, None);
-        assert_eq!(app.fbd_drag_hover_block, None);
-
-        // First block is now at index 1
         if let Some(ferrite_project::PouSource::Fbd(fbd)) = app.project.pous.get(&pou_name) {
-            assert_eq!(fbd.blocks[1].id, first_id);
+            assert_eq!(fbd.blocks[0].grid_pos, Some([240, 160]));
         }
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -2354,7 +2357,9 @@ mod tests {
         assert_eq!(app.active_menu, None);
 
         // 3. Opening File menu
-        let _ = app.update(Message::ToggleActiveMenu(Some(crate::app::ActiveMenu::File)));
+        let _ = app.update(Message::ToggleActiveMenu(Some(
+            crate::app::ActiveMenu::File,
+        )));
         assert_eq!(app.active_menu, Some(crate::app::ActiveMenu::File));
 
         // 4. Hovering over PLC while File is open switches to PLC
@@ -2367,19 +2372,32 @@ mod tests {
 
         // 6. Action executions automatically close active_menu
         let _ = app.update(Message::OpenHelpWindow);
-        assert_eq!(app.active_menu, None, "OpenHelpWindow should dismiss active_menu");
+        assert_eq!(
+            app.active_menu, None,
+            "OpenHelpWindow should dismiss active_menu"
+        );
 
         // Open menu again, then trigger OpenDigitalTwinWindow
-        let _ = app.update(Message::ToggleActiveMenu(Some(crate::app::ActiveMenu::Panels)));
+        let _ = app.update(Message::ToggleActiveMenu(Some(
+            crate::app::ActiveMenu::Panels,
+        )));
         assert_eq!(app.active_menu, Some(crate::app::ActiveMenu::Panels));
         let _ = app.update(Message::OpenDigitalTwinWindow);
-        assert_eq!(app.active_menu, None, "OpenDigitalTwinWindow should dismiss active_menu");
+        assert_eq!(
+            app.active_menu, None,
+            "OpenDigitalTwinWindow should dismiss active_menu"
+        );
 
         // Open menu again, then dismiss via backdrop / ToggleActiveMenu(None)
-        let _ = app.update(Message::ToggleActiveMenu(Some(crate::app::ActiveMenu::Options)));
+        let _ = app.update(Message::ToggleActiveMenu(Some(
+            crate::app::ActiveMenu::Options,
+        )));
         assert_eq!(app.active_menu, Some(crate::app::ActiveMenu::Options));
         let _ = app.update(Message::ToggleActiveMenu(None));
-        assert_eq!(app.active_menu, None, "ToggleActiveMenu(None) should dismiss active_menu");
+        assert_eq!(
+            app.active_menu, None,
+            "ToggleActiveMenu(None) should dismiss active_menu"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
@@ -2491,13 +2509,20 @@ mod tests {
         crate::settings::set_custom_settings_path(Some(temp_dir.join("settings.json")));
 
         // 2. Open Options menu
-        let _ = app.update(Message::ToggleActiveMenu(Some(crate::app::ActiveMenu::Options)));
+        let _ = app.update(Message::ToggleActiveMenu(Some(
+            crate::app::ActiveMenu::Options,
+        )));
         assert_eq!(app.active_menu, Some(crate::app::ActiveMenu::Options));
         assert_eq!(app.active_submenu, None);
 
         // 3. Hovering Language item opens side-dropdown submenu
-        let _ = app.update(Message::SubmenuHover(Some(crate::app::ActiveSubmenu::Language)));
-        assert_eq!(app.active_submenu, Some(crate::app::ActiveSubmenu::Language));
+        let _ = app.update(Message::SubmenuHover(Some(
+            crate::app::ActiveSubmenu::Language,
+        )));
+        assert_eq!(
+            app.active_submenu,
+            Some(crate::app::ActiveSubmenu::Language)
+        );
 
         // 4. View renders without panic when language submenu is open alongside Options menu
         let _ = app.view(win_id);
@@ -2508,29 +2533,43 @@ mod tests {
         assert_eq!(app.active_menu, Some(crate::app::ActiveMenu::Options));
 
         // 6. Clicking Language item toggles submenu open
-        let _ = app.update(Message::ToggleSubmenu(Some(crate::app::ActiveSubmenu::Language)));
-        assert_eq!(app.active_submenu, Some(crate::app::ActiveSubmenu::Language));
+        let _ = app.update(Message::ToggleSubmenu(Some(
+            crate::app::ActiveSubmenu::Language,
+        )));
+        assert_eq!(
+            app.active_submenu,
+            Some(crate::app::ActiveSubmenu::Language)
+        );
 
         // 7. Selecting German sets ui_lang to De, dismisses menu and submenu
         let _ = app.update(Message::SetLanguage(UiLanguage::De));
         assert_eq!(app.ui_lang, UiLanguage::De);
         assert_eq!(app.active_menu, None);
         assert_eq!(app.active_submenu, None);
-        assert_eq!(crate::tr!("menu.file.save_project", app.ui_lang), "Projekt speichern");
+        assert_eq!(
+            crate::tr!("menu.file.save_project", app.ui_lang),
+            "Projekt speichern"
+        );
 
         // 8. Selecting Spanish sets ui_lang to Es
         let _ = app.update(Message::SetLanguage(UiLanguage::Es));
         assert_eq!(app.ui_lang, UiLanguage::Es);
         assert_eq!(app.active_menu, None);
         assert_eq!(app.active_submenu, None);
-        assert_eq!(crate::tr!("menu.file.save_project", app.ui_lang), "Guardar proyecto");
+        assert_eq!(
+            crate::tr!("menu.file.save_project", app.ui_lang),
+            "Guardar proyecto"
+        );
 
         // 9. Selecting Italian sets ui_lang to It
         let _ = app.update(Message::SetLanguage(UiLanguage::It));
         assert_eq!(app.ui_lang, UiLanguage::It);
         assert_eq!(app.active_menu, None);
         assert_eq!(app.active_submenu, None);
-        assert_eq!(crate::tr!("menu.file.save_project", app.ui_lang), "Salva progetto");
+        assert_eq!(
+            crate::tr!("menu.file.save_project", app.ui_lang),
+            "Salva progetto"
+        );
 
         crate::settings::set_custom_settings_path(None);
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -2546,10 +2585,12 @@ mod tests {
         let mut proj = resolve_or_scaffold_project(Some(&temp_dir))?;
 
         // Add a PID corrector to shared instances
-        proj.fb_instances.instances.push(ferrite_core::FbInstance::new(
-            "PID_Loop_1".to_string(),
-            ferrite_core::StandardFbKind::PidMixed,
-        ));
+        proj.fb_instances
+            .instances
+            .push(ferrite_core::FbInstance::new(
+                "PID_Loop_1".to_string(),
+                ferrite_core::StandardFbKind::PidMixed,
+            ));
 
         let mut app = FerriteStudioApp::new(proj.clone());
         let win_id = iced::window::Id::unique();
@@ -2567,9 +2608,17 @@ mod tests {
         for lang in UiLanguage::ALL {
             // 1. Verify i18n keys for symbols
             let title = crate::tr!("symbols.title", lang);
-            assert!(!title.is_empty(), "Title should not be empty for {:?}", lang);
+            assert!(
+                !title.is_empty(),
+                "Title should not be empty for {:?}",
+                lang
+            );
             let add_pid = crate::tr!("symbols.add_pid", lang);
-            assert!(!add_pid.is_empty(), "Add PID label should not be empty for {:?}", lang);
+            assert!(
+                !add_pid.is_empty(),
+                "Add PID label should not be empty for {:?}",
+                lang
+            );
 
             // 2. Render Symbols & Config workspace tab
             app.ui_lang = lang;
@@ -2604,11 +2653,13 @@ mod tests {
         let mut proj = resolve_or_scaffold_project(Some(&temp_dir))?;
 
         // 1. Setup sample shared symbols and FB instances
-        proj.fb_instances.instances.push(ferrite_core::FbInstance::new(
-            "PID_Loop_Test".to_string(),
-            ferrite_core::StandardFbKind::PidParallel,
-        ));
-                proj.global_tags.tags.push(ferrite_core::TagEntry::new(
+        proj.fb_instances
+            .instances
+            .push(ferrite_core::FbInstance::new(
+                "PID_Loop_Test".to_string(),
+                ferrite_core::StandardFbKind::PidParallel,
+            ));
+        proj.global_tags.tags.push(ferrite_core::TagEntry::new(
             "Long_Descriptive_Tag_Name_For_Testing",
             ferrite_core::IecType::Real,
             None,
@@ -2673,8 +2724,12 @@ mod tests {
     }
 
     #[test]
-    fn test_language_preference_persisted_across_app_restarts() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("ferrite_gui_lang_persist_test_{}", std::process::id()));
+    fn test_language_preference_persisted_across_app_restarts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ferrite_gui_lang_persist_test_{}",
+            std::process::id()
+        ));
         let settings_file = temp_dir.join("settings.json");
         std::fs::create_dir_all(&temp_dir)?;
 
@@ -2685,7 +2740,11 @@ mod tests {
         // 1. First app launch: defaults to English
         {
             let mut app = FerriteStudioApp::new(proj.clone());
-            assert_eq!(app.ui_lang, UiLanguage::En, "Default language on first launch must be English");
+            assert_eq!(
+                app.ui_lang,
+                UiLanguage::En,
+                "Default language on first launch must be English"
+            );
             let _ = app.update(Message::SetLanguage(UiLanguage::Fr));
             assert_eq!(app.ui_lang, UiLanguage::Fr);
         } // App is "closed" here
@@ -2723,14 +2782,22 @@ mod tests {
         app.active_tab = WorkspaceTab::Pou("main_safety".to_string());
         app.ld_selected = Some((
             "main_safety".to_string(),
-            crate::canvas_ld::LdElementKey::Contact { rung: 0, branch_path: vec![], index: 0 },
+            crate::canvas_ld::LdElementKey::Contact {
+                rung: 0,
+                branch_path: vec![],
+                index: 0,
+            },
         ));
-        app.ld_selected_elements = vec![
-            crate::canvas_ld::LdElementKey::Contact { rung: 0, branch_path: vec![], index: 0 },
-        ];
+        app.ld_selected_elements = vec![crate::canvas_ld::LdElementKey::Contact {
+            rung: 0,
+            branch_path: vec![],
+            index: 0,
+        }];
 
         // Switch tab to batch_seq (SFC)
-        let _ = app.update(Message::SelectTab(WorkspaceTab::Pou("batch_seq".to_string())));
+        let _ = app.update(Message::SelectTab(WorkspaceTab::Pou(
+            "batch_seq".to_string(),
+        )));
 
         // Verify selections are cleared
         assert!(app.ld_selected.is_none());
@@ -2741,7 +2808,10 @@ mod tests {
         // Pressing delete while on batch_seq should not mutate main_safety
         let initial_main_safety = app.project.pous.get("main_safety").cloned();
         let _ = app.update(Message::DeletePressed);
-        assert_eq!(app.project.pous.get("main_safety"), initial_main_safety.as_ref());
+        assert_eq!(
+            app.project.pous.get("main_safety"),
+            initial_main_safety.as_ref()
+        );
 
         Ok(())
     }
@@ -2756,7 +2826,9 @@ mod tests {
 
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_i23_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let mut new_proj = ferrite_project::Project::scaffold(&temp_dir, "new_st_proj")?;
         let new_st = "PROGRAM new_math\n  val := 42;\nEND_PROGRAM\n";
@@ -2805,17 +2877,24 @@ mod tests {
         // Ensure all transition IDs are unique
         let mut ids = std::collections::HashSet::new();
         for t in &sfc_after.transitions {
-            assert!(ids.insert(t.id.clone()), "Duplicate transition ID found: {}", t.id);
+            assert!(
+                ids.insert(t.id.clone()),
+                "Duplicate transition ID found: {}",
+                t.id
+            );
         }
 
         Ok(())
     }
 
     #[test]
-    fn test_i25_save_pou_preserves_dirty_when_symbols_modified() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_i25_save_pou_preserves_dirty_when_symbols_modified()
+    -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_i25_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let proj = ferrite_project::Project::scaffold(&temp_dir, "test_i25")?;
         let mut app = FerriteStudioApp::new(proj);
@@ -2829,14 +2908,18 @@ mod tests {
         let _ = app.update(Message::SavePou("main_safety".to_string()));
 
         // Even though main_safety was saved, modified must still be true because global tags are unsaved!
-        assert!(app.modified, "app.modified must remain true when symbols are dirty");
+        assert!(
+            app.modified,
+            "app.modified must remain true when symbols are dirty"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
 
     #[test]
-    fn test_i26_confirm_close_save_and_exit_aborts_on_save_error() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_i26_confirm_close_save_and_exit_aborts_on_save_error()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut app = FerriteStudioApp::new_test_app();
         app.modified = true;
         app.show_close_confirm_modal = true;
@@ -2844,7 +2927,9 @@ mod tests {
         // Create a regular file and point root_dir to it, so create_dir_all fails
         let temp_file = std::env::temp_dir().join(format!(
             "ferrite_test_i26_file_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         std::fs::write(&temp_file, "blocking file")?;
         app.project.root_dir = temp_file.clone();
@@ -2854,14 +2939,19 @@ mod tests {
         // Exit must have been aborted
         assert!(!app.allowed_to_close, "Exit must be aborted on save error");
         assert!(!app.show_close_confirm_modal);
-        assert!(app.status_banner.starts_with("Save failed"), "Status banner: {}", app.status_banner);
+        assert!(
+            app.status_banner.starts_with("Save failed"),
+            "Status banner: {}",
+            app.status_banner
+        );
 
         let _ = std::fs::remove_file(&temp_file);
         Ok(())
     }
 
     #[test]
-    fn test_i27_fbd_block_naming_no_duplicates_after_delete() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_i27_fbd_block_naming_no_duplicates_after_delete()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut app = FerriteStudioApp::new_test_app();
         let pou_name = "pump_ctrl".to_string();
 
@@ -2884,7 +2974,10 @@ mod tests {
         ));
 
         // Delete TON_1
-        let _ = app.update(Message::FbdRemoveBlock(pou_name.clone(), "TON_1".to_string()));
+        let _ = app.update(Message::FbdRemoveBlock(
+            pou_name.clone(),
+            "TON_1".to_string(),
+        ));
 
         // Add another block with instance TON_2 (as if clicked from library when count was 1)
         let _ = app.update(Message::FbdAddBlock(
@@ -2904,7 +2997,11 @@ mod tests {
         // Verify there are no duplicate block IDs
         let mut ids = std::collections::HashSet::new();
         for b in &fbd.blocks {
-            assert!(ids.insert(b.id.clone()), "Duplicate FBD block ID found: {}", b.id);
+            assert!(
+                ids.insert(b.id.clone()),
+                "Duplicate FBD block ID found: {}",
+                b.id
+            );
         }
 
         Ok(())
@@ -2932,10 +3029,13 @@ mod tests {
     }
 
     #[test]
-    fn test_digital_twin_load_failure_preserves_corrupted_file() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_digital_twin_load_failure_preserves_corrupted_file()
+    -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_twin_fail_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let proj = ferrite_project::Project::scaffold(&temp_dir, "test_twin_fail")?;
 
@@ -2959,7 +3059,10 @@ mod tests {
 
         // Verify corrupted file was NOT overwritten
         let current_file_content = std::fs::read_to_string(&twin_path)?;
-        assert_eq!(current_file_content, malformed_content, "Corrupted twin file must not be overwritten on save");
+        assert_eq!(
+            current_file_content, malformed_content,
+            "Corrupted twin file must not be overwritten on save"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
@@ -2969,7 +3072,9 @@ mod tests {
     fn test_online_reload_preserves_runtime_state() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_online_reload_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let proj = ferrite_project::Project::scaffold(&temp_dir, "test_online_reload")?;
         let mut app = FerriteStudioApp::new(proj);
@@ -3030,7 +3135,8 @@ mod tests {
     }
 
     #[test]
-    fn test_symbol_editor_new_iec_types_selectable_and_parseable() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_symbol_editor_new_iec_types_selectable_and_parseable()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut app = FerriteStudioApp::new_test_app();
 
         // Verify ALL_ELEMENTARY contains new types
@@ -3049,18 +3155,36 @@ mod tests {
         // Add a new global tag for Dword testing
         let _ = app.update(Message::AddGlobalTag);
         let new_idx = app.project.global_tags.tags.len() - 1;
-        let _ = app.update(Message::TagTypeChanged(new_idx, ferrite_core::IecType::Dword));
+        let _ = app.update(Message::TagTypeChanged(
+            new_idx,
+            ferrite_core::IecType::Dword,
+        ));
         let _ = app.update(Message::TagNameChanged(new_idx, "Dword_Tag".to_string()));
-        assert_eq!(app.project.global_tags.tags[new_idx].data_type, ferrite_core::IecType::Dword);
-        assert_eq!(app.project.global_tags.tags[new_idx].initial_value, ferrite_core::IecValue::Dword(0));
+        assert_eq!(
+            app.project.global_tags.tags[new_idx].data_type,
+            ferrite_core::IecType::Dword
+        );
+        assert_eq!(
+            app.project.global_tags.tags[new_idx].initial_value,
+            ferrite_core::IecValue::Dword(0)
+        );
 
         // Also test Lreal mutation on tag 0 in project
         let _ = app.update(Message::TagTypeChanged(0, ferrite_core::IecType::Lreal));
-        assert_eq!(app.project.global_tags.tags[0].data_type, ferrite_core::IecType::Lreal);
-        assert_eq!(app.project.global_tags.tags[0].initial_value, ferrite_core::IecValue::Lreal(0.0));
+        assert_eq!(
+            app.project.global_tags.tags[0].data_type,
+            ferrite_core::IecType::Lreal
+        );
+        assert_eq!(
+            app.project.global_tags.tags[0].initial_value,
+            ferrite_core::IecValue::Lreal(0.0)
+        );
 
         // Force numeric tag with hex literal
-        let _ = app.update(Message::ForceNumericTag("Dword_Tag".to_string(), "16#ABCD".to_string()));
+        let _ = app.update(Message::ForceNumericTag(
+            "Dword_Tag".to_string(),
+            "16#ABCD".to_string(),
+        ));
         let forced_val = app
             .runtime
             .as_ref()
@@ -3081,13 +3205,17 @@ mod tests {
     fn test_in_scan_trace_configuration_and_drain() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_trace_ui_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let proj = ferrite_project::Project::scaffold(&temp_dir, "test_trace_ui")?;
         let mut app = FerriteStudioApp::new(proj);
 
         // Configure trace on Start_Button and EStop_OK
-        let _ = app.update(Message::TraceTagsInputChanged("Start_Button, EStop_OK".to_string()));
+        let _ = app.update(Message::TraceTagsInputChanged(
+            "Start_Button, EStop_OK".to_string(),
+        ));
         let _ = app.update(Message::TraceCapacityInputChanged("10".to_string()));
         let _ = app.update(Message::TraceStart);
         assert!(app.trace_active);
@@ -3121,7 +3249,9 @@ mod tests {
     fn test_theme_persistence_in_user_settings() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join(format!(
             "ferrite_test_theme_persist_{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let settings_path = temp_dir.join("settings.json");
         std::fs::create_dir_all(&temp_dir)?;
@@ -3130,16 +3260,28 @@ mod tests {
 
         // Default when absent
         assert_eq!(crate::settings::load_saved_theme(), None);
-        assert_eq!(crate::settings::load_saved_theme_or_default(), crate::app::UiTheme::Dark);
+        assert_eq!(
+            crate::settings::load_saved_theme_or_default(),
+            crate::app::UiTheme::Dark
+        );
 
         // Save Light theme
         crate::settings::save_theme_preference(crate::app::UiTheme::Light)?;
-        assert_eq!(crate::settings::load_saved_theme(), Some(crate::app::UiTheme::Light));
-        assert_eq!(crate::settings::load_saved_theme_or_default(), crate::app::UiTheme::Light);
+        assert_eq!(
+            crate::settings::load_saved_theme(),
+            Some(crate::app::UiTheme::Light)
+        );
+        assert_eq!(
+            crate::settings::load_saved_theme_or_default(),
+            crate::app::UiTheme::Light
+        );
 
         // Save Dark theme
         crate::settings::save_theme_preference(crate::app::UiTheme::Dark)?;
-        assert_eq!(crate::settings::load_saved_theme(), Some(crate::app::UiTheme::Dark));
+        assert_eq!(
+            crate::settings::load_saved_theme(),
+            Some(crate::app::UiTheme::Dark)
+        );
 
         crate::settings::set_custom_settings_path(None);
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -3182,6 +3324,8 @@ mod tests {
 
         // Card style in light theme must use light elevated background
         let card_light = theme::StudioTheme::card_style(&light);
-        assert!(matches!(card_light.background, Some(iced::Background::Color(c)) if c == iced::Color::WHITE));
+        assert!(
+            matches!(card_light.background, Some(iced::Background::Color(c)) if c == iced::Color::WHITE)
+        );
     }
 }

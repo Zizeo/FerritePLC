@@ -34,23 +34,35 @@ impl HelpCategory {
 
     pub fn title(self, lang: crate::i18n::UiLanguage) -> &'static str {
         match self {
-            HelpCategory::Architecture => lang.tr("1. System Architecture", "1. Architecture Système"),
-            HelpCategory::LadderDiagram => lang.tr("2. Ladder Diagram (LD)", "2. Schéma Ladder (LD)"),
+            HelpCategory::Architecture => {
+                lang.tr("1. System Architecture", "1. Architecture Système")
+            }
+            HelpCategory::LadderDiagram => {
+                lang.tr("2. Ladder Diagram (LD)", "2. Schéma Ladder (LD)")
+            }
             HelpCategory::SfcGrafcet => lang.tr("3. Grafcet / SFC", "3. Grafcet / SFC"),
-            HelpCategory::StructuredText => lang.tr("4. Structured Text (ST)", "4. Texte Structuré (ST)"),
-            HelpCategory::FunctionBlockDiagram => {
-                lang.tr("5. Function Block Diagram (FBD)", "5. Blocs Fonctionnels (FBD)")
+            HelpCategory::StructuredText => {
+                lang.tr("4. Structured Text (ST)", "4. Texte Structuré (ST)")
             }
+            HelpCategory::FunctionBlockDiagram => lang.tr(
+                "5. Function Block Diagram (FBD)",
+                "5. Blocs Fonctionnels (FBD)",
+            ),
             HelpCategory::MemoryAddressing => lang.tr("6. Memory & Tags", "6. Mémoire & Variables"),
-            HelpCategory::Simulation => lang.tr("7. Simulation & Diagnostics", "7. Simulation & Diagnostics"),
-            HelpCategory::FieldbusProtocols => {
-                lang.tr("8. Fieldbus & Communication", "8. Bus de Terrain & Communication")
+            HelpCategory::Simulation => {
+                lang.tr("7. Simulation & Diagnostics", "7. Simulation & Diagnostics")
             }
+            HelpCategory::FieldbusProtocols => lang.tr(
+                "8. Fieldbus & Communication",
+                "8. Bus de Terrain & Communication",
+            ),
             HelpCategory::HardwareEmbedded => {
                 lang.tr("9. Hardware & Embedded HAL", "9. Matériel & HAL Embarqué")
             }
             HelpCategory::DigitalTwin => lang.tr("10. 2D Digital Twin", "10. Jumeau Numérique 2D"),
-            HelpCategory::ProjectTools => lang.tr("11. Tools & Shortcuts", "11. Outils & Raccourcis"),
+            HelpCategory::ProjectTools => {
+                lang.tr("11. Tools & Shortcuts", "11. Outils & Raccourcis")
+            }
         }
     }
 }
@@ -115,21 +127,42 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         category: HelpCategory::Architecture,
         title_en: "Deterministic Scan Cycle & Clock",
         title_fr: "Cycle de Scan Déterministe & Horloge",
-        keywords: &["scan", "cycle", "loop", "clock", "watchdog", "phases", "virtual time", "inputs", "outputs"],
+        keywords: &[
+            "scan",
+            "cycle",
+            "loop",
+            "clock",
+            "watchdog",
+            "phases",
+            "virtual time",
+            "inputs",
+            "outputs",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::ArchProjectFiles,
         category: HelpCategory::Architecture,
         title_en: "Project Structure & Manifest (.fplc)",
         title_fr: "Structure du Projet & Manifeste (.fplc)",
-        keywords: &["project", "manifest", "fplc", "file", "pou", "symbols", "scaffold", "json", "toml"],
+        keywords: &[
+            "project", "manifest", "fplc", "file", "pou", "symbols", "scaffold", "json", "toml",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::ArchInterLang,
         category: HelpCategory::Architecture,
         title_en: "Inter-Language Communication & Process Image",
         title_fr: "Communication Inter-Langages & Image Processus",
-        keywords: &["inter-language", "process image", "memory map", "pou", "executablepou", "cross-language", "shared", "context"],
+        keywords: &[
+            "inter-language",
+            "process image",
+            "memory map",
+            "pou",
+            "executablepou",
+            "cross-language",
+            "shared",
+            "context",
+        ],
     },
     // 2. Ladder Diagram
     HelpTopicMeta {
@@ -137,35 +170,83 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         category: HelpCategory::LadderDiagram,
         title_en: "Ladder Contacts (--[ ]--, --[/]--, --[P]--, --[N]--)",
         title_fr: "Contacts Ladder (--[ ]--, --[/]--, --[P]--, --[N]--)",
-        keywords: &["contact", "ld", "ladder", "normally open", "normally closed", "no", "nc", "rising edge", "falling edge", "pulse", "--[ ]--", "--[/]--", "--[P]--", "--[N]--"],
+        keywords: &[
+            "contact",
+            "ld",
+            "ladder",
+            "normally open",
+            "normally closed",
+            "no",
+            "nc",
+            "rising edge",
+            "falling edge",
+            "pulse",
+            "--[ ]--",
+            "--[/]--",
+            "--[P]--",
+            "--[N]--",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::LdCoils,
         category: HelpCategory::LadderDiagram,
         title_en: "Ladder Coils (--( )--, --[S]--, --[R]--)",
         title_fr: "Bobines Ladder (--( )--, --[S]--, --[R]--)",
-        keywords: &["coil", "ld", "ladder", "normal coil", "set", "reset", "latch", "unlatch", "--( )--", "--[S]--", "--[R]--"],
+        keywords: &[
+            "coil",
+            "ld",
+            "ladder",
+            "normal coil",
+            "set",
+            "reset",
+            "latch",
+            "unlatch",
+            "--( )--",
+            "--[S]--",
+            "--[R]--",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::LdBranches,
         category: HelpCategory::LadderDiagram,
         title_en: "Rung Branches & Power Flow",
         title_fr: "Branches de Rung & Flux d'Énergie",
-        keywords: &["branch", "rung", "parallel", "or branch", "power rail", "dissolution", "wire"],
+        keywords: &[
+            "branch",
+            "rung",
+            "parallel",
+            "or branch",
+            "power rail",
+            "dissolution",
+            "wire",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::LdCompareMath,
         category: HelpCategory::LadderDiagram,
         title_en: "Comparison & Math/Move Rung Blocks",
         title_fr: "Blocs de Comparaison & Calcul Math/Move sur Rung",
-        keywords: &["compare", "math", "move", "rung", "gt", "lt", "eq", "ge", "le", "ne", "add", "sub", "mul", "div"],
+        keywords: &[
+            "compare", "math", "move", "rung", "gt", "lt", "eq", "ge", "le", "ne", "add", "sub",
+            "mul", "div",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::LdInlineFb,
         category: HelpCategory::LadderDiagram,
         title_en: "Inline Function Blocks in Ladder Rungs",
         title_fr: "Blocs Fonctionnels Intégrés en Rung Ladder",
-        keywords: &["inline fb", "function block", "ton", "ctu", "ladder", "rung", "enable", "en", "eno"],
+        keywords: &[
+            "inline fb",
+            "function block",
+            "ton",
+            "ctu",
+            "ladder",
+            "rung",
+            "enable",
+            "en",
+            "eno",
+        ],
     },
     // 3. SFC / Grafcet
     HelpTopicMeta {
@@ -173,28 +254,65 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         category: HelpCategory::SfcGrafcet,
         title_en: "Steps & Initial States ([[ 0 ]], [ 1 ])",
         title_fr: "Étapes & États Initiaux ([[ 0 ]], [ 1 ])",
-        keywords: &["step", "initial", "normal", "macro", "sfc", "grafcet", "state", "token", "[[ 0 ]]", "[ 1 ]"],
+        keywords: &[
+            "step", "initial", "normal", "macro", "sfc", "grafcet", "state", "token", "[[ 0 ]]",
+            "[ 1 ]",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::SfcActions,
         category: HelpCategory::SfcGrafcet,
         title_en: "Action Qualifiers (N, S, R, L, D, P)",
         title_fr: "Qualificateurs d'Action (N, S, R, L, D, P)",
-        keywords: &["action", "qualifier", "stored", "reset", "limited", "delayed", "pulse", "N", "S", "R", "L", "D", "P", "duration"],
+        keywords: &[
+            "action",
+            "qualifier",
+            "stored",
+            "reset",
+            "limited",
+            "delayed",
+            "pulse",
+            "N",
+            "S",
+            "R",
+            "L",
+            "D",
+            "P",
+            "duration",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::SfcDivergenceConvergence,
         category: HelpCategory::SfcGrafcet,
         title_en: "Divergences & Convergences (AND === / OR —)",
         title_fr: "Divergences & Convergences (ET === / OU —)",
-        keywords: &["divergence", "convergence", "and", "or", "receptivity", "transition", "iec 60848", "rules", "alternation", "==="],
+        keywords: &[
+            "divergence",
+            "convergence",
+            "and",
+            "or",
+            "receptivity",
+            "transition",
+            "iec 60848",
+            "rules",
+            "alternation",
+            "===",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::SfcIntrospection,
         category: HelpCategory::SfcGrafcet,
         title_en: "Grafcet Introspection Symbols (X<i>.state, X<i>.t)",
         title_fr: "Symboles d'Introspection Grafcet (X<i>.state, X<i>.t)",
-        keywords: &["introspection", "x.state", "x.t", "step activity", "elapsed time", "cross-language", "receptivity"],
+        keywords: &[
+            "introspection",
+            "x.state",
+            "x.t",
+            "step activity",
+            "elapsed time",
+            "cross-language",
+            "receptivity",
+        ],
     },
     // 4. Structured Text
     HelpTopicMeta {
@@ -202,21 +320,65 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         category: HelpCategory::StructuredText,
         title_en: "Structured Text Syntax & Operators",
         title_fr: "Syntaxe & Opérateurs Structured Text",
-        keywords: &["st", "structured text", "syntax", "operators", "arithmetic", "bitwise", "relational", ":=", "+", "-", "*", "/", "MOD", "AND", "OR", "NOT"],
+        keywords: &[
+            "st",
+            "structured text",
+            "syntax",
+            "operators",
+            "arithmetic",
+            "bitwise",
+            "relational",
+            ":=",
+            "+",
+            "-",
+            "*",
+            "/",
+            "MOD",
+            "AND",
+            "OR",
+            "NOT",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::StControlFlow,
         category: HelpCategory::StructuredText,
         title_en: "Control Flow (IF, CASE, FOR, WHILE)",
         title_fr: "Structures de Contrôle (IF, CASE, FOR, WHILE)",
-        keywords: &["control flow", "if", "then", "else", "elsif", "case", "of", "for", "to", "by", "while", "do"],
+        keywords: &[
+            "control flow",
+            "if",
+            "then",
+            "else",
+            "elsif",
+            "case",
+            "of",
+            "for",
+            "to",
+            "by",
+            "while",
+            "do",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::StMathFunctions,
         category: HelpCategory::StructuredText,
         title_en: "Standard Math Functions (ABS, SQRT, etc.)",
         title_fr: "Fonctions Mathématiques Standards (ABS, SQRT, etc.)",
-        keywords: &["math", "functions", "abs", "sqrt", "sin", "cos", "tan", "exp", "ln", "log", "asin", "acos", "atan"],
+        keywords: &[
+            "math",
+            "functions",
+            "abs",
+            "sqrt",
+            "sin",
+            "cos",
+            "tan",
+            "exp",
+            "ln",
+            "log",
+            "asin",
+            "acos",
+            "atan",
+        ],
     },
     // 5. Function Block Diagram
     HelpTopicMeta {
@@ -224,28 +386,65 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         category: HelpCategory::FunctionBlockDiagram,
         title_en: "Standard Function Blocks (TON, TOF, TP, CTU, etc.)",
         title_fr: "Blocs Fonctionnels Standards (TON, TOF, TP, CTU, etc.)",
-        keywords: &["fbd", "function block", "ton", "tof", "tp", "ctu", "ctd", "r_trig", "f_trig", "sr", "rs", "timer", "counter"],
+        keywords: &[
+            "fbd",
+            "function block",
+            "ton",
+            "tof",
+            "tp",
+            "ctu",
+            "ctd",
+            "r_trig",
+            "f_trig",
+            "sr",
+            "rs",
+            "timer",
+            "counter",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::FbdPidController,
         category: HelpCategory::FunctionBlockDiagram,
         title_en: "PID Closed-Loop Controller",
         title_fr: "Régulateur Boucle Fermée PID",
-        keywords: &["pid", "controller", "closed loop", "parallel", "series", "mixed", "ideal", "kp", "ti", "td", "anti-windup"],
+        keywords: &[
+            "pid",
+            "controller",
+            "closed loop",
+            "parallel",
+            "series",
+            "mixed",
+            "ideal",
+            "kp",
+            "ti",
+            "td",
+            "anti-windup",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::FbdLogicMath,
         category: HelpCategory::FunctionBlockDiagram,
         title_en: "FBD Logic, Comparison & Math Blocks",
         title_fr: "Blocs Logiques, Comparaisons & Calculs FBD",
-        keywords: &["fbd", "logic", "and", "or", "xor", "not", "add", "sub", "mul", "div", "gt", "lt", "eq", "math"],
+        keywords: &[
+            "fbd", "logic", "and", "or", "xor", "not", "add", "sub", "mul", "div", "gt", "lt",
+            "eq", "math",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::FbdCustomComposite,
         category: HelpCategory::FunctionBlockDiagram,
         title_en: "Custom & Composite User Function Blocks",
         title_fr: "Blocs Fonctionnels Utilisateur & Composites",
-        keywords: &["composite", "custom", "user fb", "custom fbd library", "encapsulation", "reusable", "sub-diagram"],
+        keywords: &[
+            "composite",
+            "custom",
+            "user fb",
+            "custom fbd library",
+            "encapsulation",
+            "reusable",
+            "sub-diagram",
+        ],
     },
     // 6. Memory & Addressing
     HelpTopicMeta {
@@ -254,9 +453,30 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         title_en: "Direct Addressing (%I, %Q, %M)",
         title_fr: "Adressage Direct (%I, %Q, %M)",
         keywords: &[
-            "addressing", "direct", "%i", "%q", "%m", "%ix", "%qx", "%mx", "%ib", "%qb", "%mb",
-            "%iw", "%qw", "%mw", "%id", "%qd", "%md", "inputs", "outputs", "memory", "bit",
-            "byte", "word", "dword",
+            "addressing",
+            "direct",
+            "%i",
+            "%q",
+            "%m",
+            "%ix",
+            "%qx",
+            "%mx",
+            "%ib",
+            "%qb",
+            "%mb",
+            "%iw",
+            "%qw",
+            "%mw",
+            "%id",
+            "%qd",
+            "%md",
+            "inputs",
+            "outputs",
+            "memory",
+            "bit",
+            "byte",
+            "word",
+            "dword",
         ],
     },
     HelpTopicMeta {
@@ -264,7 +484,19 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         category: HelpCategory::MemoryAddressing,
         title_en: "Symbolic Tag Table & Data Types",
         title_fr: "Table des Variables & Types IEC",
-        keywords: &["tags", "variables", "symbols", "bool", "int", "dint", "real", "time", "string", "iec types", "retained"],
+        keywords: &[
+            "tags",
+            "variables",
+            "symbols",
+            "bool",
+            "int",
+            "dint",
+            "real",
+            "time",
+            "string",
+            "iec types",
+            "retained",
+        ],
     },
     // 7. Simulation & Diagnostics
     HelpTopicMeta {
@@ -272,21 +504,51 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         category: HelpCategory::Simulation,
         title_en: "Scan Engine, Virtual Clock & I/O Forcing",
         title_fr: "Moteur de Scan, Horloge Virtuelle & Forçage E/S",
-        keywords: &["simulation", "run", "pause", "step", "cycle", "forces", "force table", "unforce", "virtual clock", "[!]"],
+        keywords: &[
+            "simulation",
+            "run",
+            "pause",
+            "step",
+            "cycle",
+            "forces",
+            "force table",
+            "unforce",
+            "virtual clock",
+            "[!]",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::SimAlarmsAndRetain,
         category: HelpCategory::Simulation,
         title_en: "ISA 18.2 Alarm Lifecycle & Retain Snapshots",
         title_fr: "Cycle de Vie Alarmes ISA 18.2 & Mémoire Rémanente",
-        keywords: &["alarms", "isa 18.2", "journal", "unacknowledged", "acknowledged", "retain", "snapshots", "persistence"],
+        keywords: &[
+            "alarms",
+            "isa 18.2",
+            "journal",
+            "unacknowledged",
+            "acknowledged",
+            "retain",
+            "snapshots",
+            "persistence",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::SimTrendPlotter,
         category: HelpCategory::Simulation,
         title_en: "Real-Time Trend Plotter & Oscilloscope",
         title_fr: "Traceur de Tendances Temps Réel & Oscilloscope",
-        keywords: &["trend", "plotter", "oscilloscope", "waveform", "sampling", "history", "live", "trigger", "channels"],
+        keywords: &[
+            "trend",
+            "plotter",
+            "oscilloscope",
+            "waveform",
+            "sampling",
+            "history",
+            "live",
+            "trigger",
+            "channels",
+        ],
     },
     // 8. Fieldbus & Communication
     HelpTopicMeta {
@@ -294,14 +556,37 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         category: HelpCategory::FieldbusProtocols,
         title_en: "Modbus TCP, OPC UA & MQTT Telemetry",
         title_fr: "Modbus TCP, OPC UA & Télémesure MQTT",
-        keywords: &["fieldbus", "modbus", "modbus tcp", "opc ua", "mqtt", "telemetry", "holding registers", "coils", "address space"],
+        keywords: &[
+            "fieldbus",
+            "modbus",
+            "modbus tcp",
+            "opc ua",
+            "mqtt",
+            "telemetry",
+            "holding registers",
+            "coils",
+            "address space",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::FieldbusModbusRtu,
         category: HelpCategory::FieldbusProtocols,
         title_en: "Modbus RTU Serial (RS-485 / RS-232)",
         title_fr: "Modbus RTU Série (RS-485 / RS-232)",
-        keywords: &["rtu", "serial", "rs485", "rs232", "baud rate", "crc", "parity", "t1.5", "t3.5", "modbus rtu", "master", "slave"],
+        keywords: &[
+            "rtu",
+            "serial",
+            "rs485",
+            "rs232",
+            "baud rate",
+            "crc",
+            "parity",
+            "t1.5",
+            "t3.5",
+            "modbus rtu",
+            "master",
+            "slave",
+        ],
     },
     // 9. Hardware & Embedded HAL
     HelpTopicMeta {
@@ -309,7 +594,16 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         category: HelpCategory::HardwareEmbedded,
         title_en: "Raspberry Pi 40-Pin GPIO Header Visualizer",
         title_fr: "Visualiseur GPIO 40 Broches Raspberry Pi",
-        keywords: &["gpio", "raspberry pi", "rpi", "hardware", "hal", "40-pin", "pinout", "levels"],
+        keywords: &[
+            "gpio",
+            "raspberry pi",
+            "rpi",
+            "hardware",
+            "hal",
+            "40-pin",
+            "pinout",
+            "levels",
+        ],
     },
     // 10. Digital Twin
     HelpTopicMeta {
@@ -317,7 +611,18 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         category: HelpCategory::DigitalTwin,
         title_en: "Digital Twin 2D Simulation Canvas",
         title_fr: "Canvas de Simulation Digital Twin 2D",
-        keywords: &["digital twin", "twin", "simulation", "physics", "tanks", "pumps", "valves", "conveyors", "sensors", "schematic"],
+        keywords: &[
+            "digital twin",
+            "twin",
+            "simulation",
+            "physics",
+            "tanks",
+            "pumps",
+            "valves",
+            "conveyors",
+            "sensors",
+            "schematic",
+        ],
     },
     // 11. Tools & Shortcuts
     HelpTopicMeta {
@@ -325,14 +630,37 @@ pub static TOPIC_CATALOG: &[HelpTopicMeta] = &[
         category: HelpCategory::ProjectTools,
         title_en: "PLCopen TC6 XML Export & Import",
         title_fr: "Import & Export PLCopen TC6 XML",
-        keywords: &["plcopen", "tc6", "xml", "interoperability", "export", "import", "twincat", "codesys", "standard"],
+        keywords: &[
+            "plcopen",
+            "tc6",
+            "xml",
+            "interoperability",
+            "export",
+            "import",
+            "twincat",
+            "codesys",
+            "standard",
+        ],
     },
     HelpTopicMeta {
         id: HelpTopic::CanvasShortcuts,
         category: HelpCategory::ProjectTools,
         title_en: "Studio Navigation & Keyboard Shortcuts",
         title_fr: "Navigation Studio & Raccourcis Clavier",
-        keywords: &["shortcuts", "hotkeys", "keyboard", "f1", "ctrl+s", "ctrl+o", "ctrl+z", "ctrl+y", "pan", "zoom", "marquee", "wiring"],
+        keywords: &[
+            "shortcuts",
+            "hotkeys",
+            "keyboard",
+            "f1",
+            "ctrl+s",
+            "ctrl+o",
+            "ctrl+z",
+            "ctrl+y",
+            "pan",
+            "zoom",
+            "marquee",
+            "wiring",
+        ],
     },
 ];
 
@@ -361,7 +689,7 @@ pub fn filter_topics(query: &str) -> Vec<HelpTopic> {
 }
 
 use iced::border::Radius;
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
+use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
 use crate::i18n::UiLanguage;
@@ -477,13 +805,11 @@ pub fn view_help_window<'a>(
                 StudioTheme::ghost_button
             };
 
-            let topic_btn = button(
-                text(topic_title).size(11.5).color(if is_active {
-                    StudioTheme::TEXT_PRIMARY
-                } else {
-                    StudioTheme::TEXT_SECONDARY
-                }),
-            )
+            let topic_btn = button(text(topic_title).size(11.5).color(if is_active {
+                StudioTheme::TEXT_PRIMARY
+            } else {
+                StudioTheme::TEXT_SECONDARY
+            }))
             .width(Length::Fill)
             .on_press(crate::app::Message::SelectHelpTopic(topic_meta.id))
             .style(btn_style)
@@ -612,15 +938,13 @@ fn paragraph<'a, Message: 'a>(text_str: &str) -> Element<'a, Message> {
         .into()
 }
 
-fn callout_box<'a, Message: 'a>(
-    title: &str,
-    content: &str,
-    accent: Color,
-) -> Element<'a, Message> {
+fn callout_box<'a, Message: 'a>(title: &str, content: &str, accent: Color) -> Element<'a, Message> {
     container(
         column![
             text(title.to_string()).size(13).color(accent),
-            text(content.to_string()).size(12).color(StudioTheme::TEXT_SECONDARY),
+            text(content.to_string())
+                .size(12)
+                .color(StudioTheme::TEXT_SECONDARY),
         ]
         .spacing(4),
     )
@@ -663,8 +987,12 @@ fn symbol_card<'a, Message: 'a>(
     let header_row = row![
         glyph_badge,
         column![
-            text(name.to_string()).size(13).color(StudioTheme::TEXT_PRIMARY),
-            text(kind.to_string()).size(11).color(StudioTheme::TEXT_MUTED),
+            text(name.to_string())
+                .size(13)
+                .color(StudioTheme::TEXT_PRIMARY),
+            text(kind.to_string())
+                .size(11)
+                .color(StudioTheme::TEXT_MUTED),
         ]
         .spacing(2),
     ]
@@ -673,18 +1001,24 @@ fn symbol_card<'a, Message: 'a>(
 
     let content_col = column![
         header_row,
-        text(semantics.to_string()).size(12).color(StudioTheme::TEXT_SECONDARY),
-        container(text(example.to_string()).size(11).color(StudioTheme::ACCENT_EMERALD))
-            .padding([4, 8])
-            .style(|theme: &Theme| container::Style {
-                background: Some(Background::Color(StudioTheme::bg_base(theme))),
-                border: Border {
-                    color: StudioTheme::border_hairline(theme),
-                    width: 1.0,
-                    radius: Radius::from(4.0),
-                },
-                ..Default::default()
-            }),
+        text(semantics.to_string())
+            .size(12)
+            .color(StudioTheme::TEXT_SECONDARY),
+        container(
+            text(example.to_string())
+                .size(11)
+                .color(StudioTheme::ACCENT_EMERALD)
+        )
+        .padding([4, 8])
+        .style(|theme: &Theme| container::Style {
+            background: Some(Background::Color(StudioTheme::bg_base(theme))),
+            border: Border {
+                color: StudioTheme::border_hairline(theme),
+                width: 1.0,
+                radius: Radius::from(4.0),
+            },
+            ..Default::default()
+        }),
     ]
     .spacing(8);
 
@@ -727,14 +1061,16 @@ fn table_card<'a, Message: 'a>(headers: &[&str], rows: &[&[&str]]) -> Element<'a
 
     for row_data in rows {
         let cells = row_data.iter().map(|&cell| {
-            container(text(cell.to_string()).size(11).color(StudioTheme::TEXT_SECONDARY))
-                .padding([4, 8])
-                .width(Length::Fill)
-                .into()
+            container(
+                text(cell.to_string())
+                    .size(11)
+                    .color(StudioTheme::TEXT_SECONDARY),
+            )
+            .padding([4, 8])
+            .width(Length::Fill)
+            .into()
         });
-        let r = row(cells.collect::<Vec<_>>())
-            .spacing(4)
-            .padding([2, 0]);
+        let r = row(cells.collect::<Vec<_>>()).spacing(4).padding([2, 0]);
         body_rows.push(r.into());
     }
 
@@ -778,8 +1114,8 @@ fn render_arch_scan_loop<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Messa
         callout_box(
             lang.tr("Deterministic Time Safety", "Garantie de Temps Déterministe"),
             lang.tr(
-                "The virtual clock ensures that timer blocks (TON, TOF, TP) and SFC step timers (X<i>.t) advance precisely by the configured scan interval (default 10 ms), enabling 100% reproducible headless tests and simulation recordings regardless of host CPU scheduling.",
-                "L'horloge virtuelle garantit que les blocs temporisateurs (TON, TOF, TP) et durées d'étapes (X<i>.t) avancent exactement selon l'intervalle configuré (10 ms par défaut), assurant des tests sans échec et des simulations parfaitement reproductibles."
+                "The virtual clock ensures that timer blocks (TON, TOF, TP) and SFC step timers (X<i>.t) advance precisely by the configured scan interval (default 50 ms), enabling 100% reproducible headless tests and simulation recordings regardless of host CPU scheduling.",
+                "L'horloge virtuelle garantit que les blocs temporisateurs (TON, TOF, TP) et durées d'étapes (X<i>.t) avancent exactement selon l'intervalle configuré (50 ms par défaut), assurant des tests sans échec et des simulations parfaitement reproductibles."
             ),
             StudioTheme::ACCENT_CYAN,
         ),
@@ -1424,6 +1760,14 @@ fn render_fbd_standard_blocks<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, 
             "Function Block Diagram (FBD) represents control logic as graphical signal flows connecting input/output pins of reusable function blocks with internal state.",
             "Le Diagramme de Blocs Fonctionnels (FBD) représente la logique sous forme de flux de signaux graphiques reliant des broches de blocs réutilisables dotés d'état interne."
         )),
+        callout_box(
+            lang.tr("Direct On-Canvas FBD Editing", "Édition Directe sur le Canvas FBD"),
+            lang.tr(
+                "Click a block ID, input value, or output tag directly on the block to edit it inline (Enter to commit, Esc to cancel). Click the kind badge in the block header to switch operator or FB type, use '+ pin' / '×' on variadic gates (AND, OR, XOR, ADD, MUL) to adjust arity, drag from an output pin onto a target block to wire, and right-click a pin row to unlink or a header to remove the block.",
+                "Cliquez directement sur l'ID d'un bloc, une entrée ou une cible de sortie pour l'éditer sur place (Entrée pour valider, Échap pour annuler). Cliquez sur le badge du type dans l'en-tête pour changer d'opérateur, utilisez '+ pin' / '×' sur les portes variadiques (AND, OR, XOR, ADD, MUL) pour ajuster les broches, glissez d'une broche de sortie vers un bloc cible pour câbler, et faites un clic droit sur une ligne pour débrancher ou sur l'en-tête pour supprimer le bloc."
+            ),
+            StudioTheme::ACCENT_CYAN,
+        ),
         section_title(lang.tr("Timer Blocks (IEC 61131-3)", "Blocs Temporisateurs (CEI 61131-3)")),
         symbol_card(
             "TON",
@@ -1690,7 +2034,7 @@ fn render_sim_exec_forces<'a, Message: 'a>(lang: UiLanguage) -> Element<'a, Mess
         table_card(
             &[lang.tr("Command", "Commande"), lang.tr("Shortcut", "Raccourci"), lang.tr("Function", "Fonction")],
             &[
-                &[lang.tr("Run / Pause", "Exécuter / Pause"), "Space", lang.tr("Toggles continuous scan execution at the configured cycle rate (default 10 ms).", "Bascule l'exécution cyclique continue selon la période configurée (10 ms par défaut).")],
+                &[lang.tr("Run / Pause", "Exécuter / Pause"), "Space", lang.tr("Toggles continuous scan execution at the configured cycle rate (default 50 ms).", "Bascule l'exécution cyclique continue selon la période configurée (50 ms par défaut).")],
                 &[lang.tr("Single Step", "Pas Unique"), "F10", lang.tr("Advances the PLC runtime by exactly ONE scan cycle and pauses.", "Fait progresser l'automate d'exactement UN cycle de scan puis se remet en pause.")],
                 &[lang.tr("Cycle Speed Slider", "Curseur de Vitesse"), "-", lang.tr("Adjusts virtual cycle duration from 1 ms up to 1000 ms.", "Ajuste la durée de cycle virtuelle de 1 ms jusqu'à 1000 ms.")],
             ]

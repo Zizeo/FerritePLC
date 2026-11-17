@@ -171,6 +171,32 @@ pub struct TrendCanvas<'a> {
     pub start_time: Instant,
 }
 
+/// Computes the Y-axis min/max bounds across enabled channels considering only visible points (`t >= min_x`).
+pub fn compute_visible_y_range<'a>(
+    channels: impl IntoIterator<Item = &'a TrendChannel>,
+    min_x: f64,
+) -> (f64, f64) {
+    let mut min_y = 0.0_f64;
+    let mut max_y = 100.0_f64;
+    for ch in channels {
+        if !ch.enabled {
+            continue;
+        }
+        for &[t, y] in &ch.points {
+            if t < min_x {
+                continue;
+            }
+            if y < min_y {
+                min_y = y;
+            }
+            if y > max_y {
+                max_y = y;
+            }
+        }
+    }
+    (min_y, max_y)
+}
+
 impl<'a, Message> canvas::Program<Message> for TrendCanvas<'a> {
     type State = ();
 
@@ -198,22 +224,8 @@ impl<'a, Message> canvas::Program<Message> for TrendCanvas<'a> {
         let max_x = (now_s + 0.5).max(self.time_window_s);
         let dx = (max_x - min_x).max(1.0);
 
-        // Find Y range
-        let mut min_y = 0.0_f64;
-        let mut max_y = 100.0_f64;
-        for ch in self.channels.values() {
-            if !ch.enabled {
-                continue;
-            }
-            for &[_, y] in &ch.points {
-                if y < min_y {
-                    min_y = y;
-                }
-                if y > max_y {
-                    max_y = y;
-                }
-            }
-        }
+        // Find Y range considering only visible points within the active window
+        let (min_y, max_y) = compute_visible_y_range(self.channels.values(), min_x);
         let dy = (max_y - min_y).max(1.0);
 
         // Margins for axes
@@ -231,9 +243,7 @@ impl<'a, Message> canvas::Program<Message> for TrendCanvas<'a> {
         } else {
             Color::from_rgba(0.0, 0.0, 0.0, 0.08)
         };
-        let grid_stroke = Stroke::default()
-            .with_color(grid_color)
-            .with_width(1.0);
+        let grid_stroke = Stroke::default().with_color(grid_color).with_width(1.0);
 
         for step in 0..=4 {
             let frac = step as f32 / 4.0;
@@ -303,5 +313,32 @@ impl<'a, Message> canvas::Program<Message> for TrendCanvas<'a> {
         }
 
         vec![frame.into_geometry()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_trend_visible_y_range_ignores_expired_points() {
+        let mut ch = TrendChannel::new("Tank_Temp".to_string(), Color::WHITE);
+        // Expired outlier outside the active time window [10.0..]
+        ch.points.push_back([1.0, 9999.0]);
+        ch.points.push_back([2.0, -500.0]);
+        // Visible points inside the window
+        ch.points.push_back([12.0, 20.0]);
+        ch.points.push_back([15.0, 45.0]);
+
+        let (min_y, max_y) = compute_visible_y_range(&[ch], 10.0);
+        assert_eq!(min_y, 0.0);
+        assert_eq!(max_y, 100.0);
+
+        let mut ch2 = TrendChannel::new("Pressure".to_string(), Color::WHITE);
+        ch2.points.push_back([2.0, -900.0]);
+        ch2.points.push_back([14.0, 250.0]);
+        let (min_y2, max_y2) = compute_visible_y_range(&[ch2], 10.0);
+        assert_eq!(min_y2, 0.0);
+        assert_eq!(max_y2, 250.0);
     }
 }

@@ -1,7 +1,7 @@
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
-use iced::{event, mouse};
 use iced::{Alignment, Color, Element, Length, Point, Rectangle, Size, Theme, Vector};
+use iced::{event, mouse};
 use serde::{Deserialize, Serialize};
 
 use ferrite_core::IecValue;
@@ -149,8 +149,12 @@ impl LdLayoutResult {
                     height: (max_y - br.start_y + 20.0).max(20.0),
                 };
                 if br_box.contains(point) {
-                    let near_split = (point.x - br.split_x).abs() <= 10.0 && point.y >= br.start_y - 5.0 && point.y <= max_y + 5.0;
-                    let near_merge = (point.x - br.merge_x).abs() <= 10.0 && point.y >= br.start_y - 5.0 && point.y <= max_y + 5.0;
+                    let near_split = (point.x - br.split_x).abs() <= 10.0
+                        && point.y >= br.start_y - 5.0
+                        && point.y <= max_y + 5.0;
+                    let near_merge = (point.x - br.merge_x).abs() <= 10.0
+                        && point.y >= br.start_y - 5.0
+                        && point.y <= max_y + 5.0;
                     if near_split || near_merge {
                         return Some(br.key.clone());
                     }
@@ -219,7 +223,9 @@ impl LdLayoutResult {
         point: Point,
         dragged_keys: &[LdElementKey],
     ) -> Option<LdDropTarget> {
-        let has_coil = dragged_keys.iter().any(|k| matches!(k, LdElementKey::Coil { .. }));
+        let has_coil = dragged_keys
+            .iter()
+            .any(|k| matches!(k, LdElementKey::Coil { .. }));
         let has_contact = dragged_keys.iter().any(|k| {
             matches!(
                 k,
@@ -253,7 +259,10 @@ impl LdLayoutResult {
                     if dragged_keys.contains(&elem.key) {
                         continue;
                     }
-                    if let LdElementKey::Contact { branch_path, index, .. } = &elem.key {
+                    if let LdElementKey::Contact {
+                        branch_path, index, ..
+                    } = &elem.key
+                    {
                         if point.x >= elem.bounds.x - 20.0
                             && point.x < elem.bounds.x + elem.bounds.width * 0.35
                             && (point.y - (elem.bounds.y + elem.bounds.height / 2.0)).abs() <= 25.0
@@ -448,7 +457,9 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                 state.modifiers = m;
                 (event::Status::Captured, None)
             }
-            canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+            canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key, modifiers, ..
+            }) => {
                 state.modifiers = modifiers;
                 if matches!(
                     key,
@@ -580,7 +591,9 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                             )),
                         )
                     } else {
-                        let to_drag = if state.selected_elements.contains(&key) && state.selected_elements.len() > 1 {
+                        let to_drag = if state.selected_elements.contains(&key)
+                            && state.selected_elements.len() > 1
+                        {
                             state.selected_elements.clone()
                         } else {
                             state.selected = Some(key.clone());
@@ -674,14 +687,18 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
         let mut frame = Frame::new(renderer, bounds.size());
 
         // Fill canvas background
-        frame.fill_rectangle(
-            Point::ORIGIN,
-            bounds.size(),
-            StudioTheme::bg_base(theme),
-        );
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), StudioTheme::bg_base(theme));
 
-        let pan = if state.initialized { state.pan } else { self.initial_pan };
-        let zoom = if state.initialized { state.zoom } else { self.initial_zoom };
+        let pan = if state.initialized {
+            state.pan
+        } else {
+            self.initial_pan
+        };
+        let zoom = if state.initialized {
+            state.zoom
+        } else {
+            self.initial_zoom
+        };
 
         // Background grid dots
         let dot_spacing = 20.0 * zoom;
@@ -697,11 +714,7 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
             while x < bounds.width {
                 let mut y = offset_y;
                 while y < bounds.height {
-                    frame.fill_rectangle(
-                        Point::new(x, y),
-                        iced::Size::new(1.5, 1.5),
-                        dot_color,
-                    );
+                    frame.fill_rectangle(Point::new(x, y), iced::Size::new(1.5, 1.5), dot_color);
                     y += dot_spacing;
                 }
                 x += dot_spacing;
@@ -731,7 +744,11 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
             .last()
             .map(|last_rung| {
                 last_rung.wire_y
-                    + (last_rung.branches.len().max(last_rung.coils.len()).saturating_sub(1)) as f32
+                    + (last_rung
+                        .branches
+                        .len()
+                        .max(last_rung.coils.len())
+                        .saturating_sub(1)) as f32
                         * BRANCH_VERTICAL_STEP
             })
             .unwrap_or(first_wire_y);
@@ -741,14 +758,24 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
 
         // Draw Left Power Rail (Energized emerald)
         frame.stroke(
-            &Path::line(Point::new(layout.rail_left_x, rail_top_y), Point::new(layout.rail_left_x, rail_bottom_y)),
-            Stroke::default().with_color(StudioTheme::ACCENT_EMERALD).with_width(5.0),
+            &Path::line(
+                Point::new(layout.rail_left_x, rail_top_y),
+                Point::new(layout.rail_left_x, rail_bottom_y),
+            ),
+            Stroke::default()
+                .with_color(StudioTheme::ACCENT_EMERALD)
+                .with_width(5.0),
         );
 
         // Draw Right Power Rail (Neutral card border)
         frame.stroke(
-            &Path::line(Point::new(layout.rail_right_x, rail_top_y), Point::new(layout.rail_right_x, rail_bottom_y)),
-            Stroke::default().with_color(StudioTheme::BORDER_CARD).with_width(5.0),
+            &Path::line(
+                Point::new(layout.rail_right_x, rail_top_y),
+                Point::new(layout.rail_right_x, rail_bottom_y),
+            ),
+            Stroke::default()
+                .with_color(StudioTheme::BORDER_CARD)
+                .with_width(5.0),
         );
 
         // Render each rung
@@ -764,7 +791,10 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
             if is_rung_selected {
                 frame.fill_rectangle(
                     Point::new(layout.rail_left_x - 35.0, rung_layout.bounds.y + 1.0),
-                    Size::new((layout.rail_right_x - layout.rail_left_x) + 45.0, RUNG_HEADER_HEIGHT - 2.0),
+                    Size::new(
+                        (layout.rail_right_x - layout.rail_left_x) + 45.0,
+                        RUNG_HEADER_HEIGHT - 2.0,
+                    ),
                     iced::Color::from_rgba(0.0, 0.85, 0.85, 0.10),
                 );
             }
@@ -773,7 +803,11 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
             frame.fill_text(Text {
                 content: format!("{r_idx}"),
                 position: Point::new(layout.rail_left_x - 24.0, rung_header_y),
-                color: if is_rung_selected { StudioTheme::ACCENT_CYAN } else { StudioTheme::TEXT_MUTED },
+                color: if is_rung_selected {
+                    StudioTheme::ACCENT_CYAN
+                } else {
+                    StudioTheme::TEXT_MUTED
+                },
                 size: 11.0.into(),
                 ..Default::default()
             });
@@ -810,12 +844,21 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
             let wire_stroke = Stroke::default().with_color(wire_color).with_width(2.5);
 
             // Wire segments between rail, elements, and coils (drawn in background outside contact bounds)
-            let first_coil_x = rung_layout.coils.first().map(|c| c.bounds.x).unwrap_or(layout.rail_right_x);
+            let first_coil_x = rung_layout
+                .coils
+                .first()
+                .map(|c| c.bounds.x)
+                .unwrap_or(layout.rail_right_x);
             if rung_layout.elements.is_empty() {
                 // Straight through wire from left rail to coils
                 frame.stroke(
-                    &Path::line(Point::new(layout.rail_left_x, rung_layout.wire_y), Point::new(first_coil_x, rung_layout.wire_y)),
-                    Stroke::default().with_color(StudioTheme::ACCENT_EMERALD).with_width(2.5),
+                    &Path::line(
+                        Point::new(layout.rail_left_x, rung_layout.wire_y),
+                        Point::new(first_coil_x, rung_layout.wire_y),
+                    ),
+                    Stroke::default()
+                        .with_color(StudioTheme::ACCENT_EMERALD)
+                        .with_width(2.5),
                 );
             } else {
                 let first_elem_x = rung_layout
@@ -837,7 +880,9 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                     layout.rail_left_x,
                     first_elem_x,
                     rung_layout.wire_y,
-                    Stroke::default().with_color(StudioTheme::ACCENT_EMERALD).with_width(2.5),
+                    Stroke::default()
+                        .with_color(StudioTheme::ACCENT_EMERALD)
+                        .with_width(2.5),
                     &rung_layout.elements,
                 );
 
@@ -870,13 +915,19 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                     let e1_right = e1.bounds.x + e1.bounds.width;
                     if (e1.bounds.y - e2.bounds.y).abs() < 1.0 && e2.bounds.x >= e1_right {
                         let row_y = e1.bounds.y + e1.bounds.height / 2.0;
-                        let inter_wire_color = if e1.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::BORDER_CARD };
+                        let inter_wire_color = if e1.energized {
+                            StudioTheme::ACCENT_EMERALD
+                        } else {
+                            StudioTheme::BORDER_CARD
+                        };
                         draw_horizontal_wire_outside_elements(
                             &mut frame,
                             e1_right,
                             e2.bounds.x,
                             row_y,
-                            Stroke::default().with_color(inter_wire_color).with_width(2.5),
+                            Stroke::default()
+                                .with_color(inter_wire_color)
+                                .with_width(2.5),
                             &rung_layout.elements,
                         );
                     }
@@ -959,13 +1010,18 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                 }
                 frame.stroke(
                     &Path::rectangle(Point::new(elem.bounds.x, elem.bounds.y), elem.bounds.size()),
-                    Stroke::default().with_color(border_color).with_width(if is_selected { 2.0 } else { 1.0 }),
+                    Stroke::default()
+                        .with_color(border_color)
+                        .with_width(if is_selected { 2.0 } else { 1.0 }),
                 );
 
                 // Symbol text and glyph
                 match &elem.key {
-                    LdElementKey::Contact { index, branch_path, .. } => {
-                        let contact_elem = Self::lookup_element(&rung.elements, branch_path, *index);
+                    LdElementKey::Contact {
+                        index, branch_path, ..
+                    } => {
+                        let contact_elem =
+                            Self::lookup_element(&rung.elements, branch_path, *index);
                         match contact_elem {
                             Some(LdElement::Contact { symbol, kind }) => {
                                 frame.fill_text(Text {
@@ -983,8 +1039,15 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                                 };
                                 frame.fill_text(Text {
                                     content: glyph_str.to_string(),
-                                    position: Point::new(elem.bounds.x + 12.0, elem.bounds.y + 24.0),
-                                    color: if elem.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_MUTED },
+                                    position: Point::new(
+                                        elem.bounds.x + 12.0,
+                                        elem.bounds.y + 24.0,
+                                    ),
+                                    color: if elem.energized {
+                                        StudioTheme::ACCENT_EMERALD
+                                    } else {
+                                        StudioTheme::TEXT_MUTED
+                                    },
                                     size: 12.0.into(),
                                     font: iced::Font::MONOSPACE,
                                     ..Default::default()
@@ -1012,13 +1075,22 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                                 frame.fill_text(Text {
                                     content: right_str,
                                     position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 36.0),
-                                    color: if elem.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_MUTED },
+                                    color: if elem.energized {
+                                        StudioTheme::ACCENT_EMERALD
+                                    } else {
+                                        StudioTheme::TEXT_MUTED
+                                    },
                                     size: 9.5.into(),
                                     font: iced::Font::MONOSPACE,
                                     ..Default::default()
                                 });
                             }
-                            Some(LdElement::MathMove { op, input1, input2, dest }) => {
+                            Some(LdElement::MathMove {
+                                op,
+                                input1,
+                                input2,
+                                dest,
+                            }) => {
                                 frame.fill_text(Text {
                                     content: format!("{}", LdMathOpWrapper(*op)),
                                     position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 5.0),
@@ -1054,7 +1126,11 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                                 frame.fill_text(Text {
                                     content: out_str,
                                     position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 36.0),
-                                    color: if elem.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_PRIMARY },
+                                    color: if elem.energized {
+                                        StudioTheme::ACCENT_EMERALD
+                                    } else {
+                                        StudioTheme::TEXT_PRIMARY
+                                    },
                                     size: 9.5.into(),
                                     font: iced::Font::MONOSPACE,
                                     ..Default::default()
@@ -1063,14 +1139,20 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                             _ => {}
                         }
                     }
-                    LdElementKey::InlineFb { index, branch_path, .. } => {
+                    LdElementKey::InlineFb {
+                        index, branch_path, ..
+                    } => {
                         let fb_elem = Self::lookup_element(&rung.elements, branch_path, *index);
                         if let Some(LdElement::InlineFb { instance, .. }) = fb_elem {
                             let fb_name = truncate_fit(instance, 14);
                             frame.fill_text(Text {
                                 content: format!("[FB: {fb_name}]"),
                                 position: Point::new(elem.bounds.x + 8.0, elem.bounds.y + 18.0),
-                                color: if elem.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::ACCENT_CYAN },
+                                color: if elem.energized {
+                                    StudioTheme::ACCENT_EMERALD
+                                } else {
+                                    StudioTheme::ACCENT_CYAN
+                                },
                                 size: 10.0.into(),
                                 font: iced::Font::MONOSPACE,
                                 ..Default::default()
@@ -1083,16 +1165,22 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
 
             // Draw parallel branch selection highlights (drawn over contacts)
             for branch in &rung_layout.branches {
-                let is_branch_selected = state.selected_elements.contains(&branch.key) || state.selected == Some(branch.key.clone());
+                let is_branch_selected = state.selected_elements.contains(&branch.key)
+                    || state.selected == Some(branch.key.clone());
                 if is_branch_selected {
                     let min_y = branch.start_y - 6.0;
                     let max_y = branch.paths_y.last().copied().unwrap_or(branch.start_y) + 6.0;
                     frame.stroke(
                         &Path::rectangle(
                             Point::new(branch.split_x - 4.0, min_y),
-                            iced::Size::new((branch.merge_x - branch.split_x) + 8.0, (max_y - min_y) + 12.0),
+                            iced::Size::new(
+                                (branch.merge_x - branch.split_x) + 8.0,
+                                (max_y - min_y) + 12.0,
+                            ),
                         ),
-                        Stroke::default().with_color(StudioTheme::ACCENT_CYAN).with_width(1.5),
+                        Stroke::default()
+                            .with_color(StudioTheme::ACCENT_CYAN)
+                            .with_width(1.5),
                     );
                 }
             }
@@ -1140,16 +1228,28 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
 
                 // Coil wire to coil card
                 let coil_wire_y = coil_placed.bounds.y + coil_placed.bounds.height / 2.0;
-                let feeder_color = if coil_placed.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::BORDER_CARD };
+                let feeder_color = if coil_placed.energized {
+                    StudioTheme::ACCENT_EMERALD
+                } else {
+                    StudioTheme::BORDER_CARD
+                };
                 frame.stroke(
-                    &Path::line(Point::new(first_coil_x, coil_wire_y), Point::new(coil_placed.bounds.x, coil_wire_y)),
+                    &Path::line(
+                        Point::new(first_coil_x, coil_wire_y),
+                        Point::new(coil_placed.bounds.x, coil_wire_y),
+                    ),
                     Stroke::default().with_color(feeder_color).with_width(2.0),
                 );
 
                 // Coil card to Right Rail
                 frame.stroke(
-                    &Path::line(Point::new(coil_placed.bounds.x + coil_placed.bounds.width, coil_wire_y), Point::new(layout.rail_right_x, coil_wire_y)),
-                    Stroke::default().with_color(StudioTheme::BORDER_CARD).with_width(2.0),
+                    &Path::line(
+                        Point::new(coil_placed.bounds.x + coil_placed.bounds.width, coil_wire_y),
+                        Point::new(layout.rail_right_x, coil_wire_y),
+                    ),
+                    Stroke::default()
+                        .with_color(StudioTheme::BORDER_CARD)
+                        .with_width(2.0),
                 );
 
                 // Coil card box (opaque base + optional energized tint)
@@ -1162,42 +1262,57 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
                     frame.fill_rectangle(
                         Point::new(coil_placed.bounds.x, coil_placed.bounds.y),
                         coil_placed.bounds.size(),
-                         bg_color,
+                        bg_color,
                     );
                 }
                 frame.stroke(
-                    &Path::rectangle(Point::new(coil_placed.bounds.x, coil_placed.bounds.y), coil_placed.bounds.size()),
-                    Stroke::default().with_color(border_color).with_width(if is_coil_selected { 2.0 } else { 1.0 }),
+                    &Path::rectangle(
+                        Point::new(coil_placed.bounds.x, coil_placed.bounds.y),
+                        coil_placed.bounds.size(),
+                    ),
+                    Stroke::default()
+                        .with_color(border_color)
+                        .with_width(if is_coil_selected { 2.0 } else { 1.0 }),
                 );
 
                 // Coil text & glyph
                 if let LdElementKey::Coil { index, .. } = coil_placed.key
                     && let Some(coil) = rung.coils.get(index)
                 {
-                        frame.fill_text(Text {
-                            content: coil.symbol.clone(),
-                            position: Point::new(coil_placed.bounds.x + 6.0, coil_placed.bounds.y + 6.0),
-                            color: Color::from_rgb(0.98, 0.75, 0.14),
-                            size: 10.5.into(),
-                            ..Default::default()
-                        });
-                        let glyph_str = match coil.kind {
-                            CoilKind::Normal => "--( )--",
-                            CoilKind::Negated => "--(/)--",
-                            CoilKind::Set => "--[S]--",
-                            CoilKind::Reset => "--[R]--",
-                            CoilKind::RisingEdge => "--(P)--",
-                            CoilKind::FallingEdge => "--(N)--",
-                        };
-                        frame.fill_text(Text {
-                            content: glyph_str.to_string(),
-                            position: Point::new(coil_placed.bounds.x + 16.0, coil_placed.bounds.y + 24.0),
-                            color: if coil_placed.energized { StudioTheme::ACCENT_EMERALD } else { StudioTheme::TEXT_MUTED },
-                            size: 12.0.into(),
-                            font: iced::Font::MONOSPACE,
-                            ..Default::default()
-                        });
-                    }
+                    frame.fill_text(Text {
+                        content: coil.symbol.clone(),
+                        position: Point::new(
+                            coil_placed.bounds.x + 6.0,
+                            coil_placed.bounds.y + 6.0,
+                        ),
+                        color: Color::from_rgb(0.98, 0.75, 0.14),
+                        size: 10.5.into(),
+                        ..Default::default()
+                    });
+                    let glyph_str = match coil.kind {
+                        CoilKind::Normal => "--( )--",
+                        CoilKind::Negated => "--(/)--",
+                        CoilKind::Set => "--[S]--",
+                        CoilKind::Reset => "--[R]--",
+                        CoilKind::RisingEdge => "--(P)--",
+                        CoilKind::FallingEdge => "--(N)--",
+                    };
+                    frame.fill_text(Text {
+                        content: glyph_str.to_string(),
+                        position: Point::new(
+                            coil_placed.bounds.x + 16.0,
+                            coil_placed.bounds.y + 24.0,
+                        ),
+                        color: if coil_placed.energized {
+                            StudioTheme::ACCENT_EMERALD
+                        } else {
+                            StudioTheme::TEXT_MUTED
+                        },
+                        size: 12.0.into(),
+                        font: iced::Font::MONOSPACE,
+                        ..Default::default()
+                    });
+                }
             }
         }
 
@@ -1289,7 +1404,9 @@ impl<'a> canvas::Program<Message> for LdCanvasProgram<'a> {
             );
             frame.stroke(
                 &Path::rectangle(Point::new(min_x, min_y), iced::Size::new(w, h)),
-                Stroke::default().with_color(StudioTheme::ACCENT_CYAN).with_width(1.0),
+                Stroke::default()
+                    .with_color(StudioTheme::ACCENT_CYAN)
+                    .with_width(1.0),
             );
         }
 
@@ -1309,7 +1426,8 @@ impl LdLayoutEngine {
             .iter()
             .map(|e| match e {
                 LdElement::Branch { paths } => {
-                    let sub_depth: usize = paths.iter().map(|p| Self::calculate_branch_depth(p)).sum();
+                    let sub_depth: usize =
+                        paths.iter().map(|p| Self::calculate_branch_depth(p)).sum();
                     sub_depth.max(paths.len()).max(2)
                 }
                 _ => 1,
@@ -1322,13 +1440,11 @@ impl LdLayoutEngine {
         elements
             .iter()
             .map(|e| match e {
-                LdElement::Branch { paths } => {
-                    paths
-                        .iter()
-                        .map(|p| Self::calculate_horizontal_slots(p))
-                        .max()
-                        .unwrap_or(1)
-                }
+                LdElement::Branch { paths } => paths
+                    .iter()
+                    .map(|p| Self::calculate_horizontal_slots(p))
+                    .max()
+                    .unwrap_or(1),
                 _ => 1,
             })
             .sum()
@@ -1342,9 +1458,9 @@ impl LdLayoutEngine {
                     .iter()
                     .map(|p| Self::calculate_unbranched_width(p))
                     .fold(0.0_f32, f32::max),
-                LdElement::Compare { .. } | LdElement::MathMove { .. } | LdElement::InlineFb { .. } => {
-                    BLOCK_SLOT_WIDTH
-                }
+                LdElement::Compare { .. }
+                | LdElement::MathMove { .. }
+                | LdElement::InlineFb { .. } => BLOCK_SLOT_WIDTH,
                 _ => SLOT_WIDTH,
             })
             .sum()
@@ -1421,7 +1537,8 @@ impl LdLayoutEngine {
             curr_y += rung_height;
         }
 
-        let base_right_x = (start_x + max_unbranched_w + WIRE_PAD + COIL_CARD_WIDTH + WIRE_PAD).max(680.0);
+        let base_right_x =
+            (start_x + max_unbranched_w + WIRE_PAD + COIL_CARD_WIDTH + WIRE_PAD).max(680.0);
         let rail_right_x = (base_right_x + max_extra_branch_x)
             .max(max_elements_end_x + WIRE_PAD + COIL_CARD_WIDTH + WIRE_PAD);
 
@@ -1438,9 +1555,13 @@ impl LdLayoutEngine {
                 } else {
                     wire_y + c_idx as f32 * BRANCH_VERTICAL_STEP - SLOT_HEIGHT / 2.0
                 };
-                let is_coil_on = power_flowing || runtime.is_some_and(|rt| is_symbol_energized(rt, &coil.symbol));
+                let is_coil_on = power_flowing
+                    || runtime.is_some_and(|rt| is_symbol_energized(rt, &coil.symbol));
                 rung_layout.coils.push(LdPlacedElement {
-                    key: LdElementKey::Coil { rung: r_idx, index: c_idx },
+                    key: LdElementKey::Coil {
+                        rung: r_idx,
+                        index: c_idx,
+                    },
                     bounds: Rectangle {
                         x: coil_x,
                         y: coil_y,
@@ -1566,7 +1687,8 @@ impl LdLayoutEngine {
                 }
                 LdElement::InlineFb { instance, .. } => {
                     let power_in = *power_flowing;
-                    let fb_q = runtime.is_some_and(|rt| rt.tags.get_fb(instance).map(|fb| fb.q).unwrap_or(false));
+                    let fb_q = runtime
+                        .is_some_and(|rt| rt.tags.get_fb(instance).map(|fb| fb.q).unwrap_or(false));
                     let is_active = power_in && fb_q;
                     *power_flowing = is_active;
 
@@ -1665,8 +1787,14 @@ fn eval_ld_compare(rt: &PlcRuntime, op: LdCompareOp, left: &str, right: &str) ->
     let lf = lv.as_real().ok().map(|v| v as f64);
     let rf = rv.as_real().ok().map(|v| v as f64);
     match op {
-        LdCompareOp::Eq => lf.zip(rf).map(|(a, b)| (a - b).abs() < 1e-9).unwrap_or(lv == rv),
-        LdCompareOp::Ne => lf.zip(rf).map(|(a, b)| (a - b).abs() >= 1e-9).unwrap_or(lv != rv),
+        LdCompareOp::Eq => lf
+            .zip(rf)
+            .map(|(a, b)| (a - b).abs() < 1e-9)
+            .unwrap_or(lv == rv),
+        LdCompareOp::Ne => lf
+            .zip(rf)
+            .map(|(a, b)| (a - b).abs() >= 1e-9)
+            .unwrap_or(lv != rv),
         LdCompareOp::Gt => lf.zip(rf).is_some_and(|(a, b)| a > b),
         LdCompareOp::Ge => lf.zip(rf).is_some_and(|(a, b)| a >= b),
         LdCompareOp::Lt => lf.zip(rf).is_some_and(|(a, b)| a < b),
@@ -1901,14 +2029,14 @@ pub fn render_ld_editor<'a>(
     };
 
     let (selected_branch_path, selected_elem_idx) = match selected {
-        Some(LdElementKey::Contact { branch_path, index, .. })
-        | Some(LdElementKey::InlineFb { branch_path, index, .. }) => {
-            (branch_path.clone(), Some(*index))
-        }
+        Some(LdElementKey::Contact {
+            branch_path, index, ..
+        })
+        | Some(LdElementKey::InlineFb {
+            branch_path, index, ..
+        }) => (branch_path.clone(), Some(*index)),
         Some(LdElementKey::Branch {
-            branch_path,
-            index,
-            ..
+            branch_path, index, ..
         }) => {
             let mut bp = branch_path.clone();
             bp.push(LdBranchPathSegment {
@@ -1937,22 +2065,16 @@ pub fn render_ld_editor<'a>(
             .style(StudioTheme::ghost_button)
             .padding([3, 8]);
 
-        let multi_row = row![
-            count_label,
-            delete_btn,
-            deselect_btn,
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center);
+        let multi_row = row![count_label, delete_btn, deselect_btn,]
+            .spacing(12)
+            .align_y(Alignment::Center);
 
-        let scrollable_multi = scrollable(
-            container(multi_row).padding(iced::Padding {
-                top: 2.0,
-                right: 4.0,
-                bottom: 8.0,
-                left: 2.0,
-            }),
-        )
+        let scrollable_multi = scrollable(container(multi_row).padding(iced::Padding {
+            top: 2.0,
+            right: 4.0,
+            bottom: 8.0,
+            left: 2.0,
+        }))
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new()
                 .width(4)
@@ -2063,14 +2185,12 @@ pub fn render_ld_editor<'a>(
         .spacing(12)
         .align_y(Alignment::Center);
 
-        let scrollable_toolbar = scrollable(
-            container(toolbar_row).padding(iced::Padding {
-                top: 2.0,
-                right: 4.0,
-                bottom: 8.0,
-                left: 2.0,
-            }),
-        )
+        let scrollable_toolbar = scrollable(container(toolbar_row).padding(iced::Padding {
+            top: 2.0,
+            right: 4.0,
+            bottom: 8.0,
+            left: 2.0,
+        }))
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new()
                 .width(4)
@@ -2123,7 +2243,13 @@ pub fn render_ld_editor<'a>(
                 let b_for_sym = b_path.clone();
                 let tag_input = text_input("Tag...", symbol)
                     .on_input(move |s| {
-                        Message::LdContactSymbolChanged(p_name.clone(), r_i, b_for_sym.clone(), idx, s)
+                        Message::LdContactSymbolChanged(
+                            p_name.clone(),
+                            r_i,
+                            b_for_sym.clone(),
+                            idx,
+                            s,
+                        )
                     })
                     .width(Length::Fixed(160.0))
                     .padding([3, 7])
@@ -2134,7 +2260,15 @@ pub fn render_ld_editor<'a>(
                 let kind_picker = pick_list(
                     &ALL_CONTACT_KINDS[..],
                     Some(LdContactKindWrapper(*kind)),
-                    move |w| Message::LdContactKindChanged(p_for_kind.clone(), r_i, b_for_kind.clone(), idx, w.0),
+                    move |w| {
+                        Message::LdContactKindChanged(
+                            p_for_kind.clone(),
+                            r_i,
+                            b_for_kind.clone(),
+                            idx,
+                            w.0,
+                        )
+                    },
                 )
                 .width(Length::Fixed(80.0))
                 .text_size(11.0)
@@ -2260,7 +2394,13 @@ pub fn render_ld_editor<'a>(
                 .style(StudioTheme::card_style)
                 .width(Length::Fill)
                 .into()
-            } else if let Some(LdElement::MathMove { op, input1, input2, dest }) = contact_data {
+            } else if let Some(LdElement::MathMove {
+                op,
+                input1,
+                input2,
+                dest,
+            }) = contact_data
+            {
                 let cur_op = *op;
                 let in1_str = input1.clone();
                 let in2_str = input2.clone().unwrap_or_else(|| "0".to_string());
@@ -2271,10 +2411,8 @@ pub fn render_ld_editor<'a>(
                 let i1_op = in1_str.clone();
                 let i2_op = in2_str.clone();
                 let d_op = dst_str.clone();
-                let op_picker = pick_list(
-                    &ALL_MATH_OPS[..],
-                    Some(LdMathOpWrapper(cur_op)),
-                    move |w| {
+                let op_picker =
+                    pick_list(&ALL_MATH_OPS[..], Some(LdMathOpWrapper(cur_op)), move |w| {
                         Message::LdMathMoveChanged(
                             p_op.clone(),
                             r_i,
@@ -2285,10 +2423,9 @@ pub fn render_ld_editor<'a>(
                             i2_op.clone(),
                             d_op.clone(),
                         )
-                    },
-                )
-                .text_size(11.0)
-                .padding([3, 7]);
+                    })
+                    .text_size(11.0)
+                    .padding([3, 7]);
 
                 let p_i1 = p_name.clone();
                 let b_i1 = b_path.clone();
@@ -2366,7 +2503,9 @@ pub fn render_ld_editor<'a>(
 
                 container(
                     row![
-                        text("Math/Move:").size(12).color(StudioTheme::ACCENT_PURPLE),
+                        text("Math/Move:")
+                            .size(12)
+                            .color(StudioTheme::ACCENT_PURPLE),
                         op_picker,
                         in1_input,
                         in2_input,
@@ -2387,10 +2526,7 @@ pub fn render_ld_editor<'a>(
                 iced::widget::Space::with_height(Length::Shrink).into()
             }
         }
-        Some(LdElementKey::Coil {
-            rung: r_idx,
-            index,
-        }) => {
+        Some(LdElementKey::Coil { rung: r_idx, index }) => {
             let p_name = pou_name.clone();
             let idx = *index;
             let r_i = *r_idx;
@@ -2427,7 +2563,9 @@ pub fn render_ld_editor<'a>(
 
                 container(
                     row![
-                        text("Coil:").size(12).color(Color::from_rgb(0.98, 0.75, 0.14)),
+                        text("Coil:")
+                            .size(12)
+                            .color(Color::from_rgb(0.98, 0.75, 0.14)),
                         tag_input,
                         kind_picker,
                         del_btn,
@@ -2497,23 +2635,23 @@ pub fn render_ld_editor<'a>(
                 iced::widget::Space::with_height(Length::Shrink).into()
             }
         }
-        _ => {
-            let tip = text(lang.tr(
-                "Tip: Click element to inspect, drag on empty canvas to marquee select, scroll wheel to zoom.",
-                "Astuce : Cliquez pour inspecter, glissez pour sélectionner en rectangle, molette pour zoomer.",
-            ))
-            .size(11.0)
-            .color(StudioTheme::TEXT_MUTED);
-
-            container(tip)
-                .padding([4, 12])
-                .style(StudioTheme::canvas_container_style)
-                .width(Length::Fill)
-                .into()
-        }
+        _ => iced::widget::Space::with_height(Length::Shrink).into(),
     };
 
-    column![top_toolbar, canvas_widget, inspector_bar]
+    // Info badge replaces the old always-visible tips bar: hover reveals the tip.
+    let header_row: Element<'a, Message> = row![
+        top_toolbar,
+        crate::icons::info_tip(lang.tr(
+            "Tip: Click element to inspect, drag on empty canvas to marquee select, scroll wheel to zoom.",
+            "Astuce : Cliquez pour inspecter, glissez pour sélectionner en rectangle, molette pour zoomer.",
+        )),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .width(Length::Fill)
+    .into();
+
+    column![header_row, canvas_widget, inspector_bar]
         .spacing(6)
         .padding(8)
         .width(Length::Fill)
@@ -2598,9 +2736,20 @@ pub mod tests {
         assert!(b0.paths_y[0] < b0.paths_y[1]); // Step down for second leg
         assert!(b0.split_x < b0.merge_x);
         let c0 = &r0.elements[0];
-        let segs = compute_wire_segments_outside_elements(b0.split_x, b0.merge_x, b0.paths_y[0], &r0.elements);
-        assert_eq!(segs.len(), 2, "Branch wire on top path must split before and after top contact");
-        assert!(segs[0].1 <= c0.bounds.x + 0.01 && segs[1].0 >= c0.bounds.x + c0.bounds.width - 0.01);
+        let segs = compute_wire_segments_outside_elements(
+            b0.split_x,
+            b0.merge_x,
+            b0.paths_y[0],
+            &r0.elements,
+        );
+        assert_eq!(
+            segs.len(),
+            2,
+            "Branch wire on top path must split before and after top contact"
+        );
+        assert!(
+            segs[0].1 <= c0.bounds.x + 0.01 && segs[1].0 >= c0.bounds.x + c0.bounds.width - 0.01
+        );
     }
 
     #[test]
@@ -2696,7 +2845,15 @@ pub mod tests {
         };
         assert_eq!(canvas_prog.program.name, "test_draw");
 
-        let _elem = render_ld_editor(&program, None, None, &[], UiLanguage::En, Vector::default(), 1.0);
+        let _elem = render_ld_editor(
+            &program,
+            None,
+            None,
+            &[],
+            UiLanguage::En,
+            Vector::default(),
+            1.0,
+        );
     }
 
     #[test]
@@ -2707,12 +2864,10 @@ pub mod tests {
             rungs: vec![LdRung {
                 id: "R0".to_string(),
                 comment: "Rung 0".to_string(),
-                elements: vec![
-                    LdElement::Contact {
-                        symbol: "Start_Btn".to_string(),
-                        kind: ContactKind::NormallyOpen,
-                    },
-                ],
+                elements: vec![LdElement::Contact {
+                    symbol: "Start_Btn".to_string(),
+                    kind: ContactKind::NormallyOpen,
+                }],
                 coils: vec![LdCoil {
                     symbol: "Pump_Run".to_string(),
                     kind: CoilKind::Normal,
@@ -2747,7 +2902,9 @@ pub mod tests {
             mouse::Cursor::Available(contact_pt),
         );
         assert_eq!(status, iced::widget::canvas::event::Status::Captured);
-        assert!(matches!(msg, Some(Message::LdSelectElements(ref p, ref keys)) if p == "test_update" && keys.len() == 1));
+        assert!(
+            matches!(msg, Some(Message::LdSelectElements(ref p, ref keys)) if p == "test_update" && keys.len() == 1)
+        );
 
         // 2. Wheel scroll zoom
         let (status, zoom_msg) = canvas.update(
@@ -2759,7 +2916,9 @@ pub mod tests {
             mouse::Cursor::Available(Point::new(100.0, 100.0)),
         );
         assert_eq!(status, iced::widget::canvas::event::Status::Captured);
-        assert!(matches!(zoom_msg, Some(Message::LdCanvasZoomChanged(ref p, z, _)) if p == "test_update" && z > 1.0));
+        assert!(
+            matches!(zoom_msg, Some(Message::LdCanvasZoomChanged(ref p, z, _)) if p == "test_update" && z > 1.0)
+        );
 
         // 3. Delete key
         let (status, del_msg) = canvas.update(
@@ -2770,13 +2929,17 @@ pub mod tests {
                 modifiers: iced::keyboard::Modifiers::default(),
                 text: None,
                 modified_key: iced::keyboard::key::Key::Named(iced::keyboard::key::Named::Delete),
-                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Delete),
+                physical_key: iced::keyboard::key::Physical::Code(
+                    iced::keyboard::key::Code::Delete,
+                ),
             }),
             bounds,
             mouse::Cursor::Available(Point::new(100.0, 100.0)),
         );
         assert_eq!(status, iced::widget::canvas::event::Status::Captured);
-        assert!(matches!(del_msg, Some(Message::LdRequestDeleteSelected(ref p)) if p == "test_update"));
+        assert!(
+            matches!(del_msg, Some(Message::LdRequestDeleteSelected(ref p)) if p == "test_update")
+        );
     }
 
     #[test]
@@ -2861,9 +3024,11 @@ pub mod tests {
         let layout = LdLayoutEngine::build(&program, None);
 
         let c0_x = layout.rungs[0].elements[0].bounds.x;
-        let c1_right = layout.rungs[0].elements[1].bounds.x + layout.rungs[0].elements[1].bounds.width;
+        let c1_right =
+            layout.rungs[0].elements[1].bounds.x + layout.rungs[0].elements[1].bounds.width;
         let c_top = layout.rungs[0].elements[0].bounds.y;
-        let c_bot = layout.rungs[0].elements[0].bounds.y + layout.rungs[0].elements[0].bounds.height;
+        let c_bot =
+            layout.rungs[0].elements[0].bounds.y + layout.rungs[0].elements[0].bounds.height;
 
         let marquee_box = Rectangle::new(
             Point::new(c0_x - 5.0, c_top - 5.0),
@@ -2917,9 +3082,10 @@ pub mod tests {
             }],
         };
 
-        app.project
-            .pous
-            .insert("test_move".to_string(), ferrite_project::PouSource::Ld(ld_prog));
+        app.project.pous.insert(
+            "test_move".to_string(),
+            ferrite_project::PouSource::Ld(ld_prog),
+        );
 
         app.perform_ld_move(
             "test_move",
@@ -2957,7 +3123,8 @@ pub mod tests {
 
     #[test]
     fn test_ld_add_parallel_branch_wraps_contacts() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("ferrite_ld_branch_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("ferrite_ld_branch_{}", std::process::id()));
         if temp_dir.exists() {
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
@@ -2983,20 +3150,55 @@ pub mod tests {
             ferrite_project::PouSource::Ld(ld_prog),
         );
 
-        let Some(ferrite_project::PouSource::Ld(ld_before)) = app.project.pous.get("test_branch_wrap") else { panic!("POU not found"); };
-        let width_before = LdLayoutEngine::compute_layout(ld_before, None).rungs[0].bounds.width;
+        let Some(ferrite_project::PouSource::Ld(ld_before)) =
+            app.project.pous.get("test_branch_wrap")
+        else {
+            panic!("POU not found");
+        };
+        let width_before = LdLayoutEngine::compute_layout(ld_before, None).rungs[0]
+            .bounds
+            .width;
         app.perform_ld_add_parallel_branch("test_branch_wrap", 0, &[], None);
-        let Some(ferrite_project::PouSource::Ld(ld_after_1)) = app.project.pous.get("test_branch_wrap") else { panic!("POU not found"); };
+        let Some(ferrite_project::PouSource::Ld(ld_after_1)) =
+            app.project.pous.get("test_branch_wrap")
+        else {
+            panic!("POU not found");
+        };
         let layout_after_1 = LdLayoutEngine::compute_layout(ld_after_1, None);
-        assert!(layout_after_1.rungs[0].bounds.width > width_before, "Rung width must increase by the branch horizontal offset");
-        app.perform_ld_add_parallel_branch("test_branch_wrap", 0, &[LdBranchPathSegment { branch_idx: 0, path_idx: 1 }], Some(0));
-        let Some(ferrite_project::PouSource::Ld(ld_after_2)) = app.project.pous.get("test_branch_wrap") else { panic!("POU not found"); };
+        assert!(
+            layout_after_1.rungs[0].bounds.width > width_before,
+            "Rung width must increase by the branch horizontal offset"
+        );
+        app.perform_ld_add_parallel_branch(
+            "test_branch_wrap",
+            0,
+            &[LdBranchPathSegment {
+                branch_idx: 0,
+                path_idx: 1,
+            }],
+            Some(0),
+        );
+        let Some(ferrite_project::PouSource::Ld(ld_after_2)) =
+            app.project.pous.get("test_branch_wrap")
+        else {
+            panic!("POU not found");
+        };
         let layout_after_2 = LdLayoutEngine::compute_layout(ld_after_2, None);
-        assert_eq!(layout_after_2.rungs[0].branches.len(), 1, "Second branch on 1-contact leg must connect to the same branch level");
+        assert_eq!(
+            layout_after_2.rungs[0].branches.len(),
+            1,
+            "Second branch on 1-contact leg must connect to the same branch level"
+        );
         assert_eq!(layout_after_2.rungs[0].branches[0].paths_y.len(), 3);
-        if let Some(ferrite_project::PouSource::Ld(ld_mut)) = app.project.pous.get_mut("test_branch_wrap") && let LdElement::Branch { paths } = &mut ld_mut.rungs[0].elements[0] { paths.pop(); }
+        if let Some(ferrite_project::PouSource::Ld(ld_mut)) =
+            app.project.pous.get_mut("test_branch_wrap")
+            && let LdElement::Branch { paths } = &mut ld_mut.rungs[0].elements[0]
+        {
+            paths.pop();
+        }
 
-        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_branch_wrap") else {
+        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_branch_wrap")
+        else {
             panic!("POU not found");
         };
 
@@ -3016,7 +3218,8 @@ pub mod tests {
 
     #[test]
     fn test_ld_branch_dissolution_on_last_branch_drop() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("ferrite_ld_dissolve_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("ferrite_ld_dissolve_{}", std::process::id()));
         if temp_dir.exists() {
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
@@ -3080,7 +3283,8 @@ pub mod tests {
 
     #[test]
     fn test_ld_batch_delete_selected_elements() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("ferrite_ld_batch_del_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("ferrite_ld_batch_del_{}", std::process::id()));
         if temp_dir.exists() {
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
@@ -3151,7 +3355,8 @@ pub mod tests {
 
         app.perform_ld_delete("test_batch_del", &to_delete);
 
-        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_batch_del") else {
+        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_batch_del")
+        else {
             panic!("POU not found");
         };
 
@@ -3170,8 +3375,10 @@ pub mod tests {
     }
 
     #[test]
-    fn test_ld_batch_delete_rung_and_subsequent_elements() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("ferrite_ld_del_rung_elem_{}", std::process::id()));
+    fn test_ld_batch_delete_rung_and_subsequent_elements() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp_dir =
+            std::env::temp_dir().join(format!("ferrite_ld_del_rung_elem_{}", std::process::id()));
         if temp_dir.exists() {
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
@@ -3226,13 +3433,22 @@ pub mod tests {
 
         app.perform_ld_delete("test_del_rung_elem", &to_delete);
 
-        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_del_rung_elem") else {
+        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_del_rung_elem")
+        else {
             panic!("POU not found");
         };
 
-        assert_eq!(ld.rungs.len(), 1, "Rung 0 should be deleted, leaving exactly 1 rung");
+        assert_eq!(
+            ld.rungs.len(),
+            1,
+            "Rung 0 should be deleted, leaving exactly 1 rung"
+        );
         assert_eq!(ld.rungs[0].id, "R1");
-        assert_eq!(ld.rungs[0].elements.len(), 1, "R1_Delete should be deleted, leaving R1_Keep");
+        assert_eq!(
+            ld.rungs[0].elements.len(),
+            1,
+            "R1_Delete should be deleted, leaving R1_Keep"
+        );
         if let LdElement::Contact { symbol, .. } = &ld.rungs[0].elements[0] {
             assert_eq!(symbol, "R1_Keep");
         } else {
@@ -3244,8 +3460,10 @@ pub mod tests {
     }
 
     #[test]
-    fn test_ld_move_out_of_branch_does_not_lose_elements() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("ferrite_ld_move_branch_{}", std::process::id()));
+    fn test_ld_move_out_of_branch_does_not_lose_elements() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp_dir =
+            std::env::temp_dir().join(format!("ferrite_ld_move_branch_{}", std::process::id()));
         if temp_dir.exists() {
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
@@ -3295,7 +3513,10 @@ pub mod tests {
             "test_move_branch",
             &[LdElementKey::Contact {
                 rung: 0,
-                branch_path: vec![LdBranchPathSegment { branch_idx: 0, path_idx: 1 }],
+                branch_path: vec![LdBranchPathSegment {
+                    branch_idx: 0,
+                    path_idx: 1,
+                }],
                 index: 0,
             }],
             LdDropTarget::BeforeElement {
@@ -3305,7 +3526,8 @@ pub mod tests {
             },
         );
 
-        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_move_branch") else {
+        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_move_branch")
+        else {
             panic!("POU not found");
         };
 
@@ -3330,8 +3552,10 @@ pub mod tests {
     }
 
     #[test]
-    fn test_ld_new_branch_preserves_target_contact_index() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("ferrite_ld_new_br_idx_{}", std::process::id()));
+    fn test_ld_new_branch_preserves_target_contact_index() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp_dir =
+            std::env::temp_dir().join(format!("ferrite_ld_new_br_idx_{}", std::process::id()));
         if temp_dir.exists() {
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
@@ -3382,7 +3606,8 @@ pub mod tests {
             },
         );
 
-        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_new_br_idx") else {
+        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_new_br_idx")
+        else {
             panic!("POU not found");
         };
 
@@ -3413,7 +3638,8 @@ pub mod tests {
 
     #[test]
     fn test_ld_inspector_mutates_nested_branch_contact() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("ferrite_ld_insp_nest_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("ferrite_ld_insp_nest_{}", std::process::id()));
         if temp_dir.exists() {
             let _ = std::fs::remove_dir_all(&temp_dir);
         }
@@ -3447,7 +3673,10 @@ pub mod tests {
             ferrite_project::PouSource::Ld(ld_prog),
         );
 
-        let bp = vec![LdBranchPathSegment { branch_idx: 0, path_idx: 1 }];
+        let bp = vec![LdBranchPathSegment {
+            branch_idx: 0,
+            path_idx: 1,
+        }];
 
         // Mutate symbol of nested contact
         let _ = app.update(Message::LdContactSymbolChanged(
@@ -3467,7 +3696,8 @@ pub mod tests {
             ContactKind::NormallyClosed,
         ));
 
-        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_insp_nest") else {
+        let Some(ferrite_project::PouSource::Ld(ld)) = app.project.pous.get("test_insp_nest")
+        else {
             panic!("POU not found");
         };
 
@@ -3522,12 +3752,23 @@ pub mod tests {
         let selected = layout.elements_in_rect(marquee_box);
         assert_eq!(selected.len(), 1, "Only the contact should be selected");
         assert!(matches!(&selected[0], LdElementKey::Contact { .. }));
-        assert!(!selected.iter().any(|k| matches!(k, LdElementKey::Branch { .. })), "Branch itself must not be selected by interior marquee");
+        assert!(
+            !selected
+                .iter()
+                .any(|k| matches!(k, LdElementKey::Branch { .. })),
+            "Branch itself must not be selected by interior marquee"
+        );
     }
 
     #[test]
-    fn test_ld_rung_name_and_comment_header_layout_and_rename() -> Result<(), Box<dyn std::error::Error>> {
-        let temp_dir = std::env::temp_dir().join(format!("test_ld_name_comment_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()));
+    fn test_ld_rung_name_and_comment_header_layout_and_rename()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_ld_name_comment_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
         let proj = crate::resolve_or_scaffold_project(Some(&temp_dir))?;
         let mut app = crate::app::FerriteStudioApp::new(proj);
 
@@ -3548,7 +3789,10 @@ pub mod tests {
             }],
         };
 
-        app.project.pous.insert("safety_ld".to_string(), ferrite_project::PouSource::Ld(ld_prog.clone()));
+        app.project.pous.insert(
+            "safety_ld".to_string(),
+            ferrite_project::PouSource::Ld(ld_prog.clone()),
+        );
 
         // 1. Verify layout engine hit-tests header across the top of the rung
         let layout = LdLayoutEngine::build(&ld_prog, None);
@@ -3566,8 +3810,23 @@ pub mod tests {
             1.0,
         );
 
-        let multi_sel = [LdElementKey::Contact { rung: 0, branch_path: vec![], index: 0 }, LdElementKey::Coil { rung: 0, index: 0 }];
-        let _multi_elem = render_ld_editor(&ld_prog, None, None, &multi_sel, UiLanguage::En, Vector::default(), 1.0);
+        let multi_sel = [
+            LdElementKey::Contact {
+                rung: 0,
+                branch_path: vec![],
+                index: 0,
+            },
+            LdElementKey::Coil { rung: 0, index: 0 },
+        ];
+        let _multi_elem = render_ld_editor(
+            &ld_prog,
+            None,
+            None,
+            &multi_sel,
+            UiLanguage::En,
+            Vector::default(),
+            1.0,
+        );
         // 3. Test LdRungNameChanged mutates rung.id cleanly
         let _ = app.update(Message::LdRungNameChanged(
             "safety_ld".to_string(),
@@ -3575,12 +3834,19 @@ pub mod tests {
             "Rung_EStop_Active".to_string(),
         ));
 
-        let Some(ferrite_project::PouSource::Ld(updated_ld)) = app.project.pous.get("safety_ld") else {
+        let Some(ferrite_project::PouSource::Ld(updated_ld)) = app.project.pous.get("safety_ld")
+        else {
             panic!("POU not found");
         };
         assert_eq!(updated_ld.rungs[0].id, "Rung_EStop_Active");
-        assert_eq!(updated_ld.rungs[0].comment, "Master EStop & Guard Door permissive");
-        assert!(app.modified, "App should be marked modified after rung rename");
+        assert_eq!(
+            updated_ld.rungs[0].comment,
+            "Master EStop & Guard Door permissive"
+        );
+        assert!(
+            app.modified,
+            "App should be marked modified after rung rename"
+        );
 
         // 4. Verify spawning a new contact inserts it right after the currently selected contact
         let _ = app.update(Message::LdSelectElement(
@@ -3609,21 +3875,32 @@ pub mod tests {
             0,
             ContactKind::RisingEdge,
         ));
-        let Some(ferrite_project::PouSource::Ld(after_insert_ld)) = app.project.pous.get("safety_ld") else {
+        let Some(ferrite_project::PouSource::Ld(after_insert_ld)) =
+            app.project.pous.get("safety_ld")
+        else {
             panic!("POU not found");
         };
         assert_eq!(after_insert_ld.rungs[0].elements.len(), 3);
         assert!(matches!(
             &after_insert_ld.rungs[0].elements[0],
-            LdElement::Contact { kind: ContactKind::NormallyOpen, .. }
+            LdElement::Contact {
+                kind: ContactKind::NormallyOpen,
+                ..
+            }
         ));
         assert!(matches!(
             &after_insert_ld.rungs[0].elements[1],
-            LdElement::Contact { kind: ContactKind::RisingEdge, .. }
+            LdElement::Contact {
+                kind: ContactKind::RisingEdge,
+                ..
+            }
         ));
         assert!(matches!(
             &after_insert_ld.rungs[0].elements[2],
-            LdElement::Contact { kind: ContactKind::NormallyClosed, .. }
+            LdElement::Contact {
+                kind: ContactKind::NormallyClosed,
+                ..
+            }
         ));
 
         let _ = std::fs::remove_dir_all(&temp_dir);

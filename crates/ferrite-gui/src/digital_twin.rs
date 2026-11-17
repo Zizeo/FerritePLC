@@ -22,11 +22,15 @@ pub struct TwinCanvasState {
 static TWIN_CANVAS_SIZE: std::sync::Mutex<(f32, f32)> = std::sync::Mutex::new((1000.0, 700.0));
 
 pub fn get_twin_canvas_size() -> (f32, f32) {
-    TWIN_CANVAS_SIZE.lock().map(|s| *s).unwrap_or((1000.0, 700.0))
+    TWIN_CANVAS_SIZE
+        .lock()
+        .map(|s| *s)
+        .unwrap_or((1000.0, 700.0))
 }
 
 pub fn update_twin_canvas_size(width: f32, height: f32) {
-    if width > 1.0 && height > 1.0
+    if width > 1.0
+        && height > 1.0
         && let Ok(mut size) = TWIN_CANVAS_SIZE.lock()
     {
         *size = (width, height);
@@ -200,9 +204,10 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
                 && blink.enabled
                 && is_active == blink.trigger_state
             {
-                let interval = blink.interval_ms.max(50);
-                let phase_on = (self.elapsed_ms / interval).is_multiple_of(2);
-                is_active = phase_on;
+                is_active = ferrite_twin::workspace::blink_phase(
+                    self.elapsed_ms,
+                    blink.interval_ms.max(50),
+                );
             }
 
             let elem_color = if let Some(ref b) = elem.binding {
@@ -231,11 +236,10 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
                     ElementKind::BasicShape(ShapeType::Line) => {
                         let thickness = sh.clamp(2.0, 28.0);
                         frame.stroke(
-                            &Path::line(
-                                Point::new(-sw * 0.5, 0.0),
-                                Point::new(sw * 0.5, 0.0),
-                            ),
-                            Stroke::default().with_color(elem_color).with_width(thickness),
+                            &Path::line(Point::new(-sw * 0.5, 0.0), Point::new(sw * 0.5, 0.0)),
+                            Stroke::default()
+                                .with_color(elem_color)
+                                .with_width(thickness),
                         );
                     }
                     ElementKind::BasicShape(ShapeType::Square | ShapeType::Rectangle) => {
@@ -363,10 +367,7 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
                                 .with_color(StudioTheme::TEXT_PRIMARY)
                                 .with_width(2.0),
                         );
-                        frame.fill(
-                            &Path::circle(Point::new(0.0, -sh * 0.5), 5.0),
-                            elem_color,
-                        );
+                        frame.fill(&Path::circle(Point::new(0.0, -sh * 0.5), 5.0), elem_color);
                     }
                     ElementKind::Actuator(kind) => {
                         let radius = (sw.min(sh) * 0.45).max(8.0);
@@ -407,10 +408,7 @@ impl<'a> canvas::Program<Message> for TwinCanvasProgram<'a> {
                             ActuatorKind::AgitatorMixer => {
                                 let blade = (angle.cos() * (radius * 0.85)).abs().max(5.0);
                                 frame.stroke(
-                                    &Path::line(
-                                        Point::new(-blade, 0.0),
-                                        Point::new(blade, 0.0),
-                                    ),
+                                    &Path::line(Point::new(-blade, 0.0), Point::new(blade, 0.0)),
                                     Stroke::default().with_color(elem_color).with_width(3.0),
                                 );
                             }
@@ -795,8 +793,11 @@ pub fn render_digital_twin_window<'a>(app: &'a FerriteStudioApp) -> Element<'a, 
 
     let header_bar = container(
         row![
-            text(lang.tr("Digital Twin — 2D Plant & HMI", "Jumeau Numérique — Usine 2D & IHM"))
-                .size(15),
+            text(lang.tr(
+                "Digital Twin — 2D Plant & HMI",
+                "Jumeau Numérique — Usine 2D & IHM"
+            ))
+            .size(15),
             container(
                 text(format!("{} obj", ws.elements.len()))
                     .size(11)
@@ -890,14 +891,12 @@ pub fn render_digital_twin_window<'a>(app: &'a FerriteStudioApp) -> Element<'a, 
             .push(reset_btn)
             .push(clear_btn);
 
-        let scrollable_tools = scrollable(
-            container(tools_row).padding(Padding {
-                top: 2.0,
-                right: 4.0,
-                bottom: 8.0,
-                left: 2.0,
-            }),
-        )
+        let scrollable_tools = scrollable(container(tools_row).padding(Padding {
+            top: 2.0,
+            right: 4.0,
+            bottom: 8.0,
+            left: 2.0,
+        }))
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new()
                 .width(4)
@@ -1222,7 +1221,10 @@ fn render_element_inspector<'a>(
         text(if is_bound {
             lang.tr("Bound to PLC Variable (ON)", "Lié à une variable API (OUI)")
         } else {
-            lang.tr("Link to PLC Variable (OFF)", "Lier à une variable API (NON)")
+            lang.tr(
+                "Link to PLC Variable (OFF)",
+                "Lier à une variable API (NON)",
+            )
         })
         .size(11.5),
     )

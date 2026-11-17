@@ -69,8 +69,66 @@ pub fn icon_save() -> &'static str {
     if crate::is_nerd_font_available() {
         "\u{f0c7}" // nf-fa-floppy_o
     } else {
-        "??"
+        "💾"
     }
+}
+
+/// Returns the information icon.
+pub fn icon_info() -> &'static str {
+    if crate::is_nerd_font_available() {
+        "\u{f05a}" // nf-fa-info_circle
+    } else {
+        "i"
+    }
+}
+
+/// Compact circular "i" badge that reveals `tip` in a tooltip on hover.
+///
+/// Used by the POU editors in place of the old always-visible tips bar.
+pub fn info_tip<'a, Message: 'a>(tip: &'a str) -> iced::Element<'a, Message> {
+    use iced::widget::{container, text};
+    use iced::{Background, Border, Length, Theme};
+
+    let badge = container(
+        text(icon_info())
+            .size(10)
+            .shaping(iced::widget::text::Shaping::Advanced)
+            .color(crate::theme::StudioTheme::TEXT_SECONDARY),
+    )
+    .width(Length::Fixed(16.0))
+    .height(Length::Fixed(16.0))
+    .center_x(Length::Fixed(16.0))
+    .center_y(Length::Fixed(16.0))
+    .style(|theme: &Theme| container::Style {
+        background: Some(Background::Color(crate::theme::StudioTheme::bg_elevated(
+            theme,
+        ))),
+        border: Border {
+            color: crate::theme::StudioTheme::border_card(theme),
+            width: 1.0,
+            radius: iced::border::Radius::from(8.0),
+        },
+        ..Default::default()
+    });
+
+    let bubble = container(text(tip).size(11))
+        .padding([6, 9])
+        .max_width(420.0)
+        .style(|theme: &Theme| container::Style {
+            background: Some(Background::Color(crate::theme::StudioTheme::bg_elevated(
+                theme,
+            ))),
+            border: Border {
+                color: crate::theme::StudioTheme::border_card(theme),
+                width: 1.0,
+                radius: iced::border::Radius::from(8.0),
+            },
+            ..Default::default()
+        });
+
+    iced::widget::tooltip(badge, bubble, iced::widget::tooltip::Position::Bottom)
+        .gap(6)
+        .into()
 }
 
 /// Returns the left-pointing chevron (collapse panel to the left).

@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use iced::border::Radius;
 use iced::widget::{
-    button, column, container, mouse_area, pick_list, row, scrollable, stack, text, text_editor, text_input,
+    button, column, container, mouse_area, pick_list, row, scrollable, stack, text, text_editor,
+    text_input,
 };
 use iced::{Alignment, Background, Border, Color, Element, Length, Task, Theme, Vector};
 
@@ -32,7 +33,7 @@ use ferrite_runtime::{PlcRuntime, ScanTelemetry};
 use crate::alarms_panel::render_alarms_panel;
 use crate::canvas_fbd::{delete_fbd_block, render_fbd_editor};
 use crate::canvas_ld::{
-    lookup_element_mut, render_ld_editor, LdBranchPathSegment, LdDropTarget, LdElementKey,
+    LdBranchPathSegment, LdDropTarget, LdElementKey, lookup_element_mut, render_ld_editor,
 };
 use crate::canvas_sfc::render_sfc_editor;
 use crate::digital_twin::{
@@ -196,11 +197,6 @@ pub enum Message {
     CopySelection,
     PasteClipboard,
     ClipboardPasted(Option<String>),
-    #[deprecated(note = "index-based FBD messages are being removed in favour of id-based ones")]
-    FbdBlockSelectedByIndex(usize),
-    FbdBlockDragStarted(String, usize),
-    FbdBlockDragHovered(String, usize),
-    FbdBlockDragDropped,
 
     // Help & Manual
     OpenHelpWindow,
@@ -326,8 +322,25 @@ pub enum Message {
     LdAddContactWithKind(String, usize, ContactKind),
     LdAddCompare(String, usize),
     LdAddMathMove(String, usize),
-    LdCompareChanged(String, usize, Vec<LdBranchPathSegment>, usize, LdCompareOp, String, String),
-    LdMathMoveChanged(String, usize, Vec<LdBranchPathSegment>, usize, LdMathOp, String, String, String),
+    LdCompareChanged(
+        String,
+        usize,
+        Vec<LdBranchPathSegment>,
+        usize,
+        LdCompareOp,
+        String,
+        String,
+    ),
+    LdMathMoveChanged(
+        String,
+        usize,
+        Vec<LdBranchPathSegment>,
+        usize,
+        LdMathOp,
+        String,
+        String,
+        String,
+    ),
     LdRemoveContact(String, usize, usize),
     LdContactSymbolChanged(String, usize, Vec<LdBranchPathSegment>, usize, String),
     LdContactKindChanged(String, usize, Vec<LdBranchPathSegment>, usize, ContactKind),
@@ -399,21 +412,11 @@ pub enum Message {
 
     // Function Block Diagram (FBD)
     FbdAddBlock(String, FbdBlockKind, Option<[i32; 2]>),
-    #[deprecated(note = "index-based FBD messages are being removed in favour of id-based ones")]
-    FbdRemoveBlockByIndex(String, usize),
     FbdRemoveBlock(String, String),
-    #[deprecated(note = "index-based FBD messages are being removed in favour of id-based ones")]
-    FbdInputSourceChangedByIndex(String, usize, String, String),
     FbdInputSourceChanged(String, String, String, String),
-    #[deprecated(note = "index-based FBD messages are being removed in favour of id-based ones")]
-    FbdOutputTargetChangedByIndex(String, usize, String, String),
     FbdOutputTargetChanged(String, String, String, String),
     FbdChangeCorrectorKind(String, usize, StandardFbKind),
-    #[deprecated(note = "index-based FBD messages are being removed in favour of id-based ones")]
-    FbdBlockIdChangedByIndex(String, usize, String),
     FbdBlockIdChanged(String, String, String),
-    FbdMoveBlockUp(String, usize),
-    FbdMoveBlockDown(String, usize),
     FbdBlockSelected(String, Option<String>),
     FbdBlockMoved(String, String, [i32; 2]),
     FbdAddInputPin(String, String),
@@ -472,6 +475,13 @@ pub enum Message {
 const MAX_HISTORY: usize = 100;
 const HISTORY_COALESCE: Duration = Duration::from_millis(800);
 
+type FbdNewKindDefaults = (
+    FbdBlockKind,
+    String,
+    HashMap<String, FbdInputSource>,
+    Option<(String, StandardFbKind)>,
+);
+
 pub struct FerriteStudioApp {
     pub project: Project,
     pub saved_pous: HashMap<String, PouSource>,
@@ -519,9 +529,6 @@ pub struct FerriteStudioApp {
     pub custom_fbd_editing_name: Option<String>,
     pub global_custom_fbs: Vec<ferrite_lang_fbd::CompositeFbDef>,
     pub fbd_selected_block: Option<String>,
-    pub fbd_selected_block_idx: Option<usize>,
-    pub fbd_dragging_block: Option<usize>,
-    pub fbd_drag_hover_block: Option<usize>,
     pub fbd_inline_editing: bool,
     pub fbd_viewport: HashMap<String, (Vector, f32, iced::Size)>,
     pub help_window_id: Option<iced::window::Id>,
@@ -597,8 +604,12 @@ pub fn handle_keyboard_shortcut(
                 }
             }
             iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("y") => Some(Message::Redo),
-            iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("c") => Some(Message::CopySelection),
-            iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("v") => Some(Message::PasteClipboard),
+            iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("c") => {
+                Some(Message::CopySelection)
+            }
+            iced::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("v") => {
+                Some(Message::PasteClipboard)
+            }
             _ => None,
         }
     } else {
@@ -624,7 +635,10 @@ pub fn handle_key_event(event: iced::keyboard::Event) -> Option<Message> {
 
 impl FerriteStudioApp {
     pub fn new(initial_project: Project) -> Self {
-        Self::with_language(initial_project, crate::settings::load_saved_language_or_os())
+        Self::with_language(
+            initial_project,
+            crate::settings::load_saved_language_or_os(),
+        )
     }
 
     pub fn with_language(mut initial_project: Project, ui_lang: UiLanguage) -> Self {
@@ -756,14 +770,13 @@ impl FerriteStudioApp {
             custom_fbd_inputs_input: "IN1, IN2".to_string(),
             custom_fbd_outputs_input: "OUT".to_string(),
             custom_fbd_st_code_input: "// Structured Text Logic\nOUT := IN1 AND IN2;".to_string(),
-            custom_fbd_st_content: iced::widget::text_editor::Content::with_text("// Structured Text Logic\nOUT := IN1 AND IN2;"),
+            custom_fbd_st_content: iced::widget::text_editor::Content::with_text(
+                "// Structured Text Logic\nOUT := IN1 AND IN2;",
+            ),
             custom_fbd_validation_error: None,
             custom_fbd_editing_name: None,
             global_custom_fbs: crate::custom_fbd_library::load_global_library().blocks,
             fbd_selected_block: None,
-            fbd_selected_block_idx: None,
-            fbd_dragging_block: None,
-            fbd_drag_hover_block: None,
             fbd_inline_editing: false,
             fbd_viewport: HashMap::new(),
             help_window_id: None,
@@ -827,9 +840,9 @@ impl FerriteStudioApp {
             BreakpointMode::SymbolTrue => {
                 Some(ferrite_runtime::Breakpoint::SymbolTrue(val.to_string()))
             }
-            BreakpointMode::Pou => Some(ferrite_runtime::Breakpoint::Pou(
-                ferrite_core::PouId(val.to_string()),
-            )),
+            BreakpointMode::Pou => Some(ferrite_runtime::Breakpoint::Pou(ferrite_core::PouId(
+                val.to_string(),
+            ))),
         }
     }
 
@@ -968,9 +981,7 @@ impl FerriteStudioApp {
         self.sfc_selected_elements.clear();
         self.sfc_delete_modal = None;
         self.fbd_selected_block = None;
-        self.fbd_selected_block_idx = None;
-        self.fbd_dragging_block = None;
-        self.fbd_drag_hover_block = None;
+        self.fbd_inline_editing = false;
         self.dragging_pou = None;
         self.drag_hover_pou = None;
         self.digital_twin_workspace.selected_id = None;
@@ -1178,7 +1189,6 @@ fn dissolve_branches_recursive(elements: &mut Vec<LdElement>) {
 }
 
 impl FerriteStudioApp {
-
     pub fn recompile_runtime(&mut self) {
         self.diagnostics = self.project.check().unwrap_or_default();
         if let Some(ref mut rt) = self.runtime {
@@ -1225,6 +1235,43 @@ impl FerriteStudioApp {
         }
     }
 
+    /// Computes the next free world-pixel `[x, y]` slot near the mirrored
+    /// viewport center for `pou_name`, falling back to `(400, 300)` when the
+    /// canvas has not reported a viewport yet.
+    pub fn fbd_next_block_position(&self, pou_name: &str) -> [i32; 2] {
+        let (pan, zoom, size) = self.fbd_viewport.get(pou_name).copied().unwrap_or((
+            Vector::default(),
+            1.0,
+            iced::Size::new(800.0, 600.0),
+        ));
+        let eff_zoom = if zoom.is_finite() && zoom > 0.0 {
+            zoom.clamp(0.25, 3.0)
+        } else {
+            1.0
+        };
+        let center = iced::Point::new(
+            (size.width * 0.5 - pan.x) / eff_zoom,
+            (size.height * 0.5 - pan.y) / eff_zoom,
+        );
+        let existing = if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(pou_name) {
+            let defaults = crate::canvas_fbd::compute_default_block_positions(fbd);
+            fbd.blocks
+                .iter()
+                .filter_map(|blk| {
+                    let origin = blk
+                        .grid_pos
+                        .map(|[x, y]| iced::Point::new(x as f32, y as f32))
+                        .or_else(|| defaults.get(&blk.id).copied())?;
+                    let b_size = crate::fbd_geometry::block_size(blk, &fbd.composites);
+                    Some(iced::Rectangle::new(origin, b_size))
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        crate::fbd_geometry::place_new_block(center, &existing)
+    }
+
     /// Computes the creation defaults for a new FBD block of `kind`.
     ///
     /// Returns the (possibly uniquified) kind, the block id to use, the default
@@ -1238,20 +1285,17 @@ impl FerriteStudioApp {
         mut kind: FbdBlockKind,
         next_block_id: &str,
         exclude_block_id: Option<&str>,
-    ) -> (
-        FbdBlockKind,
-        String,
-        HashMap<String, FbdInputSource>,
-        Option<(String, StandardFbKind)>,
-    ) {
+    ) -> FbdNewKindDefaults {
         let instance_taken = |name: &str| {
             fbd.blocks
                 .iter()
-                .any(|b| &b.id == name && Some(b.id.as_str()) != exclude_block_id)
+                .any(|b| b.id == name && Some(b.id.as_str()) != exclude_block_id)
                 || instances.iter().any(|fb| fb.name == name)
         };
 
-        if let FbdBlockKind::StandardFb { ref mut instance, .. } = kind
+        if let FbdBlockKind::StandardFb {
+            ref mut instance, ..
+        } = kind
             && instance_taken(instance)
         {
             let prefix = if let Some(pos) = instance.rfind('_') {
@@ -1307,7 +1351,12 @@ impl FerriteStudioApp {
                         },
                     );
                 }
-                (kind.clone(), instance.clone(), ins, Some((instance.clone(), *k)))
+                (
+                    kind.clone(),
+                    instance.clone(),
+                    ins,
+                    Some((instance.clone(), *k)),
+                )
             }
             FbdBlockKind::StandardFb {
                 instance,
@@ -1370,42 +1419,103 @@ impl FerriteStudioApp {
                         );
                     }
                     StandardFbKind::Ctud => {
-                        for (p, v) in [("CU", "FALSE"), ("CD", "FALSE"), ("R", "FALSE"), ("LD", "FALSE"), ("PV", "10")] {
-                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                        for (p, v) in [
+                            ("CU", "FALSE"),
+                            ("CD", "FALSE"),
+                            ("R", "FALSE"),
+                            ("LD", "FALSE"),
+                            ("PV", "10"),
+                        ] {
+                            ins.insert(
+                                p.to_string(),
+                                FbdInputSource::Value {
+                                    expr: v.to_string(),
+                                },
+                            );
                         }
                     }
                     StandardFbKind::Blink => {
-                        for (p, v) in [("ENABLE", "TRUE"), ("TIMELOW", "T#500ms"), ("TIMEHIGH", "T#500ms")] {
-                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                        for (p, v) in [
+                            ("ENABLE", "TRUE"),
+                            ("TIMELOW", "T#500ms"),
+                            ("TIMEHIGH", "T#500ms"),
+                        ] {
+                            ins.insert(
+                                p.to_string(),
+                                FbdInputSource::Value {
+                                    expr: v.to_string(),
+                                },
+                            );
                         }
                     }
                     StandardFbKind::Hysteresis => {
                         for (p, v) in [("IN", "0.0"), ("LOW", "20.0"), ("HIGH", "80.0")] {
-                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                            ins.insert(
+                                p.to_string(),
+                                FbdInputSource::Value {
+                                    expr: v.to_string(),
+                                },
+                            );
                         }
                     }
                     StandardFbKind::RampReal => {
-                        for (p, v) in [("IN", "100.0"), ("ASC", "10.0"), ("DSC", "10.0"), ("RESET", "FALSE")] {
-                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                        for (p, v) in [
+                            ("IN", "100.0"),
+                            ("ASC", "10.0"),
+                            ("DSC", "10.0"),
+                            ("RESET", "FALSE"),
+                        ] {
+                            ins.insert(
+                                p.to_string(),
+                                FbdInputSource::Value {
+                                    expr: v.to_string(),
+                                },
+                            );
                         }
                     }
                     StandardFbKind::ScaleLin => {
-                        for (p, v) in [("IN", "0.0"), ("IN_MIN", "0.0"), ("IN_MAX", "27648.0"), ("OUT_MIN", "0.0"), ("OUT_MAX", "100.0")] {
-                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                        for (p, v) in [
+                            ("IN", "0.0"),
+                            ("IN_MIN", "0.0"),
+                            ("IN_MAX", "27648.0"),
+                            ("OUT_MIN", "0.0"),
+                            ("OUT_MAX", "100.0"),
+                        ] {
+                            ins.insert(
+                                p.to_string(),
+                                FbdInputSource::Value {
+                                    expr: v.to_string(),
+                                },
+                            );
                         }
                     }
                     StandardFbKind::Sr => {
                         for (p, v) in [("S1", "FALSE"), ("R", "FALSE")] {
-                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                            ins.insert(
+                                p.to_string(),
+                                FbdInputSource::Value {
+                                    expr: v.to_string(),
+                                },
+                            );
                         }
                     }
                     StandardFbKind::Rs => {
                         for (p, v) in [("S", "FALSE"), ("R1", "FALSE")] {
-                            ins.insert(p.to_string(), FbdInputSource::Value { expr: v.to_string() });
+                            ins.insert(
+                                p.to_string(),
+                                FbdInputSource::Value {
+                                    expr: v.to_string(),
+                                },
+                            );
                         }
                     }
                     StandardFbKind::RTrig | StandardFbKind::FTrig => {
-                        ins.insert("CLK".to_string(), FbdInputSource::Value { expr: "FALSE".to_string() });
+                        ins.insert(
+                            "CLK".to_string(),
+                            FbdInputSource::Value {
+                                expr: "FALSE".to_string(),
+                            },
+                        );
                     }
                     _ => {
                         ins.insert(
@@ -1416,7 +1526,34 @@ impl FerriteStudioApp {
                         );
                     }
                 }
-                (kind.clone(), instance.clone(), ins, Some((instance.clone(), *k)))
+                (
+                    kind.clone(),
+                    instance.clone(),
+                    ins,
+                    Some((instance.clone(), *k)),
+                )
+            }
+            FbdBlockKind::Composite { type_name } => {
+                let mut ins = HashMap::new();
+                if let Some(comp) = fbd.composites.iter().find(|c| &c.name == type_name) {
+                    for pin in &comp.input_pins {
+                        ins.insert(
+                            pin.clone(),
+                            FbdInputSource::Value {
+                                expr: "FALSE".to_string(),
+                            },
+                        );
+                    }
+                }
+                if ins.is_empty() {
+                    ins.insert(
+                        "IN1".to_string(),
+                        FbdInputSource::Value {
+                            expr: "FALSE".to_string(),
+                        },
+                    );
+                }
+                (kind, next_block_id, ins, None)
             }
             FbdBlockKind::Not => {
                 let mut ins = HashMap::new();
@@ -1454,8 +1591,9 @@ impl FerriteStudioApp {
         kind: &FbdBlockKind,
         old: &HashMap<String, FbdInputSource>,
     ) -> HashMap<String, FbdInputSource> {
-        let default_true =
-            || FbdInputSource::Value { expr: "TRUE".to_string() };
+        let default_true = || FbdInputSource::Value {
+            expr: "TRUE".to_string(),
+        };
         match kind {
             FbdBlockKind::And
             | FbdBlockKind::Or
@@ -1625,12 +1763,7 @@ impl FerriteStudioApp {
         self.modified = true;
     }
 
-    pub fn perform_ld_move(
-        &mut self,
-        pou_name: &str,
-        keys: &[LdElementKey],
-        target: LdDropTarget,
-    ) {
+    pub fn perform_ld_move(&mut self, pou_name: &str, keys: &[LdElementKey], target: LdDropTarget) {
         let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(pou_name) else {
             return;
         };
@@ -1655,16 +1788,28 @@ impl FerriteStudioApp {
         let mut sorted_keys = keys.to_vec();
         sorted_keys.sort_by(|a, b| {
             let (depth_a, idx_a) = match a {
-                LdElementKey::Contact { branch_path, index, .. }
-                | LdElementKey::Branch { branch_path, index, .. }
-                | LdElementKey::InlineFb { branch_path, index, .. } => (branch_path.len(), *index),
+                LdElementKey::Contact {
+                    branch_path, index, ..
+                }
+                | LdElementKey::Branch {
+                    branch_path, index, ..
+                }
+                | LdElementKey::InlineFb {
+                    branch_path, index, ..
+                } => (branch_path.len(), *index),
                 LdElementKey::Coil { index, .. } => (0, *index),
                 _ => (0, 0),
             };
             let (depth_b, idx_b) = match b {
-                LdElementKey::Contact { branch_path, index, .. }
-                | LdElementKey::Branch { branch_path, index, .. }
-                | LdElementKey::InlineFb { branch_path, index, .. } => (branch_path.len(), *index),
+                LdElementKey::Contact {
+                    branch_path, index, ..
+                }
+                | LdElementKey::Branch {
+                    branch_path, index, ..
+                }
+                | LdElementKey::InlineFb {
+                    branch_path, index, ..
+                } => (branch_path.len(), *index),
                 LdElementKey::Coil { index, .. } => (0, *index),
                 _ => (0, 0),
             };
@@ -1953,10 +2098,8 @@ impl FerriteStudioApp {
 
     pub fn configure_trace_tags(&mut self, tags: &[&str], capacity: usize) {
         if let Some(rt) = &mut self.runtime {
-            let ids: Vec<ferrite_core::tag_table::TagId> = tags
-                .iter()
-                .filter_map(|t| rt.tags.tag_id(t))
-                .collect();
+            let ids: Vec<ferrite_core::tag_table::TagId> =
+                tags.iter().filter_map(|t| rt.tags.tag_id(t)).collect();
             rt.configure_trace(&ids, capacity);
             self.trace_active = !ids.is_empty() && capacity > 0;
         }
@@ -2125,11 +2268,9 @@ impl FerriteStudioApp {
         match message {
             Message::None => Task::none(),
             Message::ToggleActiveMenu(menu) => {
-
                 self.active_submenu = None;
                 if self.active_menu == menu {
                     self.active_menu = None;
-
                 } else {
                     self.active_menu = menu;
                 }
@@ -2276,8 +2417,11 @@ impl FerriteStudioApp {
                     self.custom_fbd_desc_input = String::new();
                     self.custom_fbd_inputs_input = "IN1, IN2".to_string();
                     self.custom_fbd_outputs_input = "OUT".to_string();
-                    self.custom_fbd_st_code_input = "// Structured Text Logic\nOUT := IN1 AND IN2;".to_string();
-                    self.custom_fbd_st_content = iced::widget::text_editor::Content::with_text(&self.custom_fbd_st_code_input);
+                    self.custom_fbd_st_code_input =
+                        "// Structured Text Logic\nOUT := IN1 AND IN2;".to_string();
+                    self.custom_fbd_st_content = iced::widget::text_editor::Content::with_text(
+                        &self.custom_fbd_st_code_input,
+                    );
                     self.custom_fbd_validation_error = None;
                 }
                 Task::none()
@@ -2300,7 +2444,8 @@ impl FerriteStudioApp {
             }
             Message::CustomFbdStCodeChanged(code) => {
                 self.custom_fbd_st_code_input = code;
-                self.custom_fbd_st_content = iced::widget::text_editor::Content::with_text(&self.custom_fbd_st_code_input);
+                self.custom_fbd_st_content =
+                    iced::widget::text_editor::Content::with_text(&self.custom_fbd_st_code_input);
                 let trimmed = self.custom_fbd_st_code_input.trim();
                 if trimmed.is_empty() {
                     self.custom_fbd_validation_error = Some("ST logic cannot be empty".to_string());
@@ -2310,7 +2455,10 @@ impl FerriteStudioApp {
                     } else {
                         self.custom_fbd_name_input.trim()
                     };
-                    match ferrite_lang_st::parse_st_statements(&self.custom_fbd_st_code_input, pou_name) {
+                    match ferrite_lang_st::parse_st_statements(
+                        &self.custom_fbd_st_code_input,
+                        pou_name,
+                    ) {
                         Ok(_) => self.custom_fbd_validation_error = None,
                         Err(e) => self.custom_fbd_validation_error = Some(e.to_string()),
                     }
@@ -2329,7 +2477,10 @@ impl FerriteStudioApp {
                     } else {
                         self.custom_fbd_name_input.trim()
                     };
-                    match ferrite_lang_st::parse_st_statements(&self.custom_fbd_st_code_input, pou_name) {
+                    match ferrite_lang_st::parse_st_statements(
+                        &self.custom_fbd_st_code_input,
+                        pou_name,
+                    ) {
                         Ok(_) => self.custom_fbd_validation_error = None,
                         Err(e) => self.custom_fbd_validation_error = Some(e.to_string()),
                     }
@@ -2342,7 +2493,10 @@ impl FerriteStudioApp {
                     || name.contains('.')
                     || !name.chars().all(|c| c.is_alphanumeric() || c == '_')
                 {
-                    self.custom_fbd_validation_error = Some("Block name must be a valid identifier (alphanumeric/underscore)".to_string());
+                    self.custom_fbd_validation_error = Some(
+                        "Block name must be a valid identifier (alphanumeric/underscore)"
+                            .to_string(),
+                    );
                     return Task::none();
                 }
 
@@ -2352,28 +2506,34 @@ impl FerriteStudioApp {
                     return Task::none();
                 }
 
-                if let Err(e) = ferrite_lang_st::parse_st_statements(&self.custom_fbd_st_code_input, &name) {
+                if let Err(e) =
+                    ferrite_lang_st::parse_st_statements(&self.custom_fbd_st_code_input, &name)
+                {
                     self.custom_fbd_validation_error = Some(format!("Syntax error: {e}"));
                     return Task::none();
                 }
 
-                let input_pins: Vec<String> = self.custom_fbd_inputs_input
+                let input_pins: Vec<String> = self
+                    .custom_fbd_inputs_input
                     .split(',')
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect();
                 if input_pins.is_empty() {
-                    self.custom_fbd_validation_error = Some("At least one input pin is required".to_string());
+                    self.custom_fbd_validation_error =
+                        Some("At least one input pin is required".to_string());
                     return Task::none();
                 }
 
-                let output_pins: Vec<String> = self.custom_fbd_outputs_input
+                let output_pins: Vec<String> = self
+                    .custom_fbd_outputs_input
                     .split(',')
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect();
                 if output_pins.is_empty() {
-                    self.custom_fbd_validation_error = Some("At least one output pin is required".to_string());
+                    self.custom_fbd_validation_error =
+                        Some("At least one output pin is required".to_string());
                     return Task::none();
                 }
 
@@ -2387,18 +2547,25 @@ impl FerriteStudioApp {
                 };
 
                 if let Some(ref target_name) = self.custom_fbd_editing_name {
-                    if target_name != &name && self.global_custom_fbs.iter().any(|b| b.name == name) {
-                        self.custom_fbd_validation_error = Some(format!("Block '{name}' already exists"));
+                    if target_name != &name && self.global_custom_fbs.iter().any(|b| b.name == name)
+                    {
+                        self.custom_fbd_validation_error =
+                            Some(format!("Block '{name}' already exists"));
                         return Task::none();
                     }
-                    if let Some(pos) = self.global_custom_fbs.iter().position(|b| &b.name == target_name) {
+                    if let Some(pos) = self
+                        .global_custom_fbs
+                        .iter()
+                        .position(|b| &b.name == target_name)
+                    {
                         self.global_custom_fbs[pos] = def;
                     } else {
                         self.global_custom_fbs.push(def);
                     }
                 } else {
                     if self.global_custom_fbs.iter().any(|b| b.name == name) {
-                        self.custom_fbd_validation_error = Some(format!("Block '{name}' already exists"));
+                        self.custom_fbd_validation_error =
+                            Some(format!("Block '{name}' already exists"));
                         return Task::none();
                     }
                     self.global_custom_fbs.push(def);
@@ -2426,7 +2593,9 @@ impl FerriteStudioApp {
                     self.custom_fbd_inputs_input = block.input_pins.join(", ");
                     self.custom_fbd_outputs_input = block.output_pins.join(", ");
                     self.custom_fbd_st_code_input = block.st_code.clone().unwrap_or_default();
-                    self.custom_fbd_st_content = iced::widget::text_editor::Content::with_text(&self.custom_fbd_st_code_input);
+                    self.custom_fbd_st_content = iced::widget::text_editor::Content::with_text(
+                        &self.custom_fbd_st_code_input,
+                    );
                     self.custom_fbd_validation_error = None;
                 }
                 Task::none()
@@ -2457,7 +2626,8 @@ impl FerriteStudioApp {
                         }
                     }
                     _ => None,
-                }.or_else(|| {
+                }
+                .or_else(|| {
                     self.project.pous.iter().find_map(|(name, src)| {
                         if matches!(src, PouSource::Fbd(_)) {
                             Some(name.clone())
@@ -2467,36 +2637,49 @@ impl FerriteStudioApp {
                     })
                 });
 
-                if let Some(pou_name) = target_pou
-                    && let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
-                {
-                    if let Some(pos) = fbd.composites.iter().position(|c| c.name == def.name) {
-                        fbd.composites[pos] = def.clone();
-                    } else {
-                        fbd.composites.push(def.clone());
-                    }
+                if let Some(pou_name) = target_pou {
+                    let next_pos = Some(self.fbd_next_block_position(&pou_name));
+                    if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name) {
+                        if let Some(pos) = fbd.composites.iter().position(|c| c.name == def.name) {
+                            fbd.composites[pos] = def.clone();
+                        } else {
+                            fbd.composites.push(def.clone());
+                        }
 
-                    let mut inputs = HashMap::new();
-                    for pin in &def.input_pins {
-                        inputs.insert(pin.clone(), ferrite_lang_fbd::FbdInputSource::Value { expr: "FALSE".to_string() });
-                    }
+                        let mut inputs = HashMap::new();
+                        for pin in &def.input_pins {
+                            inputs.insert(
+                                pin.clone(),
+                                ferrite_lang_fbd::FbdInputSource::Value {
+                                    expr: "FALSE".to_string(),
+                                },
+                            );
+                        }
 
-                    let mut next = 1;
-                    while fbd.blocks.iter().any(|b| b.id == format!("{}_{next}", def.name)) {
-                        next += 1;
-                    }
-                    let block_id = format!("{}_{next}", def.name);
-                    fbd.blocks.push(ferrite_lang_fbd::FbdBlock {
-                        id: block_id,
-                        kind: ferrite_lang_fbd::FbdBlockKind::Composite { type_name: def.name },
-                        inputs,
-                        outputs: HashMap::new(),
-                        grid_pos: None,
-                    });
+                        let mut next = 1;
+                        while fbd
+                            .blocks
+                            .iter()
+                            .any(|b| b.id == format!("{}_{next}", def.name))
+                        {
+                            next += 1;
+                        }
+                        let block_id = format!("{}_{next}", def.name);
+                        fbd.blocks.push(ferrite_lang_fbd::FbdBlock {
+                            id: block_id.clone(),
+                            kind: ferrite_lang_fbd::FbdBlockKind::Composite {
+                                type_name: def.name,
+                            },
+                            inputs,
+                            outputs: HashMap::new(),
+                            grid_pos: next_pos,
+                        });
+                        self.fbd_selected_block = Some(block_id);
 
-                    self.track_history();
-                    self.modified = true;
-                    self.recompile_runtime();
+                        self.track_history();
+                        self.modified = true;
+                        self.recompile_runtime();
+                    }
                 }
                 Task::none()
             }
@@ -2767,7 +2950,8 @@ impl FerriteStudioApp {
                 if let Some(rt) = &mut self.runtime
                     && let Some(tag) = rt.tags.get_tag(&name)
                 {
-                    let parsed_val = IecValue::parse_literal(val_str.trim(), Some(tag.data_type)).ok();
+                    let parsed_val =
+                        IecValue::parse_literal(val_str.trim(), Some(tag.data_type)).ok();
                     if let Some(val) = parsed_val {
                         let _ = rt.force(&name, val);
                         self.status_banner =
@@ -2903,7 +3087,8 @@ impl FerriteStudioApp {
                                 None
                             }
                             Err(e) => {
-                                self.digital_twin_workspace = DigitalTwinWorkspace::with_starter_plant();
+                                self.digital_twin_workspace =
+                                    DigitalTwinWorkspace::with_starter_plant();
                                 self.digital_twin_load_failed = true;
                                 Some(e)
                             }
@@ -2992,7 +3177,8 @@ impl FerriteStudioApp {
                             if let Some(e) = twin_err {
                                 self.status_banner = format!("Save As digital twin failed: {e}");
                             } else {
-                                self.status_banner = format!("Project saved to {}", folder.display());
+                                self.status_banner =
+                                    format!("Project saved to {}", folder.display());
                             }
                         }
                         Err(e) => {
@@ -3052,15 +3238,18 @@ impl FerriteStudioApp {
                                         let p_name = imported_project.manifest.name.clone();
                                         self.saved_pous = imported_project.pous.clone();
                                         self.saved_manifest = imported_project.manifest.clone();
-                                        self.saved_global_tags = imported_project.global_tags.clone();
-                                        self.saved_fb_instances = imported_project.fb_instances.clone();
+                                        self.saved_global_tags =
+                                            imported_project.global_tags.clone();
+                                        self.saved_fb_instances =
+                                            imported_project.fb_instances.clone();
                                         self.project = imported_project;
                                         self.modified = false;
                                         self.clear_editor_selections();
                                         self.st_contents.clear();
                                         self.sync_st_contents();
                                         crate::editor_symbols::clear_all_symbol_buffers();
-                                        let twin_res = DigitalTwinWorkspace::load(&self.project.root_dir);
+                                        let twin_res =
+                                            DigitalTwinWorkspace::load(&self.project.root_dir);
                                         let twin_err = match twin_res {
                                             Ok(ws) => {
                                                 self.digital_twin_workspace = ws;
@@ -3068,7 +3257,8 @@ impl FerriteStudioApp {
                                                 None
                                             }
                                             Err(e) => {
-                                                self.digital_twin_workspace = DigitalTwinWorkspace::with_starter_plant();
+                                                self.digital_twin_workspace =
+                                                    DigitalTwinWorkspace::with_starter_plant();
                                                 self.digital_twin_load_failed = true;
                                                 Some(e)
                                             }
@@ -3077,7 +3267,8 @@ impl FerriteStudioApp {
                                         self.redo_stack.clear();
                                         self.recompile_runtime();
                                         if let Some(e) = twin_err {
-                                            self.status_banner = format!("Failed to load digital twin: {e}");
+                                            self.status_banner =
+                                                format!("Failed to load digital twin: {e}");
                                         } else {
                                             self.status_banner = format!(
                                                 "Project '{}' successfully imported from PLCopen XML to {}",
@@ -3121,25 +3312,42 @@ impl FerriteStudioApp {
                 };
                 let clipboard_data = match pou_src {
                     PouSource::Ld(ld) => {
-                        let selected_rung_idx = self.ld_selected_elements.iter().map(|k| match k {
-                            crate::canvas_ld::LdElementKey::Rung(r) => *r,
-                            crate::canvas_ld::LdElementKey::Contact { rung, .. } => *rung,
-                            crate::canvas_ld::LdElementKey::Coil { rung, .. } => *rung,
-                            crate::canvas_ld::LdElementKey::Branch { rung, .. } => *rung,
-                            crate::canvas_ld::LdElementKey::InlineFb { rung, .. } => *rung,
-                        }).next().or_else(|| self.ld_selected.as_ref().and_then(|(p, k)| {
-                            if p == &pou_name {
-                                match k {
-                                    crate::canvas_ld::LdElementKey::Rung(r) => Some(*r),
-                                    crate::canvas_ld::LdElementKey::Contact { rung, .. } => Some(*rung),
-                                    crate::canvas_ld::LdElementKey::Coil { rung, .. } => Some(*rung),
-                                    crate::canvas_ld::LdElementKey::Branch { rung, .. } => Some(*rung),
-                            crate::canvas_ld::LdElementKey::InlineFb { rung, .. } => Some(*rung),
-                                }
-                            } else {
-                                None
-                            }
-                        }));
+                        let selected_rung_idx = self
+                            .ld_selected_elements
+                            .iter()
+                            .map(|k| match k {
+                                crate::canvas_ld::LdElementKey::Rung(r) => *r,
+                                crate::canvas_ld::LdElementKey::Contact { rung, .. } => *rung,
+                                crate::canvas_ld::LdElementKey::Coil { rung, .. } => *rung,
+                                crate::canvas_ld::LdElementKey::Branch { rung, .. } => *rung,
+                                crate::canvas_ld::LdElementKey::InlineFb { rung, .. } => *rung,
+                            })
+                            .next()
+                            .or_else(|| {
+                                self.ld_selected.as_ref().and_then(|(p, k)| {
+                                    if p == &pou_name {
+                                        match k {
+                                            crate::canvas_ld::LdElementKey::Rung(r) => Some(*r),
+                                            crate::canvas_ld::LdElementKey::Contact {
+                                                rung,
+                                                ..
+                                            } => Some(*rung),
+                                            crate::canvas_ld::LdElementKey::Coil {
+                                                rung, ..
+                                            } => Some(*rung),
+                                            crate::canvas_ld::LdElementKey::Branch {
+                                                rung, ..
+                                            } => Some(*rung),
+                                            crate::canvas_ld::LdElementKey::InlineFb {
+                                                rung,
+                                                ..
+                                            } => Some(*rung),
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                            });
 
                         let rungs_to_copy = if let Some(r_idx) = selected_rung_idx {
                             if r_idx < ld.rungs.len() {
@@ -3148,7 +3356,12 @@ impl FerriteStudioApp {
                                 Vec::new()
                             }
                         } else if !ld.rungs.is_empty() {
-                            vec![ld.rungs.last().cloned().unwrap_or_else(|| ld.rungs[0].clone())]
+                            vec![
+                                ld.rungs
+                                    .last()
+                                    .cloned()
+                                    .unwrap_or_else(|| ld.rungs[0].clone()),
+                            ]
                         } else {
                             Vec::new()
                         };
@@ -3156,7 +3369,9 @@ impl FerriteStudioApp {
                         if rungs_to_copy.is_empty() {
                             None
                         } else {
-                            Some(crate::clipboard::FerriteClipboardData::Ladder { rungs: rungs_to_copy })
+                            Some(crate::clipboard::FerriteClipboardData::Ladder {
+                                rungs: rungs_to_copy,
+                            })
                         }
                     }
                     PouSource::Sfc(sfc) => {
@@ -3165,21 +3380,39 @@ impl FerriteStudioApp {
 
                         for elem in &self.sfc_selected_elements {
                             match elem {
-                                crate::canvas_sfc::SfcElementKey::Step(id) => { selected_step_ids.insert(id.clone()); }
-                                crate::canvas_sfc::SfcElementKey::Transition(id) => { selected_trans_ids.insert(id.clone()); }
+                                crate::canvas_sfc::SfcElementKey::Step(id) => {
+                                    selected_step_ids.insert(id.clone());
+                                }
+                                crate::canvas_sfc::SfcElementKey::Transition(id) => {
+                                    selected_trans_ids.insert(id.clone());
+                                }
                             }
                         }
                         if let Some((ref p, ref elem)) = self.sfc_selected
                             && p == &pou_name
                         {
                             match elem {
-                                crate::canvas_sfc::SfcElementKey::Step(id) => { selected_step_ids.insert(id.clone()); }
-                                crate::canvas_sfc::SfcElementKey::Transition(id) => { selected_trans_ids.insert(id.clone()); }
+                                crate::canvas_sfc::SfcElementKey::Step(id) => {
+                                    selected_step_ids.insert(id.clone());
+                                }
+                                crate::canvas_sfc::SfcElementKey::Transition(id) => {
+                                    selected_trans_ids.insert(id.clone());
+                                }
                             }
                         }
 
-                        let steps: Vec<_> = sfc.steps.iter().filter(|s| selected_step_ids.contains(&s.id)).cloned().collect();
-                        let transitions: Vec<_> = sfc.transitions.iter().filter(|t| selected_trans_ids.contains(&t.id)).cloned().collect();
+                        let steps: Vec<_> = sfc
+                            .steps
+                            .iter()
+                            .filter(|s| selected_step_ids.contains(&s.id))
+                            .cloned()
+                            .collect();
+                        let transitions: Vec<_> = sfc
+                            .transitions
+                            .iter()
+                            .filter(|t| selected_trans_ids.contains(&t.id))
+                            .cloned()
+                            .collect();
 
                         if steps.is_empty() && transitions.is_empty() {
                             None
@@ -3188,20 +3421,14 @@ impl FerriteStudioApp {
                         }
                     }
                     PouSource::Fbd(fbd) => {
-                        let block_idx = self.fbd_selected_block_idx.or(
-                            if !fbd.blocks.is_empty() { Some(0) } else { None }
-                        );
-                        if let Some(idx) = block_idx {
-                            if idx < fbd.blocks.len() {
-                                Some(crate::clipboard::FerriteClipboardData::Fbd {
-                                    blocks: vec![fbd.blocks[idx].clone()],
-                                })
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
+                        let blk = self
+                            .fbd_selected_block
+                            .as_deref()
+                            .and_then(|id| fbd.blocks.iter().find(|b| b.id == id))
+                            .or_else(|| fbd.blocks.first());
+                        blk.map(|b| crate::clipboard::FerriteClipboardData::Fbd {
+                            blocks: vec![b.clone()],
+                        })
                     }
                     _ => None,
                 };
@@ -3213,9 +3440,7 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
-            Message::PasteClipboard => {
-                iced::clipboard::read().map(Message::ClipboardPasted)
-            }
+            Message::PasteClipboard => iced::clipboard::read().map(Message::ClipboardPasted),
             Message::ClipboardPasted(content) => {
                 let Some(content) = content else {
                     return Task::none();
@@ -3231,29 +3456,49 @@ impl FerriteStudioApp {
                 };
 
                 match (pou_src, data) {
-                    (PouSource::Ld(ld), crate::clipboard::FerriteClipboardData::Ladder { rungs }) => {
+                    (
+                        PouSource::Ld(ld),
+                        crate::clipboard::FerriteClipboardData::Ladder { rungs },
+                    ) => {
                         if rungs.is_empty() {
                             return Task::none();
                         }
-                        let selected_rung_idx = self.ld_selected_elements.iter().map(|k| match k {
-                            crate::canvas_ld::LdElementKey::Rung(r) => *r,
-                            crate::canvas_ld::LdElementKey::Contact { rung, .. } => *rung,
-                            crate::canvas_ld::LdElementKey::Coil { rung, .. } => *rung,
-                            crate::canvas_ld::LdElementKey::Branch { rung, .. } => *rung,
-                            crate::canvas_ld::LdElementKey::InlineFb { rung, .. } => *rung,
-                        }).next().or_else(|| self.ld_selected.as_ref().and_then(|(p, k)| {
-                            if p == &pou_name {
-                                match k {
-                                    crate::canvas_ld::LdElementKey::Rung(r) => Some(*r),
-                                    crate::canvas_ld::LdElementKey::Contact { rung, .. } => Some(*rung),
-                                    crate::canvas_ld::LdElementKey::Coil { rung, .. } => Some(*rung),
-                                    crate::canvas_ld::LdElementKey::Branch { rung, .. } => Some(*rung),
-                            crate::canvas_ld::LdElementKey::InlineFb { rung, .. } => Some(*rung),
-                                }
-                            } else {
-                                None
-                            }
-                        }));
+                        let selected_rung_idx = self
+                            .ld_selected_elements
+                            .iter()
+                            .map(|k| match k {
+                                crate::canvas_ld::LdElementKey::Rung(r) => *r,
+                                crate::canvas_ld::LdElementKey::Contact { rung, .. } => *rung,
+                                crate::canvas_ld::LdElementKey::Coil { rung, .. } => *rung,
+                                crate::canvas_ld::LdElementKey::Branch { rung, .. } => *rung,
+                                crate::canvas_ld::LdElementKey::InlineFb { rung, .. } => *rung,
+                            })
+                            .next()
+                            .or_else(|| {
+                                self.ld_selected.as_ref().and_then(|(p, k)| {
+                                    if p == &pou_name {
+                                        match k {
+                                            crate::canvas_ld::LdElementKey::Rung(r) => Some(*r),
+                                            crate::canvas_ld::LdElementKey::Contact {
+                                                rung,
+                                                ..
+                                            } => Some(*rung),
+                                            crate::canvas_ld::LdElementKey::Coil {
+                                                rung, ..
+                                            } => Some(*rung),
+                                            crate::canvas_ld::LdElementKey::Branch {
+                                                rung, ..
+                                            } => Some(*rung),
+                                            crate::canvas_ld::LdElementKey::InlineFb {
+                                                rung,
+                                                ..
+                                            } => Some(*rung),
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                            });
 
                         let insert_pos = if let Some(r_idx) = selected_rung_idx {
                             (r_idx + 1).min(ld.rungs.len())
@@ -3267,28 +3512,51 @@ impl FerriteStudioApp {
                             ld.rungs.insert(insert_pos + offset, rung);
                         }
 
-                        self.ld_selected = Some((pou_name.clone(), crate::canvas_ld::LdElementKey::Rung(first_inserted)));
-                        self.ld_selected_elements = vec![crate::canvas_ld::LdElementKey::Rung(first_inserted)];
+                        self.ld_selected = Some((
+                            pou_name.clone(),
+                            crate::canvas_ld::LdElementKey::Rung(first_inserted),
+                        ));
+                        self.ld_selected_elements =
+                            vec![crate::canvas_ld::LdElementKey::Rung(first_inserted)];
                         self.track_history();
                         self.modified = self.project.pous != self.saved_pous;
                     }
-                    (PouSource::Sfc(sfc), crate::clipboard::FerriteClipboardData::Sfc { steps, transitions }) => {
+                    (
+                        PouSource::Sfc(sfc),
+                        crate::clipboard::FerriteClipboardData::Sfc { steps, transitions },
+                    ) => {
                         if steps.is_empty() && transitions.is_empty() {
                             return Task::none();
                         }
 
-                        let mut next_step_idx = sfc.steps.iter().filter_map(|s| {
-                            s.id.strip_prefix("Step_").or_else(|| s.id.strip_prefix("X"))
-                                .and_then(|digits| digits.parse::<u32>().ok())
-                        }).max().unwrap_or(0) + 1;
+                        let mut next_step_idx = sfc
+                            .steps
+                            .iter()
+                            .filter_map(|s| {
+                                s.id.strip_prefix("Step_")
+                                    .or_else(|| s.id.strip_prefix("X"))
+                                    .and_then(|digits| digits.parse::<u32>().ok())
+                            })
+                            .max()
+                            .unwrap_or(0)
+                            + 1;
 
-                        let mut next_trans_idx = sfc.transitions.iter().filter_map(|t| {
-                            t.id.strip_prefix("Trans_").or_else(|| t.id.strip_prefix("T"))
-                                .and_then(|digits| digits.parse::<u32>().ok())
-                        }).max().unwrap_or(0) + 1;
+                        let mut next_trans_idx = sfc
+                            .transitions
+                            .iter()
+                            .filter_map(|t| {
+                                t.id.strip_prefix("Trans_")
+                                    .or_else(|| t.id.strip_prefix("T"))
+                                    .and_then(|digits| digits.parse::<u32>().ok())
+                            })
+                            .max()
+                            .unwrap_or(0)
+                            + 1;
 
-                        let mut existing_step_ids: std::collections::HashSet<String> = sfc.steps.iter().map(|s| s.id.clone()).collect();
-                        let mut existing_trans_ids: std::collections::HashSet<String> = sfc.transitions.iter().map(|t| t.id.clone()).collect();
+                        let mut existing_step_ids: std::collections::HashSet<String> =
+                            sfc.steps.iter().map(|s| s.id.clone()).collect();
+                        let mut existing_trans_ids: std::collections::HashSet<String> =
+                            sfc.transitions.iter().map(|t| t.id.clone()).collect();
 
                         let mut id_map = std::collections::HashMap::new();
                         for s in &steps {
@@ -3324,7 +3592,8 @@ impl FerriteStudioApp {
                             if let Some((x, y)) = step.grid_pos {
                                 step.grid_pos = Some((x + 2, y + 2));
                             }
-                            new_selection.push(crate::canvas_sfc::SfcElementKey::Step(step.id.clone()));
+                            new_selection
+                                .push(crate::canvas_sfc::SfcElementKey::Step(step.id.clone()));
                             sfc.steps.push(step);
                         }
 
@@ -3333,16 +3602,22 @@ impl FerriteStudioApp {
                             if let Some(new_id) = id_map.get(&old_id) {
                                 trans.id = new_id.clone();
                             }
-                            trans.from_steps = trans.from_steps.into_iter().map(|s| {
-                                id_map.get(&s).cloned().unwrap_or(s)
-                            }).collect();
-                            trans.to_steps = trans.to_steps.into_iter().map(|s| {
-                                id_map.get(&s).cloned().unwrap_or(s)
-                            }).collect();
+                            trans.from_steps = trans
+                                .from_steps
+                                .into_iter()
+                                .map(|s| id_map.get(&s).cloned().unwrap_or(s))
+                                .collect();
+                            trans.to_steps = trans
+                                .to_steps
+                                .into_iter()
+                                .map(|s| id_map.get(&s).cloned().unwrap_or(s))
+                                .collect();
                             if let Some((x, y)) = trans.grid_pos {
                                 trans.grid_pos = Some((x + 2, y + 2));
                             }
-                            new_selection.push(crate::canvas_sfc::SfcElementKey::Transition(trans.id.clone()));
+                            new_selection.push(crate::canvas_sfc::SfcElementKey::Transition(
+                                trans.id.clone(),
+                            ));
                             sfc.transitions.push(trans);
                         }
 
@@ -3353,21 +3628,25 @@ impl FerriteStudioApp {
                         self.track_history();
                         self.modified = self.project.pous != self.saved_pous;
                     }
-                    (PouSource::Fbd(fbd), crate::clipboard::FerriteClipboardData::Fbd { blocks }) => {
+                    (
+                        PouSource::Fbd(fbd),
+                        crate::clipboard::FerriteClipboardData::Fbd { blocks },
+                    ) => {
                         if blocks.is_empty() {
                             return Task::none();
                         }
 
-                        let insert_pos = if let Some(sel_idx) = self.fbd_selected_block_idx {
-                            (sel_idx + 1).min(fbd.blocks.len())
-                        } else {
-                            fbd.blocks.len()
-                        };
+                        let insert_pos = self
+                            .fbd_selected_block
+                            .as_deref()
+                            .and_then(|id| fbd.blocks.iter().position(|b| b.id == id))
+                            .map_or(fbd.blocks.len(), |idx| (idx + 1).min(fbd.blocks.len()));
 
                         let first_inserted = insert_pos;
 
                         for (offset, mut block) in blocks.into_iter().enumerate() {
-                            let existing_ids: std::collections::HashSet<_> = fbd.blocks.iter().map(|b| b.id.as_str()).collect();
+                            let existing_ids: std::collections::HashSet<_> =
+                                fbd.blocks.iter().map(|b| b.id.as_str()).collect();
                             let base_name = block.id.clone();
                             let mut suffix = 2;
                             let mut new_id = format!("{}_{}", base_name, suffix);
@@ -3386,7 +3665,6 @@ impl FerriteStudioApp {
 
                         let pasted_id = fbd.blocks[first_inserted].id.clone();
                         self.fbd_selected_block = Some(pasted_id);
-                        self.fbd_selected_block_idx = Some(first_inserted);
                         self.track_history();
                         self.modified = self.project.pous != self.saved_pous;
                     }
@@ -3394,67 +3672,8 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
-            #[allow(deprecated)] // boundary shim: removed in Task 8
-            Message::FbdBlockSelectedByIndex(idx) => {
-                self.fbd_selected_block_idx = Some(idx);
-                if let WorkspaceTab::Pou(pou_name) = &self.active_tab
-                    && let Some(PouSource::Fbd(fbd)) = self.project.pous.get(pou_name)
-                    && let Some(blk) = fbd.blocks.get(idx)
-                {
-                    self.fbd_selected_block = Some(blk.id.clone());
-                }
-                Task::none()
-            }
-            Message::FbdBlockSelected(pou_name, block_id) => {
-                self.fbd_selected_block = block_id.clone();
-                self.fbd_selected_block_idx = None;
-                if let Some(id) = &block_id
-                    && let Some(PouSource::Fbd(fbd)) = self.project.pous.get(&pou_name)
-                    && let Some(idx) = fbd.blocks.iter().position(|b| &b.id == id)
-                {
-                    self.fbd_selected_block_idx = Some(idx);
-                }
-                Task::none()
-            }
-            Message::FbdBlockDragStarted(pou_name, idx) => {
-                self.active_tab = WorkspaceTab::Pou(pou_name.clone());
-                self.fbd_selected_block_idx = Some(idx);
-                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(&pou_name)
-                    && let Some(blk) = fbd.blocks.get(idx)
-                {
-                    self.fbd_selected_block = Some(blk.id.clone());
-                }
-                self.fbd_dragging_block = Some(idx);
-                self.fbd_drag_hover_block = None;
-                Task::none()
-            }
-            Message::FbdBlockDragHovered(_pou_name, idx) => {
-                if self.fbd_dragging_block.is_some() {
-                    self.fbd_drag_hover_block = Some(idx);
-                }
-                Task::none()
-            }
-            Message::FbdBlockDragDropped => {
-                if let (Some(from), Some(to)) = (self.fbd_dragging_block.take(), self.fbd_drag_hover_block.take())
-                    && from != to
-                    && let WorkspaceTab::Pou(ref pou_name) = self.active_tab.clone()
-                    && let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(pou_name)
-                    && from < fbd.blocks.len()
-                    && to < fbd.blocks.len()
-                {
-                    let blk = fbd.blocks.remove(from);
-                    fbd.blocks.insert(to, blk);
-                    self.fbd_selected_block_idx = Some(to);
-                    if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(pou_name)
-                        && let Some(blk) = fbd.blocks.get(to)
-                    {
-                        self.fbd_selected_block = Some(blk.id.clone());
-                    }
-                    self.track_history();
-                    self.modified = self.project.pous != self.saved_pous;
-                }
-                self.fbd_dragging_block = None;
-                self.fbd_drag_hover_block = None;
+            Message::FbdBlockSelected(_pou_name, block_id) => {
+                self.fbd_selected_block = block_id;
                 Task::none()
             }
             Message::DeletePressed => {
@@ -3488,14 +3707,9 @@ impl FerriteStudioApp {
                                 // owned by the text editor, not the block list.
                                 return Task::none();
                             }
-                            if let Some(b_idx) = self.fbd_selected_block_idx.take() {
+                            if let Some(id) = self.fbd_selected_block.take() {
                                 let p = pou_name.clone();
-                                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(pou_name)
-                                    && let Some(blk) = fbd.blocks.get(b_idx)
-                                {
-                                    let id = blk.id.clone();
-                                    return self.update(Message::FbdRemoveBlock(p, id));
-                                }
+                                return self.update(Message::FbdRemoveBlock(p, id));
                             }
                         }
                         _ => {}
@@ -3590,7 +3804,9 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::PouDragDropped => {
-                if let (Some(from), Some(to)) = (self.dragging_pou.take(), self.drag_hover_pou.take()) {
+                if let (Some(from), Some(to)) =
+                    (self.dragging_pou.take(), self.drag_hover_pou.take())
+                {
                     if from != to {
                         if self.project.reorder_pou(&from, &to) {
                             self.track_history();
@@ -3816,7 +4032,11 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::TraceStart => {
-                let cap = self.trace_capacity_input.trim().parse::<usize>().unwrap_or(100);
+                let cap = self
+                    .trace_capacity_input
+                    .trim()
+                    .parse::<usize>()
+                    .unwrap_or(100);
                 if let Some(rt) = &mut self.runtime {
                     let tag_names: Vec<&str> = self
                         .trace_tags_input
@@ -4151,7 +4371,12 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::LdAddContact(pou_name, r_idx) => {
-                self.perform_ld_add_contact(&pou_name, r_idx, "Sensor_1".to_string(), ContactKind::NormallyOpen);
+                self.perform_ld_add_contact(
+                    &pou_name,
+                    r_idx,
+                    "Sensor_1".to_string(),
+                    ContactKind::NormallyOpen,
+                );
                 Task::none()
             }
             Message::LdAddContactWithKind(pou_name, r_idx, kind) => {
@@ -4213,7 +4438,15 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
-            Message::LdCompareChanged(pou_name, r_idx, branch_path, e_idx, new_op, new_left, new_right) => {
+            Message::LdCompareChanged(
+                pou_name,
+                r_idx,
+                branch_path,
+                e_idx,
+                new_op,
+                new_left,
+                new_right,
+            ) => {
                 if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
                     && let Some(rung) = ld.rungs.get_mut(r_idx)
                     && let Some(LdElement::Compare { op, left, right }) =
@@ -4228,11 +4461,24 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
-            Message::LdMathMoveChanged(pou_name, r_idx, branch_path, e_idx, new_op, new_in1, new_in2, new_dest) => {
+            Message::LdMathMoveChanged(
+                pou_name,
+                r_idx,
+                branch_path,
+                e_idx,
+                new_op,
+                new_in1,
+                new_in2,
+                new_dest,
+            ) => {
                 if let Some(PouSource::Ld(ld)) = self.project.pous.get_mut(&pou_name)
                     && let Some(rung) = ld.rungs.get_mut(r_idx)
-                    && let Some(LdElement::MathMove { op, input1, input2, dest }) =
-                        lookup_element_mut(&mut rung.elements, &branch_path, e_idx)
+                    && let Some(LdElement::MathMove {
+                        op,
+                        input1,
+                        input2,
+                        dest,
+                    }) = lookup_element_mut(&mut rung.elements, &branch_path, e_idx)
                 {
                     *op = new_op;
                     *input1 = new_in1;
@@ -4495,8 +4741,8 @@ impl FerriteStudioApp {
                         kind: StepKind::Normal,
                         actions: Vec::new(),
                         grid_pos,
-                    ..Default::default()
-                });
+                        ..Default::default()
+                    });
                     self.track_history();
                     self.modified = true;
                 }
@@ -4683,8 +4929,8 @@ impl FerriteStudioApp {
                                     kind: StepKind::Normal,
                                     actions: Vec::new(),
                                     grid_pos: Some(((tx - 50).max(60), ty + 80)),
-                    ..Default::default()
-                });
+                                    ..Default::default()
+                                });
                                 (Some((tx, ty + 180)), vec![inter_step_id])
                             }
                         }
@@ -4968,26 +5214,34 @@ impl FerriteStudioApp {
                         })
                         .collect();
 
-                    let from_step = if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) =
-                        self.sfc_selected
-                        && p == &pou_name
-                        && !selected_steps.contains(sid)
-                    {
-                        Some(sid.clone())
-                    } else {
-                        None
-                    };
+                    let from_step =
+                        if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) =
+                            self.sfc_selected
+                            && p == &pou_name
+                            && !selected_steps.contains(sid)
+                        {
+                            Some(sid.clone())
+                        } else {
+                            None
+                        };
 
                     if selected_steps.len() >= 2 {
                         // In IEC 60848: OR divergence requires an independent transition on each branch
                         let base_t = sfc_next_transition_num(sfc);
                         for (idx, target_id) in selected_steps.iter().enumerate() {
                             let trans_id = format!("T{}_Or_{target_id}", base_t + idx);
-                            let s_pos = sfc.steps.iter().find(|s| &s.id == target_id).and_then(|s| s.grid_pos);
+                            let s_pos = sfc
+                                .steps
+                                .iter()
+                                .find(|s| &s.id == target_id)
+                                .and_then(|s| s.grid_pos);
                             let grid_pos = s_pos.map(|(sx, sy)| (sx + 50, (sy - 80).max(40)));
                             sfc.transitions.push(SfcTransition {
                                 id: trans_id,
-                                from_steps: from_step.as_ref().map(|s| vec![s.clone()]).unwrap_or_default(),
+                                from_steps: from_step
+                                    .as_ref()
+                                    .map(|s| vec![s.clone()])
+                                    .unwrap_or_default(),
                                 to_steps: vec![target_id.clone()],
                                 receptivity: format!("Branch{}_Cond", idx + 1),
                                 convergence: ConvergenceKind::And,
@@ -4999,7 +5253,10 @@ impl FerriteStudioApp {
                         // Create 2 alternative branch transitions originating from the selected source step (or default)
                         let source_id = from_step.or_else(|| selected_steps.first().cloned());
                         let source_pos = source_id.as_ref().and_then(|sid| {
-                            sfc.steps.iter().find(|s| &s.id == sid).and_then(|s| s.grid_pos)
+                            sfc.steps
+                                .iter()
+                                .find(|s| &s.id == sid)
+                                .and_then(|s| s.grid_pos)
                         });
                         let base_t = sfc_next_transition_num(sfc);
                         for i in 1..=2 {
@@ -5008,7 +5265,10 @@ impl FerriteStudioApp {
                             let grid_pos = source_pos.map(|(sx, sy)| (sx + offset, sy + 100));
                             sfc.transitions.push(SfcTransition {
                                 id: trans_id,
-                                from_steps: source_id.as_ref().map(|s| vec![s.clone()]).unwrap_or_default(),
+                                from_steps: source_id
+                                    .as_ref()
+                                    .map(|s| vec![s.clone()])
+                                    .unwrap_or_default(),
                                 to_steps: Vec::new(),
                                 receptivity: format!("Branch{i}_Cond"),
                                 convergence: ConvergenceKind::And,
@@ -5084,7 +5344,8 @@ impl FerriteStudioApp {
                         let name = format!("Step_{next_s}");
                         (id, name, (avg_x, max_y + 160))
                     } else if let Some(sid) = selected_steps.first().cloned().or_else(|| {
-                        if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) = self.sfc_selected
+                        if let Some((ref p, crate::canvas_sfc::SfcElementKey::Step(ref sid))) =
+                            self.sfc_selected
                             && p == &pou_name
                         {
                             Some(sid.clone())
@@ -5109,7 +5370,8 @@ impl FerriteStudioApp {
                             name: s2_name,
                             kind: StepKind::Normal,
                             actions: vec![],
-                            grid_pos: Some(s2_pos), ..Default::default()
+                            grid_pos: Some(s2_pos),
+                            ..Default::default()
                         });
                         source_steps.push(s2_id);
 
@@ -5122,7 +5384,11 @@ impl FerriteStudioApp {
                             .steps
                             .iter()
                             .filter_map(|s| s.grid_pos.map(|(_, y)| y + 60))
-                            .chain(sfc.transitions.iter().filter_map(|t| t.grid_pos.map(|(_, y)| y + 20)))
+                            .chain(
+                                sfc.transitions
+                                    .iter()
+                                    .filter_map(|t| t.grid_pos.map(|(_, y)| y + 20)),
+                            )
                             .max()
                             .unwrap_or(60);
                         let base_x = 100;
@@ -5138,16 +5404,16 @@ impl FerriteStudioApp {
                             kind: StepKind::Normal,
                             actions: vec![],
                             grid_pos: Some((base_x, base_y + 40)),
-                    ..Default::default()
-                });
+                            ..Default::default()
+                        });
                         created_steps.push(SfcStep {
                             id: s2_id.clone(),
                             name: s2_name,
                             kind: StepKind::Normal,
                             actions: vec![],
                             grid_pos: Some((base_x + 160, base_y + 40)),
-                    ..Default::default()
-                });
+                            ..Default::default()
+                        });
                         source_steps.push(s1_id);
                         source_steps.push(s2_id);
 
@@ -5161,7 +5427,8 @@ impl FerriteStudioApp {
                         name: dest_name,
                         kind: StepKind::Normal,
                         actions: vec![],
-                        grid_pos: Some(dest_pos), ..Default::default()
+                        grid_pos: Some(dest_pos),
+                        ..Default::default()
                     });
 
                     // For each source step, create an individual transition converging into dest_step
@@ -5195,7 +5462,8 @@ impl FerriteStudioApp {
                         pou_name.clone(),
                         crate::canvas_sfc::SfcElementKey::Step(dest_id.clone()),
                     ));
-                    self.sfc_selected_elements = vec![crate::canvas_sfc::SfcElementKey::Step(dest_id)];
+                    self.sfc_selected_elements =
+                        vec![crate::canvas_sfc::SfcElementKey::Step(dest_id)];
 
                     self.track_history();
                     self.modified = true;
@@ -5538,7 +5806,8 @@ impl FerriteStudioApp {
                         name: step_name,
                         kind: StepKind::Normal,
                         actions: Vec::new(),
-                        grid_pos: pos, ..Default::default()
+                        grid_pos: pos,
+                        ..Default::default()
                     });
                     self.track_history();
                     self.modified = true;
@@ -5598,7 +5867,11 @@ impl FerriteStudioApp {
                             _ => {
                                 if !self.force_analog_input.trim().is_empty() {
                                     let val_str = self.force_analog_input.clone();
-                                    let parsed_val = IecValue::parse_literal(val_str.trim(), Some(tag.data_type)).ok();
+                                    let parsed_val = IecValue::parse_literal(
+                                        val_str.trim(),
+                                        Some(tag.data_type),
+                                    )
+                                    .ok();
                                     if let Some(val) = parsed_val {
                                         let _ = rt.force(&tag_name, val);
                                         self.status_banner = format!(
@@ -5625,6 +5898,8 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::FbdAddBlock(pou_name, kind, grid_pos) => {
+                let resolved_pos =
+                    grid_pos.or_else(|| Some(self.fbd_next_block_position(&pou_name)));
                 if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name) {
                     let mut next = 1;
                     while fbd.blocks.iter().any(|b| b.id == format!("Block_{next}")) {
@@ -5657,12 +5932,13 @@ impl FerriteStudioApp {
                     }
 
                     fbd.blocks.push(FbdBlock {
-                        id: block_id,
+                        id: block_id.clone(),
                         kind,
                         inputs,
                         outputs: HashMap::new(),
-                        grid_pos,
+                        grid_pos: resolved_pos,
                     });
+                    self.fbd_selected_block = Some(block_id);
                     self.track_history();
                     self.modified = self.is_dirty();
                     self.recompile_runtime();
@@ -5676,25 +5952,16 @@ impl FerriteStudioApp {
                     delete_fbd_block(fbd, b_idx);
                     if self.fbd_selected_block.as_deref() == Some(block_id.as_str()) {
                         self.fbd_selected_block = None;
-                        self.fbd_selected_block_idx = None;
                     }
+                    self.fbd_inline_editing = false;
                     self.track_history();
                     self.modified = true;
                     self.recompile_runtime();
                 }
                 Task::none()
             }
-            #[allow(deprecated)] // boundary shim: removed in Task 8
-            Message::FbdRemoveBlockByIndex(pou_name, b_idx) => {
-                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(&pou_name)
-                    && let Some(blk) = fbd.blocks.get(b_idx)
-                {
-                    let id = blk.id.clone();
-                    return self.update(Message::FbdRemoveBlock(pou_name, id));
-                }
-                Task::none()
-            }
             Message::FbdInputSourceChanged(pou_name, block_id, pin, val_str) => {
+                self.fbd_inline_editing = false;
                 if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name) {
                     let is_numeric = val_str.trim().parse::<f64>().is_ok();
                     let is_direct_addr = val_str.trim().starts_with('%');
@@ -5714,6 +5981,7 @@ impl FerriteStudioApp {
 
                     if let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == block_id) {
                         blk.inputs.insert(pin, new_src);
+                        self.fbd_selected_block = Some(block_id);
                         self.track_history();
                         self.modified = true;
                         self.recompile_runtime();
@@ -5721,17 +5989,8 @@ impl FerriteStudioApp {
                 }
                 Task::none()
             }
-            #[allow(deprecated)] // boundary shim: removed in Task 8
-            Message::FbdInputSourceChangedByIndex(pou_name, b_idx, pin, val_str) => {
-                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(&pou_name)
-                    && let Some(blk) = fbd.blocks.get(b_idx)
-                {
-                    let id = blk.id.clone();
-                    return self.update(Message::FbdInputSourceChanged(pou_name, id, pin, val_str));
-                }
-                Task::none()
-            }
             Message::FbdOutputTargetChanged(pou_name, block_id, pin, target_str) => {
+                self.fbd_inline_editing = false;
                 if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
                     && let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == block_id)
                 {
@@ -5740,19 +5999,10 @@ impl FerriteStudioApp {
                     } else {
                         blk.outputs.insert(pin, target_str.trim().to_string());
                     }
+                    self.fbd_selected_block = Some(block_id);
                     self.track_history();
                     self.modified = true;
                     self.recompile_runtime();
-                }
-                Task::none()
-            }
-            #[allow(deprecated)] // boundary shim: removed in Task 8
-            Message::FbdOutputTargetChangedByIndex(pou_name, b_idx, pin, target_str) => {
-                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(&pou_name)
-                    && let Some(blk) = fbd.blocks.get(b_idx)
-                {
-                    let id = blk.id.clone();
-                    return self.update(Message::FbdOutputTargetChanged(pou_name, id, pin, target_str));
                 }
                 Task::none()
             }
@@ -5815,8 +6065,30 @@ impl FerriteStudioApp {
                 Task::none()
             }
             Message::FbdBlockIdChanged(pou_name, old_id, new_id) => {
+                self.fbd_inline_editing = false;
                 if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name) {
                     let trimmed = new_id.trim().to_string();
+                    if trimmed.is_empty() {
+                        self.status_banner = self
+                            .ui_lang
+                            .tr(
+                                "Block ID cannot be empty.",
+                                "L'ID du bloc ne peut pas être vide.",
+                            )
+                            .to_string();
+                        return Task::none();
+                    }
+                    if trimmed != old_id && fbd.blocks.iter().any(|b| b.id == trimmed) {
+                        self.status_banner = format!(
+                            "{} '{trimmed}'",
+                            self.ui_lang.tr(
+                                "Duplicate block ID rejected:",
+                                "ID de bloc en double refusé :"
+                            )
+                        );
+                        return Task::none();
+                    }
+
                     let had_matching_instance = fbd
                         .blocks
                         .iter()
@@ -5825,12 +6097,7 @@ impl FerriteStudioApp {
                             matches!(&blk.kind, FbdBlockKind::StandardFb { instance, .. } if instance == &old_id)
                         });
 
-                    // Empty or duplicate block ids are refused: no rename, no recompile.
-                    if !trimmed.is_empty()
-                        && trimmed != old_id
-                        && !fbd.blocks.iter().any(|b| b.id == trimmed)
-                        && fbd.rename_block(&old_id, &trimmed).is_ok()
-                    {
+                    if trimmed != old_id && fbd.rename_block(&old_id, &trimmed).is_ok() {
                         if had_matching_instance {
                             if let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == trimmed)
                                 && let FbdBlockKind::StandardFb { instance, .. } = &mut blk.kind
@@ -5847,23 +6114,11 @@ impl FerriteStudioApp {
                                 fb.name = trimmed.clone();
                             }
                         }
-                        if self.fbd_selected_block.as_deref() == Some(old_id.as_str()) {
-                            self.fbd_selected_block = Some(trimmed.clone());
-                        }
+                        self.fbd_selected_block = Some(trimmed);
                         self.track_history();
                         self.modified = true;
                         self.recompile_runtime();
                     }
-                }
-                Task::none()
-            }
-            #[allow(deprecated)] // boundary shim: removed in Task 8
-            Message::FbdBlockIdChangedByIndex(pou_name, b_idx, new_id) => {
-                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get(&pou_name)
-                    && let Some(blk) = fbd.blocks.get(b_idx)
-                {
-                    let old_id = blk.id.clone();
-                    return self.update(Message::FbdBlockIdChanged(pou_name, old_id, new_id));
                 }
                 Task::none()
             }
@@ -5881,17 +6136,24 @@ impl FerriteStudioApp {
             Message::FbdAddInputPin(pou_name, block_id) => {
                 if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
                     && let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == block_id)
+                    && crate::fbd_geometry::is_variadic(&blk.kind)
                 {
                     let mut n = blk.inputs.len() + 1;
                     while blk.inputs.contains_key(&format!("IN{n}")) {
                         n += 1;
                     }
+                    let expr = match blk.kind {
+                        FbdBlockKind::Add | FbdBlockKind::Mul => "0",
+                        _ => "TRUE",
+                    };
                     blk.inputs.insert(
                         format!("IN{n}"),
                         FbdInputSource::Value {
-                            expr: "TRUE".to_string(),
+                            expr: expr.to_string(),
                         },
                     );
+                    self.fbd_selected_block = Some(block_id);
+                    self.fbd_inline_editing = true;
                     self.track_history();
                     self.modified = true;
                     self.recompile_runtime();
@@ -5901,6 +6163,7 @@ impl FerriteStudioApp {
             Message::FbdRemoveInputPin(pou_name, block_id, pin) => {
                 if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
                     && let Some(b_idx) = fbd.blocks.iter().position(|b| b.id == block_id)
+                    && crate::fbd_geometry::is_variadic(&fbd.blocks[b_idx].kind)
                     && fbd.blocks[b_idx].inputs.len() > 2
                     && fbd.blocks[b_idx].inputs.contains_key(&pin)
                 {
@@ -5909,7 +6172,10 @@ impl FerriteStudioApp {
                     // in the same mutation, keeping the program compilable.
                     for blk in &mut fbd.blocks {
                         for src in blk.inputs.values_mut() {
-                            if let FbdInputSource::Link { from_block, from_pin } = src
+                            if let FbdInputSource::Link {
+                                from_block,
+                                from_pin,
+                            } = src
                                 && *from_block == block_id
                                 && *from_pin == pin
                             {
@@ -5959,6 +6225,7 @@ impl FerriteStudioApp {
                 {
                     let old_kind = fbd.blocks[b_idx].kind.clone();
                     let old_inputs = fbd.blocks[b_idx].inputs.clone();
+                    let old_outputs = fbd.blocks[b_idx].outputs.clone();
                     let reset_to_defaults = matches!(
                         &new_kind,
                         FbdBlockKind::StandardFb { .. } | FbdBlockKind::Composite { .. }
@@ -5976,18 +6243,18 @@ impl FerriteStudioApp {
                     }
 
                     let (resolved_kind, inputs, fb_to_register) = if reset_to_defaults {
-                        // StandardFb / Composite: reset to that kind's creation defaults.
                         let mut next = 1;
                         while fbd.blocks.iter().any(|b| b.id == format!("Block_{next}")) {
                             next += 1;
                         }
-                        let (resolved, _block_id, inputs, fb_to_register) = Self::fbd_resolve_new_kind(
-                            fbd,
-                            &self.project.fb_instances.instances,
-                            new_kind,
-                            &format!("Block_{next}"),
-                            Some(block_id.as_str()),
-                        );
+                        let (resolved, _block_id, inputs, fb_to_register) =
+                            Self::fbd_resolve_new_kind(
+                                fbd,
+                                &self.project.fb_instances.instances,
+                                new_kind,
+                                &format!("Block_{next}"),
+                                Some(block_id.as_str()),
+                            );
                         (resolved, inputs, fb_to_register)
                     } else {
                         (
@@ -6001,12 +6268,10 @@ impl FerriteStudioApp {
                     // `rename_block` rewires all downstream link references.
                     if let FbdBlockKind::StandardFb { instance, .. } = &resolved_kind
                         && instance != &block_id
+                        && (fbd.blocks.iter().any(|b| b.id == *instance)
+                            || fbd.rename_block(&block_id, instance).is_err())
                     {
-                        if fbd.blocks.iter().any(|b| b.id == *instance)
-                            || fbd.rename_block(&block_id, instance).is_err()
-                        {
-                            return Task::none();
-                        }
+                        return Task::none();
                     }
 
                     if let Some((inst_name, fb_kind)) = fb_to_register
@@ -6027,21 +6292,51 @@ impl FerriteStudioApp {
                         FbdBlockKind::StandardFb { instance, .. } => instance.clone(),
                         _ => block_id.clone(),
                     };
+
+                    let dropped_inputs: std::collections::HashSet<String> = old_inputs
+                        .keys()
+                        .filter(|pin| !inputs.contains_key(*pin))
+                        .cloned()
+                        .collect();
+                    let dropped_count = dropped_inputs.len()
+                        + if reset_to_defaults {
+                            old_outputs.len()
+                        } else {
+                            0
+                        };
+
+                    if !dropped_inputs.is_empty() {
+                        for blk in &mut fbd.blocks {
+                            for src in blk.inputs.values_mut() {
+                                if let FbdInputSource::Link {
+                                    from_block,
+                                    from_pin,
+                                } = src
+                                    && (*from_block == block_id || *from_block == new_id)
+                                    && dropped_inputs.contains(from_pin)
+                                {
+                                    *src = FbdInputSource::Value {
+                                        expr: "0".to_string(),
+                                    };
+                                }
+                            }
+                        }
+                    }
+
                     if let Some(blk) = fbd.blocks.iter_mut().find(|b| b.id == new_id) {
-                        blk.kind = resolved_kind.clone();
+                        blk.kind = resolved_kind;
                         blk.inputs = inputs;
                         if reset_to_defaults {
                             blk.outputs = HashMap::new();
                         }
                     }
-                    if new_id != block_id
-                        && self.fbd_selected_block.as_deref() == Some(block_id.as_str())
-                    {
-                        self.fbd_selected_block = Some(new_id);
-                    }
+                    self.fbd_selected_block = Some(new_id);
                     self.track_history();
                     self.modified = true;
                     self.recompile_runtime();
+                    if dropped_count > 0 && !self.status_banner.starts_with("Compilation error") {
+                        self.status_banner = format!("{dropped_count} pins reset");
+                    }
                 }
                 Task::none()
             }
@@ -6053,29 +6348,7 @@ impl FerriteStudioApp {
                 self.fbd_viewport.insert(pou_name, (pan, zoom, size));
                 Task::none()
             }
-            Message::FbdMoveBlockUp(pou_name, b_idx) => {
-                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
-                    && fbd.move_block_up(b_idx)
-                {
-                    self.track_history();
-                    self.modified = true;
-                    self.recompile_runtime();
-                }
-                Task::none()
-            }
-            Message::FbdMoveBlockDown(pou_name, b_idx) => {
-                if let Some(PouSource::Fbd(fbd)) = self.project.pous.get_mut(&pou_name)
-                    && fbd.move_block_down(b_idx)
-                {
-                    self.track_history();
-                    self.modified = true;
-                    self.recompile_runtime();
-                }
-                Task::none()
-            }
-            Message::DigitalTwinToggleElement(id) => {
-                self.update(Message::TwinRuntimePress(id))
-            }
+            Message::DigitalTwinToggleElement(id) => self.update(Message::TwinRuntimePress(id)),
             Message::OpenDigitalTwinWindow => {
                 if self.digital_twin_window_id.is_none() {
                     let (id, open_task) = iced::window::open(iced::window::Settings {
@@ -6175,7 +6448,8 @@ impl FerriteStudioApp {
                     let offset = (self.digital_twin_workspace.elements.len() % 8) as f32 * 24.0;
                     self.digital_twin_workspace
                         .spawn_element_at(kind, Some((160.0 + offset, 140.0 + offset)));
-                    self.digital_twin_workspace.sync_color_picker_from_selected();
+                    self.digital_twin_workspace
+                        .sync_color_picker_from_selected();
                     self.modified = true;
                 }
                 Task::none()
@@ -6216,9 +6490,9 @@ impl FerriteStudioApp {
                             if self.digital_twin_workspace.inspector_open_for.is_some() {
                                 self.digital_twin_workspace.inspector_open_for = Some(id);
                             }
-                            self.digital_twin_workspace.context_menu =
-                                Some(((mx, my).into(), id));
-                            self.digital_twin_workspace.sync_color_picker_from_selected();
+                            self.digital_twin_workspace.context_menu = Some(((mx, my).into(), id));
+                            self.digital_twin_workspace
+                                .sync_color_picker_from_selected();
                             return Task::none();
                         }
                     }
@@ -6284,7 +6558,8 @@ impl FerriteStudioApp {
                         self.digital_twin_workspace.drag_target_id = Some(id);
                         self.digital_twin_workspace.drag_start_mouse = Some((mx, my).into());
                         self.digital_twin_workspace.drag_start_elem_pos = pos;
-                        self.digital_twin_workspace.sync_color_picker_from_selected();
+                        self.digital_twin_workspace
+                            .sync_color_picker_from_selected();
                         return Task::none();
                     }
                 }
@@ -6404,9 +6679,7 @@ impl FerriteStudioApp {
             }
             Message::TwinCanvasMouseUp => {
                 if self.digital_twin_workspace.mode == TwinMode::Runtime {
-                    if let Some(held_id) =
-                        self.digital_twin_workspace.active_momentary_id.take()
-                    {
+                    if let Some(held_id) = self.digital_twin_workspace.active_momentary_id.take() {
                         self.release_twin_momentary_button(held_id);
                     }
                 } else {
@@ -6426,7 +6699,8 @@ impl FerriteStudioApp {
                     "parameters" => {
                         self.digital_twin_workspace.selected_id = Some(id);
                         self.digital_twin_workspace.inspector_open_for = Some(id);
-                        self.digital_twin_workspace.sync_color_picker_from_selected();
+                        self.digital_twin_workspace
+                            .sync_color_picker_from_selected();
                     }
                     "duplicate" => {
                         if let Some(orig) = self
@@ -6459,7 +6733,8 @@ impl FerriteStudioApp {
                             if self.digital_twin_workspace.inspector_open_for.is_some() {
                                 self.digital_twin_workspace.inspector_open_for = Some(new_id);
                             }
-                            self.digital_twin_workspace.sync_color_picker_from_selected();
+                            self.digital_twin_workspace
+                                .sync_color_picker_from_selected();
                             self.modified = true;
                         }
                     }
@@ -6543,7 +6818,8 @@ impl FerriteStudioApp {
                 self.digital_twin_workspace.selected_id = Some(id);
                 self.digital_twin_workspace.inspector_open_for = Some(id);
                 self.digital_twin_workspace.context_menu = None;
-                self.digital_twin_workspace.sync_color_picker_from_selected();
+                self.digital_twin_workspace
+                    .sync_color_picker_from_selected();
                 Task::none()
             }
             Message::TwinCloseInspector => {
@@ -6691,7 +6967,8 @@ impl FerriteStudioApp {
                     }
                     self.modified = true;
                 }
-                self.digital_twin_workspace.sync_color_picker_from_selected();
+                self.digital_twin_workspace
+                    .sync_color_picker_from_selected();
                 Task::none()
             }
             Message::TwinSetVariable(id, var_id) => {
@@ -6722,7 +6999,8 @@ impl FerriteStudioApp {
             }
             Message::TwinSelectColorTarget(target) => {
                 self.digital_twin_workspace.active_color_target = target;
-                self.digital_twin_workspace.sync_color_picker_from_selected();
+                self.digital_twin_workspace
+                    .sync_color_picker_from_selected();
                 Task::none()
             }
             Message::TwinPickColorSv(s, v) => {
@@ -6930,21 +7208,15 @@ impl FerriteStudioApp {
         is_active_selection: bool,
         on_press: Option<Message>,
     ) -> Element<'a, Message> {
-        let mut item_row = row![
-            text(label).size(12).color(if on_press.is_some() {
-                StudioTheme::TEXT_PRIMARY
-            } else {
-                StudioTheme::TEXT_MUTED
-            }),
-        ]
+        let mut item_row = row![text(label).size(12).color(if on_press.is_some() {
+            StudioTheme::TEXT_PRIMARY
+        } else {
+            StudioTheme::TEXT_MUTED
+        }),]
         .align_y(Alignment::Center);
 
         if is_active_selection {
-            item_row = item_row.push(
-                text(" ✓")
-                    .size(11)
-                    .color(StudioTheme::ACCENT_CYAN),
-            );
+            item_row = item_row.push(text(" ✓").size(11).color(StudioTheme::ACCENT_CYAN));
         }
 
         if let Some(sc) = shortcut {
@@ -7340,9 +7612,12 @@ impl FerriteStudioApp {
                         .wrapping(iced::widget::text::Wrapping::Word),
                     row![
                         button(
-                            text(crate::tr!("dialog.confirm_close.save_and_exit", self.ui_lang))
-                                .size(12)
-                                .align_x(iced::alignment::Horizontal::Center)
+                            text(crate::tr!(
+                                "dialog.confirm_close.save_and_exit",
+                                self.ui_lang
+                            ))
+                            .size(12)
+                            .align_x(iced::alignment::Horizontal::Center)
                         )
                         .on_press(Message::ConfirmCloseSaveAndExit)
                         .style(StudioTheme::primary_button)
@@ -7548,17 +7823,17 @@ impl FerriteStudioApp {
             let x_offset = menu_dropdown_x_offset(active, self.ui_lang);
 
             let mut menu_content = row![self.view_active_menu()].spacing(2);
-            if active == ActiveMenu::Options && self.active_submenu == Some(ActiveSubmenu::Language) {
+            if active == ActiveMenu::Options && self.active_submenu == Some(ActiveSubmenu::Language)
+            {
                 menu_content = menu_content.push(self.view_language_submenu());
             }
 
-            let menu_card = container(menu_content)
-                .padding(iced::Padding {
-                    top: 35.0,
-                    left: x_offset,
-                    right: 0.0,
-                    bottom: 0.0,
-                });
+            let menu_card = container(menu_content).padding(iced::Padding {
+                top: 35.0,
+                left: x_offset,
+                right: 0.0,
+                bottom: 0.0,
+            });
 
             stack![base_content, backdrop, menu_card].into()
         } else {
@@ -7657,17 +7932,15 @@ impl FerriteStudioApp {
             .style(StudioTheme::secondary_button)
             .padding([8, 16]);
 
-        let reset_warm_btn =
-            button(text(crate::tr!("toolbar.reset_warm", self.ui_lang)).size(12))
-                .on_press(Message::ResetSimWarm)
-                .style(StudioTheme::secondary_button)
-                .padding([8, 16]);
+        let reset_warm_btn = button(text(crate::tr!("toolbar.reset_warm", self.ui_lang)).size(12))
+            .on_press(Message::ResetSimWarm)
+            .style(StudioTheme::secondary_button)
+            .padding([8, 16]);
 
-        let reset_cold_btn =
-            button(text(crate::tr!("toolbar.reset_cold", self.ui_lang)).size(12))
-                .on_press(Message::ResetSimCold)
-                .style(StudioTheme::ghost_button)
-                .padding([8, 16]);
+        let reset_cold_btn = button(text(crate::tr!("toolbar.reset_cold", self.ui_lang)).size(12))
+            .on_press(Message::ResetSimCold)
+            .style(StudioTheme::ghost_button)
+            .padding([8, 16]);
 
         let speed_group = column![
             text(crate::tr!("toolbar.speed", self.ui_lang))
@@ -7810,20 +8083,13 @@ impl FerriteStudioApp {
         ))
         .width(Length::Fill);
 
-        let trailing_controls = row![
-            lang_btn,
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center);
+        let trailing_controls = row![lang_btn,].spacing(6).align_y(Alignment::Center);
 
         container(
-            row![
-                scrollable_tools,
-                trailing_controls,
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .width(Length::Fill),
+            row![scrollable_tools, trailing_controls,]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .width(Length::Fill),
         )
         .padding(iced::Padding {
             top: 6.0,
@@ -8016,7 +8282,8 @@ impl FerriteStudioApp {
                     iced::Font::DEFAULT
                 };
 
-                let is_dragging = self.dragging_pou.as_ref() == Some(&p.name) && self.drag_hover_pou.is_some();
+                let is_dragging =
+                    self.dragging_pou.as_ref() == Some(&p.name) && self.drag_hover_pou.is_some();
                 let is_hovered = self.drag_hover_pou.as_ref() == Some(&p.name);
 
                 let pou_card = container(
@@ -8419,14 +8686,14 @@ impl FerriteStudioApp {
                                 .size(10.5)
                                 .shaping(iced::widget::text::Shaping::Advanced),
                         )
-                            .on_press(Message::ToggleForceTag(t_name))
-                            .style(if is_forced {
-                                StudioTheme::danger_button
-                            } else {
-                                StudioTheme::secondary_button
-                            })
-                            .padding([2, 6])
-                            .into()
+                        .on_press(Message::ToggleForceTag(t_name))
+                        .style(if is_forced {
+                            StudioTheme::danger_button
+                        } else {
+                            StudioTheme::secondary_button
+                        })
+                        .padding([2, 6])
+                        .into()
                     }
                 };
 
@@ -8481,14 +8748,19 @@ impl FerriteStudioApp {
                                 .ld_selected
                                 .as_ref()
                                 .and_then(|(p, k)| if p == name { Some(k) } else { None });
-                            let sel_elems = if self.ld_selected.as_ref().map(|(p, _)| p.as_str()) == Some(name)
+                            let sel_elems = if self.ld_selected.as_ref().map(|(p, _)| p.as_str())
+                                == Some(name)
                                 || !self.ld_selected_elements.is_empty()
                             {
                                 &self.ld_selected_elements
                             } else {
                                 &[][..]
                             };
-                            let pan = self.ld_canvas_pan.get(name).copied().unwrap_or(Vector::new(0.0, 0.0));
+                            let pan = self
+                                .ld_canvas_pan
+                                .get(name)
+                                .copied()
+                                .unwrap_or(Vector::new(0.0, 0.0));
                             let zoom = self.ld_canvas_zoom.get(name).copied().unwrap_or(1.0);
                             render_ld_editor(
                                 ld,
@@ -8540,9 +8812,12 @@ impl FerriteStudioApp {
                                 container(text("ST source loading...").size(13)).into()
                             }
                         }
-                        PouSource::Fbd(fbd) => {
-                            render_fbd_editor(fbd, self.runtime.as_ref(), self.ui_lang, self.fbd_selected_block_idx, self.fbd_drag_hover_block)
-                        }
+                        PouSource::Fbd(fbd) => render_fbd_editor(
+                            fbd,
+                            self.runtime.as_ref(),
+                            self.ui_lang,
+                            self.fbd_selected_block.as_deref(),
+                        ),
                     }
                 } else {
                     container(text("POU not found").size(14)).into()
@@ -8772,19 +9047,16 @@ impl FerriteStudioApp {
                     .map(|rt| rt.breakpoints.len())
                     .unwrap_or(0);
 
-                let count_badge = container(
-                    text(format!("{bp_count}"))
-                        .size(10)
-                        .color(if bp_count > 0 {
-                            StudioTheme::ACCENT_CYAN
-                        } else {
-                            StudioTheme::TEXT_MUTED
-                        }),
-                )
-                .padding([1, 5])
-                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
-                    0.220, 0.741, 0.973, 0.15,
-                )));
+                let count_badge =
+                    container(text(format!("{bp_count}")).size(10).color(if bp_count > 0 {
+                        StudioTheme::ACCENT_CYAN
+                    } else {
+                        StudioTheme::TEXT_MUTED
+                    }))
+                    .padding([1, 5])
+                    .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                        0.220, 0.741, 0.973, 0.15,
+                    )));
 
                 let mut header_row: iced::widget::Row<'_, Message> = row![
                     text(self.ui_lang.tr(
@@ -8887,15 +9159,15 @@ impl FerriteStudioApp {
                     BreakpointMode::Pou => self.ui_lang.tr("POU:", "POU :"),
                 };
                 let input_placeholder_str = match self.bp_mode {
-                    BreakpointMode::ScanCount => {
-                        self.ui_lang.tr("e.g. 500 (Scan count)", "ex. 500 (N° cycle)")
-                    }
-                    BreakpointMode::SymbolTrue => {
-                        self.ui_lang.tr("e.g. EStop_OK (Boolean tag)", "ex. EStop_OK (Tag booléen)")
-                    }
-                    BreakpointMode::Pou => {
-                        self.ui_lang.tr("e.g. main_safety (POU ID)", "ex. main_safety (ID POU)")
-                    }
+                    BreakpointMode::ScanCount => self
+                        .ui_lang
+                        .tr("e.g. 500 (Scan count)", "ex. 500 (N° cycle)"),
+                    BreakpointMode::SymbolTrue => self
+                        .ui_lang
+                        .tr("e.g. EStop_OK (Boolean tag)", "ex. EStop_OK (Tag booléen)"),
+                    BreakpointMode::Pou => self
+                        .ui_lang
+                        .tr("e.g. main_safety (POU ID)", "ex. main_safety (ID POU)"),
                 };
 
                 let can_add = self.parse_breakpoint_input();
@@ -9281,7 +9553,10 @@ impl FerriteStudioApp {
             }
             BottomDockTab::Trace => {
                 let tags_input = text_input(
-                    self.ui_lang.tr("Tags (e.g. Tank_Level, Motor_Speed)", "Variables (ex: Tank_Level, Motor_Speed)"),
+                    self.ui_lang.tr(
+                        "Tags (e.g. Tank_Level, Motor_Speed)",
+                        "Variables (ex: Tank_Level, Motor_Speed)",
+                    ),
                     &self.trace_tags_input,
                 )
                 .on_input(Message::TraceTagsInputChanged)
@@ -9289,14 +9564,11 @@ impl FerriteStudioApp {
                 .padding([4, 8])
                 .style(StudioTheme::styled_input);
 
-                let cap_input = text_input(
-                    "100",
-                    &self.trace_capacity_input,
-                )
-                .on_input(Message::TraceCapacityInputChanged)
-                .width(Length::Fixed(70.0))
-                .padding([4, 8])
-                .style(StudioTheme::styled_input);
+                let cap_input = text_input("100", &self.trace_capacity_input)
+                    .on_input(Message::TraceCapacityInputChanged)
+                    .width(Length::Fixed(70.0))
+                    .padding([4, 8])
+                    .style(StudioTheme::styled_input);
 
                 let toggle_btn = if self.trace_active {
                     button(text(self.ui_lang.tr("Stop Trace", "Arrêter Trace")).size(11))
@@ -9310,18 +9582,28 @@ impl FerriteStudioApp {
                         .padding([4, 10])
                 };
 
-                let drain_btn = button(text(self.ui_lang.tr("Drain Samples", "Récupérer Échantillons")).size(11))
-                    .on_press(Message::TraceDrain)
-                    .style(StudioTheme::secondary_button)
-                    .padding([4, 10]);
+                let drain_btn = button(
+                    text(self.ui_lang.tr("Drain Samples", "Récupérer Échantillons")).size(11),
+                )
+                .on_press(Message::TraceDrain)
+                .style(StudioTheme::secondary_button)
+                .padding([4, 10]);
 
                 let clear_btn = button(text(self.ui_lang.tr("Clear", "Effacer")).size(11))
                     .on_press(Message::TraceClear)
                     .style(StudioTheme::secondary_button)
                     .padding([4, 10]);
 
-                let buffered_in_rt = self.runtime.as_ref().map(|r| r.trace_buffer.samples.len()).unwrap_or(0);
-                let rt_cap = self.runtime.as_ref().map(|r| r.trace_buffer.capacity).unwrap_or(0);
+                let buffered_in_rt = self
+                    .runtime
+                    .as_ref()
+                    .map(|r| r.trace_buffer.samples.len())
+                    .unwrap_or(0);
+                let rt_cap = self
+                    .runtime
+                    .as_ref()
+                    .map(|r| r.trace_buffer.capacity)
+                    .unwrap_or(0);
 
                 let status_text = text(format!(
                     "{} {} | RT: {}/{}",
@@ -9335,7 +9617,9 @@ impl FerriteStudioApp {
 
                 let toolbar = row![
                     tags_input,
-                    text(self.ui_lang.tr("Cap:", "Cap :")).size(11).color(StudioTheme::TEXT_SECONDARY),
+                    text(self.ui_lang.tr("Cap:", "Cap :"))
+                        .size(11)
+                        .color(StudioTheme::TEXT_SECONDARY),
                     cap_input,
                     toggle_btn,
                     drain_btn,
@@ -9362,7 +9646,7 @@ impl FerriteStudioApp {
                             .color(StudioTheme::TEXT_MUTED)
                             .width(Length::Fill),
                     ]
-                    .spacing(12)
+                    .spacing(12),
                 );
 
                 if self.trace_drained_samples.is_empty() {
@@ -9408,9 +9692,7 @@ impl FerriteStudioApp {
                                 .size(11)
                                 .color(StudioTheme::TEXT_SECONDARY)
                                 .width(Length::Fixed(100.0)),
-                            text(values_str)
-                                .size(11)
-                                .width(Length::Fill),
+                            text(values_str).size(11).width(Length::Fill),
                         ]
                         .spacing(12)
                         .align_y(Alignment::Center);
@@ -9502,13 +9784,11 @@ mod fbd_editing_tests {
     }
 
     /// Builds a test app with a fresh FBD POU containing no blocks yet.
-    fn fbd_edit_app() -> (FerriteStudioApp, String) {
+    fn fbd_edit_app() -> Result<(FerriteStudioApp, String), Box<dyn std::error::Error>> {
         let mut app = FerriteStudioApp::new_test_app();
         let pou = "fbd_edit_tests".to_string();
-        app.project
-            .add_pou(&pou, LanguageKind::Fbd)
-            .expect("add fbd pou for editing tests");
-        (app, pou)
+        app.project.add_pou(&pou, LanguageKind::Fbd)?;
+        Ok((app, pou))
     }
 
     fn push_block(
@@ -9527,8 +9807,8 @@ mod fbd_editing_tests {
     }
 
     #[test]
-    fn test_fbd_duplicate_block_id_is_refused() {
-        let (mut app, pou) = fbd_edit_app();
+    fn test_fbd_duplicate_block_id_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut app, pou) = fbd_edit_app()?;
         {
             let Some(PouSource::Fbd(fbd)) = app.project.pous.get_mut(&pou) else {
                 panic!("Expected FBD POU");
@@ -9552,11 +9832,13 @@ mod fbd_editing_tests {
         };
         let ids: Vec<&str> = fbd.blocks.iter().map(|b| b.id.as_str()).collect();
         assert_eq!(ids, vec!["B1", "B2"], "both block ids must be unchanged");
+        Ok(())
     }
 
     #[test]
-    fn test_fbd_remove_input_pin_rewrites_inbound_links() {
-        let (mut app, pou) = fbd_edit_app();
+    fn test_fbd_remove_input_pin_rewrites_inbound_links() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (mut app, pou) = fbd_edit_app()?;
         {
             let Some(PouSource::Fbd(fbd)) = app.project.pous.get_mut(&pou) else {
                 panic!("Expected FBD POU");
@@ -9588,10 +9870,14 @@ mod fbd_editing_tests {
         let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou) else {
             panic!("Expected FBD POU");
         };
-        let a = fbd.blocks.iter().find(|b| b.id == "A").unwrap();
+        let Some(a) = fbd.blocks.iter().find(|b| b.id == "A") else {
+            panic!("Expected block A");
+        };
         assert!(!a.inputs.contains_key("IN3"), "IN3 must be removed from A");
 
-        let c = fbd.blocks.iter().find(|b| b.id == "C").unwrap();
+        let Some(c) = fbd.blocks.iter().find(|b| b.id == "C") else {
+            panic!("Expected block C");
+        };
         assert_eq!(
             c.inputs["IN2"],
             FbdInputSource::Value {
@@ -9602,11 +9888,13 @@ mod fbd_editing_tests {
 
         let tags = ferrite_core::TagTable::new();
         assert!(fbd.compile(&tags).is_ok(), "program must still compile");
+        Ok(())
     }
 
     #[test]
-    fn test_fbd_input_edit_recompiles_with_running_runtime() {
-        let (mut app, pou) = fbd_edit_app();
+    fn test_fbd_input_edit_recompiles_with_running_runtime()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut app, pou) = fbd_edit_app()?;
         {
             let Some(PouSource::Fbd(fbd)) = app.project.pous.get_mut(&pou) else {
                 panic!("Expected FBD POU");
@@ -9618,7 +9906,7 @@ mod fbd_editing_tests {
         }
 
         // Start the runtime so the edit goes through the online recompile path.
-        app.runtime = Some(PlcRuntime::from_project(&app.project).expect("build runtime"));
+        app.runtime = Some(PlcRuntime::from_project(&app.project)?);
 
         let _ = app.update(Message::FbdInputSourceChanged(
             pou.clone(),
@@ -9638,5 +9926,218 @@ mod fbd_editing_tests {
             "fresh compiled program must install cleanly, banner: {}",
             app.status_banner
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_fbd_kind_change_preserves_variadic_pins() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut app, pou) = fbd_edit_app()?;
+        {
+            let Some(PouSource::Fbd(fbd)) = app.project.pous.get_mut(&pou) else {
+                panic!("Expected FBD POU");
+            };
+            let mut ins = HashMap::new();
+            ins.insert("IN1".to_string(), val("TRUE"));
+            ins.insert("IN2".to_string(), val("FALSE"));
+            ins.insert("IN3".to_string(), val("TRUE"));
+            push_block(fbd, "A", FbdBlockKind::And, ins);
+        }
+
+        let _ = app.update(Message::FbdChangeKind(
+            pou.clone(),
+            "A".to_string(),
+            FbdBlockKind::Or,
+        ));
+
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou) else {
+            panic!("Expected FBD POU");
+        };
+        let Some(blk) = fbd.blocks.iter().find(|b| b.id == "A") else {
+            panic!("Expected block A");
+        };
+        assert_eq!(blk.kind, FbdBlockKind::Or);
+        assert_eq!(blk.inputs.len(), 3);
+        assert_eq!(blk.inputs["IN2"], val("FALSE"));
+        assert_eq!(blk.inputs["IN3"], val("TRUE"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_fbd_kind_change_to_ton_registers_instance_and_renames()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut app, pou) = fbd_edit_app()?;
+        {
+            let Some(PouSource::Fbd(fbd)) = app.project.pous.get_mut(&pou) else {
+                panic!("Expected FBD POU");
+            };
+            let mut ins = HashMap::new();
+            ins.insert("IN1".to_string(), val("TRUE"));
+            ins.insert("IN2".to_string(), val("TRUE"));
+            push_block(fbd, "Gate_1", FbdBlockKind::And, ins);
+        }
+
+        let _ = app.update(Message::FbdChangeKind(
+            pou.clone(),
+            "Gate_1".to_string(),
+            FbdBlockKind::StandardFb {
+                instance: "TON_1".to_string(),
+                fb_type: Some(StandardFbKind::Ton),
+            },
+        ));
+
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou) else {
+            panic!("Expected FBD POU");
+        };
+        assert_eq!(fbd.blocks[0].id, "TON_1");
+        assert!(fbd.blocks[0].inputs.contains_key("IN"));
+        assert!(fbd.blocks[0].inputs.contains_key("PT"));
+        assert!(
+            app.project
+                .fb_instances
+                .instances
+                .iter()
+                .any(|fb| fb.name == "TON_1" && fb.kind == StandardFbKind::Ton),
+            "TON_1 must be registered in project.fb_instances"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_fbd_kind_change_keeps_inbound_links_on_shared_pins()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut app, pou) = fbd_edit_app()?;
+        {
+            let Some(PouSource::Fbd(fbd)) = app.project.pous.get_mut(&pou) else {
+                panic!("Expected FBD POU");
+            };
+            let mut ins_a = HashMap::new();
+            ins_a.insert("IN1".to_string(), val("TRUE"));
+            ins_a.insert("IN2".to_string(), val("TRUE"));
+            push_block(fbd, "A", FbdBlockKind::And, ins_a);
+
+            let mut ins_c = HashMap::new();
+            ins_c.insert("IN1".to_string(), val("TRUE"));
+            ins_c.insert(
+                "IN2".to_string(),
+                FbdInputSource::Link {
+                    from_block: "A".to_string(),
+                    from_pin: "IN1".to_string(),
+                },
+            );
+            push_block(fbd, "C", FbdBlockKind::And, ins_c);
+        }
+
+        let _ = app.update(Message::FbdChangeKind(
+            pou.clone(),
+            "A".to_string(),
+            FbdBlockKind::Or,
+        ));
+
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou) else {
+            panic!("Expected FBD POU");
+        };
+        assert_eq!(
+            fbd.blocks[1].inputs["IN2"],
+            FbdInputSource::Link {
+                from_block: "A".to_string(),
+                from_pin: "IN1".to_string(),
+            }
+        );
+        let tags = ferrite_core::TagTable::new();
+        assert!(fbd.compile(&tags).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn test_fbd_paste_offsets_grid_pos() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut app, pou) = fbd_edit_app()?;
+        app.active_tab = WorkspaceTab::Pou(pou.clone());
+
+        let mut blk1 = FbdBlock {
+            id: "P1".to_string(),
+            kind: FbdBlockKind::And,
+            inputs: [
+                ("IN1".to_string(), val("TRUE")),
+                ("IN2".to_string(), val("TRUE")),
+            ]
+            .into_iter()
+            .collect(),
+            outputs: HashMap::new(),
+            grid_pos: Some([100, 120]),
+        };
+        let mut blk2 = blk1.clone();
+        blk2.id = "P2".to_string();
+        blk2.grid_pos = Some([320, 120]);
+        blk1.grid_pos = Some([100, 120]);
+
+        let payload =
+            crate::clipboard::serialize_clipboard(crate::clipboard::FerriteClipboardData::Fbd {
+                blocks: vec![blk1, blk2],
+            })?;
+        let _ = app.update(Message::ClipboardPasted(Some(payload)));
+
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou) else {
+            panic!("Expected FBD POU");
+        };
+        assert_eq!(fbd.blocks.len(), 2);
+        assert_eq!(fbd.blocks[0].grid_pos, Some([140, 160]));
+        assert_eq!(fbd.blocks[1].grid_pos, Some([360, 160]));
+        Ok(())
+    }
+
+    #[test]
+    fn test_fbd_delete_pressed_respects_inline_editing_flag()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut app, pou) = fbd_edit_app()?;
+        app.active_tab = WorkspaceTab::Pou(pou.clone());
+        {
+            let Some(PouSource::Fbd(fbd)) = app.project.pous.get_mut(&pou) else {
+                panic!("Expected FBD POU");
+            };
+            let mut ins = HashMap::new();
+            ins.insert("IN1".to_string(), val("TRUE"));
+            ins.insert("IN2".to_string(), val("TRUE"));
+            push_block(fbd, "B1", FbdBlockKind::And, ins);
+        }
+        app.fbd_selected_block = Some("B1".to_string());
+        app.fbd_inline_editing = true;
+
+        // While inline editing is active, DeletePressed must NOT remove the block.
+        let _ = app.update(Message::DeletePressed);
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou) else {
+            panic!("Expected FBD POU");
+        };
+        assert_eq!(fbd.blocks.len(), 1);
+
+        // Once inline editing closes, DeletePressed deletes the block once.
+        let _ = app.update(Message::FbdInlineEditingChanged(false));
+        let _ = app.update(Message::DeletePressed);
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou) else {
+            panic!("Expected FBD POU");
+        };
+        assert!(fbd.blocks.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_fbd_mirrored_viewport_places_new_block_near_center()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut app, pou) = fbd_edit_app()?;
+        let _ = app.update(Message::FbdViewportChanged(
+            pou.clone(),
+            Vector::new(-400.0, -300.0),
+            1.0,
+            iced::Size::new(1000.0, 600.0),
+        ));
+        let pos = app.fbd_next_block_position(&pou);
+        let _ = app.update(Message::FbdAddBlock(pou.clone(), FbdBlockKind::And, None));
+        let Some(PouSource::Fbd(fbd)) = app.project.pous.get(&pou) else {
+            panic!("Expected FBD POU");
+        };
+        assert_eq!(fbd.blocks[0].grid_pos, Some(pos));
+        // Mirrored world center is (900, 600); placed top-left should be near that center.
+        assert!(pos[0] >= 700 && pos[0] <= 1000);
+        assert!(pos[1] >= 500 && pos[1] <= 700);
+        Ok(())
     }
 }

@@ -113,6 +113,7 @@ pub fn default_output_pins(kind: &FbdBlockKind, composites: &[CompositeFbDef]) -
             ferrite_core::StandardFbKind::Ctud => {
                 vec!["QU".to_string(), "QD".to_string(), "CV".to_string()]
             }
+            ferrite_core::StandardFbKind::RampReal => vec!["OUT".to_string()],
             ferrite_core::StandardFbKind::ScaleLin
             | ferrite_core::StandardFbKind::P
             | ferrite_core::StandardFbKind::Pi
@@ -148,10 +149,31 @@ pub fn input_row_text(src: Option<&FbdInputSource>) -> String {
     }
 }
 
+/// Formats row text for painting: never truncates while editing, and truncates
+/// with an ellipsis when resting text would overflow `avail_width`.
+pub fn format_row_display(text: &str, avail_width: f32, is_editing: bool) -> String {
+    if is_editing {
+        return text.to_string();
+    }
+    let max_chars = ((avail_width - 8.0) / CHAR_W).floor().max(1.0) as usize;
+    let count = text.chars().count();
+    if count <= max_chars {
+        return text.to_string();
+    }
+    let keep = max_chars.saturating_sub(1);
+    let mut out: String = text.chars().take(keep).collect();
+    out.push('\u{2026}');
+    out
+}
+
 /// Width of the block: the longest row wins, clamped to
-/// [`MIN_BLOCK_W`]..[`MAX_BLOCK_W`]. `editing_text` lets the row being edited
-/// grow the block so the caret never clips.
-pub fn block_width(blk: &FbdBlock, composites: &[CompositeFbDef], editing_text: Option<&str>) -> f32 {
+/// [`MIN_BLOCK_W`]..[`MAX_BLOCK_W`] at rest. `editing_text` lets the row being
+/// edited grow past [`MAX_BLOCK_W`] so the caret never clips.
+pub fn block_width(
+    blk: &FbdBlock,
+    composites: &[CompositeFbDef],
+    editing_text: Option<&str>,
+) -> f32 {
     let mut longest = 0_usize;
     let id_len = blk.id.chars().count() + 2;
     longest = longest.max(id_len);
@@ -165,20 +187,37 @@ pub fn block_width(blk: &FbdBlock, composites: &[CompositeFbDef], editing_text: 
         longest = longest.max(pin.chars().count() + 2 + text.chars().count());
     }
     if let Some(extra) = editing_text {
-        longest = longest.max(extra.chars().count() + PIN_LABEL_W as usize + 4);
+        longest = longest.max(extra.chars().count() + 8);
     }
 
     let needed = longest as f32 * CHAR_W + PIN_LABEL_W + DELETE_W + ROW_INSET * 2.0 + 12.0;
-    needed.clamp(MIN_BLOCK_W, MAX_BLOCK_W)
+    if editing_text.is_some() {
+        needed.max(MIN_BLOCK_W)
+    } else {
+        needed.clamp(MIN_BLOCK_W, MAX_BLOCK_W)
+    }
 }
 
-/// Size of the whole block: header, one row per input and output, then the
-/// `+ pin` footer for variadic kinds.
+/// Size of the whole block: header, one row per input and output stacked
+/// vertically, then the `+ pin` footer for variadic kinds.
 pub fn block_size(blk: &FbdBlock, composites: &[CompositeFbDef]) -> Size {
-    let rows = input_pins(blk).len().max(output_pins(blk, composites).len());
-    let footer = if is_variadic(&blk.kind) { ADD_PIN_H } else { 0.0 };
+    block_size_with_edit(blk, composites, None)
+}
+
+/// Size of the block taking an active inline edit buffer into account.
+pub fn block_size_with_edit(
+    blk: &FbdBlock,
+    composites: &[CompositeFbDef],
+    editing_text: Option<&str>,
+) -> Size {
+    let rows = input_pins(blk).len() + output_pins(blk, composites).len();
+    let footer = if is_variadic(&blk.kind) {
+        ADD_PIN_H
+    } else {
+        0.0
+    };
     Size::new(
-        block_width(blk, composites, None),
+        block_width(blk, composites, editing_text),
         HEADER_H + rows as f32 * ROW_H + footer,
     )
 }
@@ -188,9 +227,23 @@ pub fn block_rect(blk: &FbdBlock, composites: &[CompositeFbDef], origin: Point) 
     Rectangle::new(origin, block_size(blk, composites))
 }
 
+/// Block body rectangle at `origin`, accounting for an active inline edit.
+pub fn block_rect_with_edit(
+    blk: &FbdBlock,
+    composites: &[CompositeFbDef],
+    origin: Point,
+    editing_text: Option<&str>,
+) -> Rectangle {
+    Rectangle::new(origin, block_size_with_edit(blk, composites, editing_text))
+}
+
 /// Whole header strip.
 pub fn header_rect(blk: &FbdBlock, composites: &[CompositeFbDef], origin: Point) -> Rectangle {
-    let width = block_size(blk, composites).width;
+    header_rect_with_width(origin, block_size(blk, composites).width)
+}
+
+/// Whole header strip for a precomputed `width`.
+pub fn header_rect_with_width(origin: Point, width: f32) -> Rectangle {
     Rectangle::new(origin, Size::new(width, HEADER_H))
 }
 
@@ -206,12 +259,25 @@ pub fn kind_badge_rect(blk: &FbdBlock, composites: &[CompositeFbDef], origin: Po
 
 /// Editable block-id field in the header, right of the kind badge.
 pub fn id_rect(blk: &FbdBlock, composites: &[CompositeFbDef], origin: Point) -> Rectangle {
-    let header = header_rect(blk, composites, origin);
+    id_rect_with_width(blk, composites, origin, block_size(blk, composites).width)
+}
+
+/// Editable block-id field in the header for a precomputed `width`.
+pub fn id_rect_with_width(
+    blk: &FbdBlock,
+    composites: &[CompositeFbDef],
+    origin: Point,
+    width: f32,
+) -> Rectangle {
+    let header = header_rect_with_width(origin, width);
     let badge = kind_badge_rect(blk, composites, origin);
     let x = badge.x + badge.width + 6.0;
     Rectangle::new(
         Point::new(x, origin.y + 3.0),
-        Size::new((header.x + header.width - x - ROW_INSET).max(0.0), HEADER_H - 6.0),
+        Size::new(
+            (header.x + header.width - x - ROW_INSET).max(0.0),
+            HEADER_H - 6.0,
+        ),
     )
 }
 
@@ -226,10 +292,7 @@ pub fn input_row_rect(origin: Point, width: f32, i: usize) -> Rectangle {
 /// Full-width hit strip of output row `i`, below every input row.
 pub fn output_row_rect(origin: Point, width: f32, inputs: usize, i: usize) -> Rectangle {
     Rectangle::new(
-        Point::new(
-            origin.x,
-            origin.y + HEADER_H + (inputs + i) as f32 * ROW_H,
-        ),
+        Point::new(origin.x, origin.y + HEADER_H + (inputs + i) as f32 * ROW_H),
         Size::new(width, ROW_H),
     )
 }
@@ -271,21 +334,66 @@ fn delete_area(row: Rectangle) -> Rectangle {
 }
 
 /// The `+ pin` footer affordance; `None` for non-variadic kinds.
-pub fn add_pin_rect(blk: &FbdBlock, composites: &[CompositeFbDef], origin: Point) -> Option<Rectangle> {
+pub fn add_pin_rect(
+    blk: &FbdBlock,
+    composites: &[CompositeFbDef],
+    origin: Point,
+) -> Option<Rectangle> {
+    let width = block_size(blk, composites).width;
+    add_pin_rect_with_width(blk, composites, origin, width)
+}
+
+/// The `+ pin` footer affordance for a precomputed `width`; `None` for non-variadic kinds.
+pub fn add_pin_rect_with_width(
+    blk: &FbdBlock,
+    composites: &[CompositeFbDef],
+    origin: Point,
+    width: f32,
+) -> Option<Rectangle> {
     if !is_variadic(&blk.kind) {
         return None;
     }
-    let size = block_size(blk, composites);
-    let rows = input_pins(blk).len().max(output_pins(blk, composites).len());
+    let rows = input_pins(blk).len() + output_pins(blk, composites).len();
     Some(Rectangle::new(
-        Point::new(origin.x + ROW_INSET, origin.y + HEADER_H + rows as f32 * ROW_H),
-        Size::new((size.width - ROW_INSET * 2.0).max(0.0), ADD_PIN_H),
+        Point::new(
+            origin.x + ROW_INSET,
+            origin.y + HEADER_H + rows as f32 * ROW_H,
+        ),
+        Size::new((width - ROW_INSET * 2.0).max(0.0), ADD_PIN_H),
     ))
+}
+
+/// Computes a non-overlapping world-pixel origin `[x, y]` for a newly inserted
+/// block, scanning outward from `viewport_center` on the 20 px grid.
+pub fn place_new_block(viewport_center: Point, existing: &[Rectangle]) -> [i32; 2] {
+    let snap = |v: f32| -> f32 { ((v / 20.0).round() * 20.0).max(20.0) };
+    let base_x = snap(viewport_center.x - MIN_BLOCK_W * 0.5);
+    let base_y = snap(viewport_center.y - (HEADER_H + 3.0 * ROW_H) * 0.5);
+    let foot = Size::new(MIN_BLOCK_W, HEADER_H + 3.0 * ROW_H);
+    let hits_any = |cand: Rectangle| -> bool {
+        let padded = inflate(cand, 8.0);
+        existing.iter().any(|r| padded.intersection(r).is_some())
+    };
+
+    for step in 0..64 {
+        let col = step / 6;
+        let row = step % 6;
+        let cand_x = (base_x + col as f32 * 220.0).max(20.0);
+        let cand_y = (base_y + row as f32 * 140.0).max(20.0);
+        let cand = Rectangle::new(Point::new(cand_x, cand_y), foot);
+        if !hits_any(cand) {
+            return [cand_x as i32, cand_y as i32];
+        }
+    }
+    [base_x as i32, base_y as i32]
 }
 
 /// Horizontal centre of the input pin circle on row `i`.
 pub fn input_pin_point(origin: Point, i: usize) -> Point {
-    Point::new(origin.x, origin.y + HEADER_H + i as f32 * ROW_H + ROW_H * 0.5)
+    Point::new(
+        origin.x,
+        origin.y + HEADER_H + i as f32 * ROW_H + ROW_H * 0.5,
+    )
 }
 
 /// Horizontal centre of the output pin circle on output row `i`.
@@ -454,7 +562,10 @@ mod tests {
         // Vertical centre of input row 2 (IN2).
         let cursor = Point::new(origin.x + 80.0, input_pin_point(origin, 1).y);
         let hit = resolve_input_drop(&blocks, &pos, &composites, Some("A"), cursor);
-        assert_eq!(hit.map(|(b, pin)| (b.id.clone(), pin)), Some(("B".to_string(), "IN2".to_string())));
+        assert_eq!(
+            hit.map(|(b, pin)| (b.id.clone(), pin)),
+            Some(("B".to_string(), "IN2".to_string()))
+        );
     }
 
     #[test]
@@ -557,15 +668,47 @@ mod tests {
         let size = block_size(&b, &composites);
         let r0 = input_row_rect(Point::ORIGIN, size.width, 0);
         let r1 = input_row_rect(Point::ORIGIN, size.width, 1);
-        // Two inputs, one output: the output row reuses row 0's slot, so it
-        // must start at the header, not below the input rows.
-        let out = output_row_rect(Point::ORIGIN, size.width, 0, 0);
+        // Two inputs, one output: the output row sits below both input rows.
+        let out = output_row_rect(Point::ORIGIN, size.width, 2, 0);
         assert_eq!(r0.y + r0.height, r1.y);
-        assert_eq!(out.y, r0.y, "one output shares row 0's slot");
-        assert!(r1.y + r1.height <= size.height);
+        assert_eq!(r1.y + r1.height, out.y);
+        assert!(out.y + out.height <= size.height);
         // The value field sits strictly inside its row.
         let v = input_value_rect(Point::ORIGIN, size.width, 0);
         assert!(v.x > r0.x && v.x + v.width < r0.x + r0.width);
+    }
+
+    #[test]
+    fn test_fbd_add_block_uses_viewport_center() {
+        let empty: Vec<Rectangle> = Vec::new();
+        let p1 = place_new_block(Point::new(500.0, 300.0), &empty);
+        let p2 = place_new_block(Point::new(1100.0, 700.0), &empty);
+        assert_ne!(
+            p1, p2,
+            "different viewport centers must yield different origins"
+        );
+        assert_eq!(p1[0] % 20, 0);
+        assert_eq!(p1[1] % 20, 0);
+
+        let occupied = vec![Rectangle::new(
+            Point::new(p1[0] as f32, p1[1] as f32),
+            Size::new(MIN_BLOCK_W, HEADER_H + 3.0 * ROW_H),
+        )];
+        let p3 = place_new_block(Point::new(500.0, 300.0), &occupied);
+        assert_ne!(
+            p3, p1,
+            "occupied center slot must shift to a free nearby slot"
+        );
+    }
+
+    #[test]
+    fn test_format_row_display_truncates_only_at_rest() {
+        let long = "Very_Long_PLC_Tag_Expression_That_Exceeds_Width";
+        let at_rest = format_row_display(long, 120.0, false);
+        assert!(at_rest.ends_with('\u{2026}'));
+        assert!(at_rest.chars().count() < long.chars().count());
+        let editing = format_row_display(long, 120.0, true);
+        assert_eq!(editing, long);
     }
 
     #[test]

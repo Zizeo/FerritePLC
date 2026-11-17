@@ -2,14 +2,24 @@ use std::collections::HashMap;
 
 use iced::border::Radius;
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke, event};
-use iced::widget::{button, column, container, mouse_area, pick_list, row, scrollable, text, text_input};
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Point, Rectangle, Renderer, Size, Theme, Vector, mouse};
+use iced::widget::{button, column, container, row, scrollable, text};
+use iced::{
+    Alignment, Background, Border, Color, Element, Length, Padding, Point, Rectangle, Renderer,
+    Size, Theme, Vector, mouse,
+};
 
 use ferrite_core::{IecValue, StandardFbKind};
-use ferrite_lang_fbd::{CompositeFbDef, FbdBlock, FbdBlockKind, FbdInputSource, FbdProgram};
+use ferrite_lang_fbd::{FbdBlock, FbdBlockKind, FbdInputSource, FbdProgram};
 use ferrite_runtime::PlcRuntime;
 
 use crate::app::Message;
+use crate::fbd_geometry::{
+    self, ADD_PIN_H, HEADER_H, MIN_BLOCK_W, ROW_INSET, block_glyph, block_size_with_edit,
+    format_row_display, header_rect_with_width, id_rect_with_width, input_delete_rect,
+    input_pin_point, input_pins, input_row_rect, input_row_text, input_value_rect, is_variadic,
+    kind_badge_rect, output_delete_rect, output_pin_point, output_pins, output_row_rect,
+    output_value_rect,
+};
 use crate::i18n::UiLanguage;
 use crate::theme::StudioTheme;
 
@@ -73,13 +83,15 @@ fn read_input_live_value(rt: &PlcRuntime, src: &FbdInputSource) -> Option<String
     }
 }
 
-fn read_output_live_value(rt: &PlcRuntime, target: &str) -> Option<String> {
-    rt.read_value(target.trim()).ok().map(format_live_iec_value)
-}
-
 fn format_live_iec_value(val: IecValue) -> String {
     match val {
-        IecValue::Bool(b) => if b { "TRUE".to_string() } else { "FALSE".to_string() },
+        IecValue::Bool(b) => {
+            if b {
+                "TRUE".to_string()
+            } else {
+                "FALSE".to_string()
+            }
+        }
         IecValue::Sint(i) => format!("{i}"),
         IecValue::Int(i) => format!("{i}"),
         IecValue::Dint(d) => format!("{d}"),
@@ -114,46 +126,19 @@ pub enum FbdCategory {
 }
 
 impl FbdCategory {
-    pub fn label(self) -> &'static str {
+    pub fn accent_color(self) -> Color {
         match self {
-            Self::Logic => "LOGIC:GATE",
-            Self::Arithmetic => "MATH:OP",
-            Self::Comparator => "COMPARE",
-            Self::Timer => "TIME:DELAY",
-            Self::Counter => "COUNT:ACC",
-            Self::Edge => "EDGE:TRIG",
-            Self::Bistable => "LATCH:FF",
-            Self::Conditioning => "SIGNAL:COND",
-            Self::Corrector => "CTRL:PID",
-            Self::Composite => "CUSTOM:MOD",
+            Self::Logic => Color::from_rgb(0.388, 0.400, 0.945),
+            Self::Arithmetic => Color::from_rgb(0.961, 0.620, 0.043),
+            Self::Comparator => Color::from_rgb(0.918, 0.702, 0.031),
+            Self::Timer => Color::from_rgb(0.024, 0.714, 0.831),
+            Self::Counter => Color::from_rgb(0.659, 0.333, 0.969),
+            Self::Edge => Color::from_rgb(0.925, 0.282, 0.600),
+            Self::Bistable => Color::from_rgb(0.231, 0.510, 0.965),
+            Self::Conditioning => Color::from_rgb(0.078, 0.722, 0.651),
+            Self::Corrector => Color::from_rgb(0.063, 0.725, 0.506),
+            Self::Composite => Color::from_rgb(0.957, 0.247, 0.369),
         }
-    }
-
-    pub fn accent_color(self) -> iced::Color {
-        match self {
-            Self::Logic => iced::Color::from_rgb(0.388, 0.400, 0.945),        // #6366F1 Electric Indigo
-            Self::Arithmetic => iced::Color::from_rgb(0.961, 0.620, 0.043),   // #F59E0B Amber Tech
-            Self::Comparator => iced::Color::from_rgb(0.918, 0.702, 0.031),   // #EAB308 Gold Compare
-            Self::Timer => iced::Color::from_rgb(0.024, 0.714, 0.831),        // #06B6D4 Neon Cyan
-            Self::Counter => iced::Color::from_rgb(0.659, 0.333, 0.969),      // #A855F7 Plasma Purple
-            Self::Edge => iced::Color::from_rgb(0.925, 0.282, 0.600),         // #EC4899 Laser Fuchsia
-            Self::Bistable => iced::Color::from_rgb(0.231, 0.510, 0.965),     // #3B82F6 Electric Blue
-            Self::Conditioning => iced::Color::from_rgb(0.078, 0.722, 0.651), // #14B8A6 Signal Teal
-            Self::Corrector => iced::Color::from_rgb(0.063, 0.725, 0.506),    // #10B981 Emerald Control
-            Self::Composite => iced::Color::from_rgb(0.957, 0.247, 0.369),    // #F43F5E Rose Tech
-        }
-    }
-
-    pub fn bg_subtle(self) -> iced::Color {
-        let mut c = self.accent_color();
-        c.a = 0.06;
-        c
-    }
-
-    pub fn badge_bg(self) -> iced::Color {
-        let mut c = self.accent_color();
-        c.a = 0.14;
-        c
     }
 }
 
@@ -183,9 +168,9 @@ pub fn block_category(kind: &FbdBlockKind) -> FbdCategory {
             }
             StandardFbKind::RTrig | StandardFbKind::FTrig => FbdCategory::Edge,
             StandardFbKind::Sr | StandardFbKind::Rs => FbdCategory::Bistable,
-            StandardFbKind::Hysteresis
-            | StandardFbKind::RampReal
-            | StandardFbKind::ScaleLin => FbdCategory::Conditioning,
+            StandardFbKind::Hysteresis | StandardFbKind::RampReal | StandardFbKind::ScaleLin => {
+                FbdCategory::Conditioning
+            }
             StandardFbKind::P
             | StandardFbKind::Pi
             | StandardFbKind::PidParallel
@@ -197,1033 +182,140 @@ pub fn block_category(kind: &FbdBlockKind) -> FbdCategory {
     }
 }
 
-fn operator_symbol(kind: &FbdBlockKind) -> (&str, &'static str) {
+fn operator_symbol(kind: &FbdBlockKind) -> &str {
     match kind {
-        FbdBlockKind::And => ("&", "AND GATE"),
-        FbdBlockKind::Or => ("\u{2265}1", "OR GATE"),
-        FbdBlockKind::Xor => ("=1", "XOR GATE"),
-        FbdBlockKind::Not => ("1", "NOT INVERT"),
-        FbdBlockKind::Add => ("+", "ADDITION"),
-        FbdBlockKind::Sub => ("\u{2212}", "SUBTRACT"),
-        FbdBlockKind::Mul => ("\u{00D7}", "MULTIPLY"),
-        FbdBlockKind::Div => ("\u{00F7}", "DIVIDE"),
-        FbdBlockKind::Gt => (">", "GREATER THAN"),
-        FbdBlockKind::Ge => ("\u{2265}", "GREATER OR EQ"),
-        FbdBlockKind::Lt => ("<", "LESS THAN"),
-        FbdBlockKind::Le => ("\u{2264}", "LESS OR EQ"),
-        FbdBlockKind::Eq => ("==", "EQUAL"),
-        FbdBlockKind::Ne => ("\u{2260}", "NOT EQUAL"),
+        FbdBlockKind::And => "&",
+        FbdBlockKind::Or => "\u{2265}1",
+        FbdBlockKind::Xor => "=1",
+        FbdBlockKind::Not => "1",
+        FbdBlockKind::Add => "+",
+        FbdBlockKind::Sub => "\u{2212}",
+        FbdBlockKind::Mul => "\u{00D7}",
+        FbdBlockKind::Div => "\u{00F7}",
+        FbdBlockKind::Gt => ">",
+        FbdBlockKind::Ge => "\u{2265}",
+        FbdBlockKind::Lt => "<",
+        FbdBlockKind::Le => "\u{2264}",
+        FbdBlockKind::Eq => "==",
+        FbdBlockKind::Ne => "\u{2260}",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Ton),
             ..
-        } => ("TON", "TIMER ON-DELAY"),
+        } => "TON",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Tof),
             ..
-        } => ("TOF", "TIMER OFF-DELAY"),
+        } => "TOF",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Tp),
             ..
-        } => ("TP", "PULSE TIMER"),
+        } => "TP",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Ctu),
             ..
-        } => ("CTU", "COUNT UP"),
+        } => "CTU",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Ctd),
             ..
-        } => ("CTD", "COUNT DOWN"),
+        } => "CTD",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Ctud),
             ..
-        } => ("CTUD", "UP/DOWN CNT"),
+        } => "CTUD",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Blink),
             ..
-        } => ("BLINK", "CLOCK GEN"),
+        } => "BLINK",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::RTrig),
             ..
-        } => ("R_TRIG", "RISING EDGE"),
+        } => "R_TRIG",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::FTrig),
             ..
-        } => ("F_TRIG", "FALLING EDGE"),
+        } => "F_TRIG",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Sr),
             ..
-        } => ("SR", "SET LATCH"),
+        } => "SR",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Rs),
             ..
-        } => ("RS", "RESET LATCH"),
+        } => "RS",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Hysteresis),
             ..
-        } => ("HYST", "DEADBAND"),
+        } => "HYST",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::RampReal),
             ..
-        } => ("RAMP", "SLEW LIMIT"),
+        } => "RAMP",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::ScaleLin),
             ..
-        } => ("SCALE", "LIN SCALE"),
+        } => "SCALE",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::PidParallel),
             ..
-        } => ("PID_PAR", "PARALLEL PID"),
+        } => "PID_PAR",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::PidSeries),
             ..
-        } => ("PID_SER", "SERIES PID"),
+        } => "PID_SER",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::PidMixed),
             ..
-        } => ("PID_MIX", "MIXED (ISA)"),
+        } => "PID_MIX",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::Pi),
             ..
-        } => ("PI", "PI REGULATOR"),
+        } => "PI",
         FbdBlockKind::StandardFb {
             fb_type: Some(StandardFbKind::P),
             ..
-        } => ("P", "PROPORTIONAL"),
-        FbdBlockKind::StandardFb { instance, .. } => (instance.as_str(), "FB INSTANCE"),
-        FbdBlockKind::Composite { type_name } => (type_name.as_str(), "COMPOSITE"),
+        } => "P",
+        FbdBlockKind::StandardFb { instance, .. } => instance.as_str(),
+        FbdBlockKind::Composite { type_name } => type_name.as_str(),
     }
 }
 
-fn pin_display_label(pin: &str, is_corrector: bool, lang: UiLanguage) -> String {
-    if is_corrector {
-        match pin.to_ascii_uppercase().as_str() {
-            "SP" => lang.tr("SP (Set)", "SP (Cons)").to_string(),
-            "PV" => lang.tr("PV (Proc)", "PV (Mes)").to_string(),
-            "KP" => "Kp".to_string(),
-            "TI" => "Ti (s)".to_string(),
-            "TD" => "Td (s)".to_string(),
-            "OUT" => lang.tr("OUT (Cmd)", "OUT (Cmd)").to_string(),
-            other => other.to_string(),
-        }
-    } else {
-        pin.to_string()
-    }
-}
-
-fn tech_terminal_input(theme: &Theme, status: text_input::Status) -> text_input::Style {
-    let is_dark = StudioTheme::is_dark(theme);
-    let (border_color, bg) = match status {
-        text_input::Status::Focused => (
-            StudioTheme::ACCENT_CYAN,
-            if is_dark {
-                iced::Color::from_rgb(0.02, 0.04, 0.07)
-            } else {
-                iced::Color::WHITE
-            },
-        ),
-        text_input::Status::Hovered => (
-            iced::Color::from_rgba(0.220, 0.741, 0.973, 0.6),
-            if is_dark {
-                iced::Color::from_rgb(0.04, 0.06, 0.09)
-            } else {
-                iced::Color::from_rgb(0.97, 0.98, 0.99)
-            },
-        ),
-        text_input::Status::Disabled => (
-            if is_dark {
-                iced::Color::from_rgba(1.0, 1.0, 1.0, 0.04)
-            } else {
-                iced::Color::from_rgba(0.0, 0.0, 0.0, 0.04)
-            },
-            if is_dark {
-                iced::Color::from_rgb(0.03, 0.04, 0.06)
-            } else {
-                iced::Color::from_rgb(0.94, 0.95, 0.96)
-            },
-        ),
-        text_input::Status::Active => (
-            StudioTheme::border_card(theme),
-            if is_dark {
-                iced::Color::from_rgb(0.04, 0.05, 0.08)
-            } else {
-                iced::Color::WHITE
-            },
-        ),
-    };
-    text_input::Style {
-        background: Background::Color(bg),
-        border: Border {
-            color: border_color,
-            width: 1.0,
-            radius: Radius::from(4.0),
-        },
-        icon: StudioTheme::text_secondary(theme),
-        placeholder: StudioTheme::text_muted(theme),
-        value: StudioTheme::text_primary(theme),
-        selection: iced::Color::from_rgba(0.220, 0.741, 0.973, 0.3),
-    }
-}
-
-fn tech_id_input(theme: &Theme, status: text_input::Status) -> text_input::Style {
-    let is_dark = StudioTheme::is_dark(theme);
-    let (border_color, bg) = match status {
-        text_input::Status::Focused => (
-            StudioTheme::ACCENT_CYAN,
-            if is_dark {
-                iced::Color::from_rgb(0.03, 0.05, 0.08)
-            } else {
-                iced::Color::WHITE
-            },
-        ),
-        text_input::Status::Hovered => (
-            if is_dark {
-                iced::Color::from_rgba(1.0, 1.0, 1.0, 0.3)
-            } else {
-                iced::Color::from_rgba(0.0, 0.0, 0.0, 0.25)
-            },
-            if is_dark {
-                iced::Color::from_rgb(0.05, 0.07, 0.10)
-            } else {
-                iced::Color::from_rgb(0.98, 0.99, 1.0)
-            },
-        ),
-        _ => (
-            StudioTheme::border_card(theme),
-            if is_dark {
-                iced::Color::from_rgb(0.05, 0.07, 0.10)
-            } else {
-                iced::Color::WHITE
-            },
-        ),
-    };
-    text_input::Style {
-        background: Background::Color(bg),
-        border: Border {
-            color: border_color,
-            width: 1.0,
-            radius: Radius {
-                top_left: 0.0,
-                bottom_left: 0.0,
-                top_right: 4.0,
-                bottom_right: 4.0,
-            },
-        },
-        icon: StudioTheme::text_secondary(theme),
-        placeholder: StudioTheme::text_muted(theme),
-        value: StudioTheme::text_primary(theme),
-        selection: iced::Color::from_rgba(0.220, 0.741, 0.973, 0.3),
-    }
-}
-
-fn tech_remove_button(_theme: &Theme, status: button::Status) -> button::Style {
-    let (bg, text_color, border_color) = match status {
-        button::Status::Hovered => (
-            iced::Color::from_rgba(0.957, 0.247, 0.369, 0.25),
-            StudioTheme::ACCENT_ROSE,
-            StudioTheme::ACCENT_ROSE,
-        ),
-        button::Status::Pressed => (
-            iced::Color::from_rgba(0.957, 0.247, 0.369, 0.40),
-            iced::Color::WHITE,
-            StudioTheme::ACCENT_ROSE,
-        ),
-        button::Status::Disabled => (
-            iced::Color::TRANSPARENT,
-            StudioTheme::TEXT_MUTED,
-            iced::Color::TRANSPARENT,
-        ),
-        button::Status::Active => (
-            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.04),
-            StudioTheme::TEXT_MUTED,
-            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.08),
-        ),
-    };
-    button::Style {
-        background: Some(Background::Color(bg)),
-        text_color,
-        border: Border {
-            color: border_color,
-            width: 1.0,
-            radius: Radius::from(4.0),
-        },
-        ..Default::default()
-    }
-}
-
-fn render_single_block_card<'a>(
-    program_name: &str,
-    b_idx: usize,
-    blk: &'a FbdBlock,
-    runtime: Option<&'a PlcRuntime>,
-    lang: UiLanguage,
-    selected_block: Option<usize>,
-    drag_hover_block: Option<usize>,
-) -> Element<'a, Message> {
-    let p_blk = program_name.to_string();
-    let category = block_category(&blk.kind);
-    let (op_symbol, op_desc) = operator_symbol(&blk.kind);
-
-    let is_corrector = match &blk.kind {
-        FbdBlockKind::StandardFb {
-            fb_type: Some(k), ..
-        } => k.is_corrector(),
-        _ => false,
-    };
-    let current_corrector_kind = match &blk.kind {
-        FbdBlockKind::StandardFb {
-            fb_type: Some(k), ..
-        } if k.is_corrector() => Some(*k),
-        _ => None,
-    };
-
-    let is_selected = selected_block == Some(b_idx);
-    let is_hovered = drag_hover_block == Some(b_idx);
-    let blk_id = blk.id.clone();
-    let p_blk_id = blk.id.clone();
-
-    let any_input_energized = runtime.is_some_and(|rt| {
-        blk.inputs.values().any(|src| is_input_energized(rt, src))
-    });
-    let any_output_energized = runtime.is_some_and(|rt| {
-        blk.outputs.values().any(|target| is_output_energized(rt, target))
-    });
-    let is_block_active = any_input_energized || any_output_energized;
-
-    // Top Category Accent Rail
-    let top_rail = container(iced::widget::Space::with_width(Length::Fill))
-        .height(Length::Fixed(3.0))
-        .style(move |_| container::Style {
-            background: Some(Background::Color(category.accent_color())),
-            border: Border {
-                radius: Radius {
-                    top_left: 8.0,
-                    top_right: 8.0,
-                    bottom_right: 0.0,
-                    bottom_left: 0.0,
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-    let drag_handle = mouse_area(
-        container(
-            text(crate::icons::icon_grip())
-                .size(12)
-                .shaping(iced::widget::text::Shaping::Advanced)
-                .color(if is_selected {
-                    StudioTheme::ACCENT_CYAN
-                } else {
-                    StudioTheme::TEXT_MUTED
-                }),
-        )
-        .padding([4, 6])
-        .style(|_| container::Style {
-            background: Some(Background::Color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.04))),
-            border: Border {
-                color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.08),
-                width: 1.0,
-                radius: Radius::from(4.0),
-            },
-            ..Default::default()
-        }),
-    )
-    .on_press(Message::FbdBlockDragStarted(p_blk.clone(), b_idx))
-    .on_enter(Message::FbdBlockDragHovered(p_blk.clone(), b_idx))
-    .on_release(Message::FbdBlockDragDropped);
-
-    // Block ID with hardware badge prefix
-    let id_box = row![
-        container(
-            text("ID")
-                .size(8.5)
-                .font(iced::Font::MONOSPACE)
-                .color(StudioTheme::TEXT_MUTED),
-        )
-        .padding([4, 6])
-        .style(|_| container::Style {
-            background: Some(Background::Color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.03))),
-            border: Border {
-                color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.08),
-                width: 1.0,
-                radius: Radius {
-                    top_left: 4.0,
-                    bottom_left: 4.0,
-                    top_right: 0.0,
-                    bottom_right: 0.0,
-                },
-            },
-            ..Default::default()
-        }),
-        text_input("Block ID", &blk.id)
-            .on_input({
-                let p = p_blk.clone();
-                let old_id = blk_id.clone();
-                move |s| Message::FbdBlockIdChanged(p.clone(), old_id.clone(), s)
-            })
-            .font(iced::Font::MONOSPACE)
-            .size(11.0)
-            .width(Length::FillPortion(1))
-            .padding([3, 6])
-            .style(tech_id_input),
-    ]
-    .align_y(Alignment::Center);
-
-    let cat_badge = container(
-        text(category.label())
-            .size(8.5)
-            .font(iced::Font::MONOSPACE)
-            .color(category.accent_color()),
-    )
-    .padding([3, 7])
-    .style(move |_| container::Style {
-        background: Some(Background::Color(category.badge_bg())),
-        border: Border {
-            color: iced::Color::from_rgba(
-                category.accent_color().r,
-                category.accent_color().g,
-                category.accent_color().b,
-                0.35,
-            ),
-            width: 0.75,
-            radius: Radius::from(4.0),
-        },
-        ..Default::default()
-    });
-
-    let live_status_badge: Element<'a, Message> = if runtime.is_some() {
-        container(
-            row![
-                container(iced::widget::Space::with_width(Length::Fixed(5.0)))
-                    .height(Length::Fixed(5.0))
-                    .style(move |_| container::Style {
-                        background: Some(Background::Color(if is_block_active {
-                            StudioTheme::ACCENT_EMERALD
-                        } else {
-                            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.2)
-                        })),
-                        border: Border {
-                            radius: Radius::from(2.5),
-                            color: if is_block_active {
-                                iced::Color::from_rgb(0.2, 0.9, 0.5)
-                            } else {
-                                iced::Color::TRANSPARENT
-                            },
-                            width: if is_block_active { 1.0 } else { 0.0 },
-                        },
-                        ..Default::default()
-                    }),
-                text(if is_block_active { "ACTIVE" } else { "IDLE" })
-                    .size(8.0)
-                    .font(iced::Font::MONOSPACE)
-                    .color(if is_block_active {
-                        StudioTheme::ACCENT_EMERALD
-                    } else {
-                        StudioTheme::TEXT_MUTED
-                    }),
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center),
-        )
-        .padding([2, 5])
-        .style(move |_| container::Style {
-            background: Some(Background::Color(if is_block_active {
-                iced::Color::from_rgba(0.063, 0.725, 0.506, 0.12)
-            } else {
-                iced::Color::from_rgba(1.0, 1.0, 1.0, 0.03)
-            })),
-            border: Border {
-                color: if is_block_active {
-                    iced::Color::from_rgba(0.063, 0.725, 0.506, 0.3)
-                } else {
-                    iced::Color::from_rgba(1.0, 1.0, 1.0, 0.05)
-                },
-                width: 0.5,
-                radius: Radius::from(3.0),
-            },
-            ..Default::default()
-        })
-        .into()
-    } else {
-        iced::widget::Space::with_width(Length::Shrink).into()
-    };
-
-    let remove_btn = button(
-        text(crate::icons::icon_close())
-            .size(11.0)
-            .shaping(iced::widget::text::Shaping::Advanced),
-    )
-    .on_press(Message::FbdRemoveBlock(p_blk.clone(), p_blk_id.clone()))
-    .style(tech_remove_button)
-    .padding([2, 6]);
-
-    // Block Header with Drag Handle, Editable ID, Category Badge, and Remove Button
-    let blk_header = row![
-        drag_handle,
-        id_box,
-        cat_badge,
-        live_status_badge,
-        iced::widget::Space::with_width(Length::Fill),
-        remove_btn,
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
-
-    // Optional Corrector Architecture Switcher Row
-    let arch_row = current_corrector_kind.map(|cur_k| {
-        let corrector_kinds = vec![
-            StandardFbKind::PidParallel,
-            StandardFbKind::PidSeries,
-            StandardFbKind::PidMixed,
-            StandardFbKind::Pi,
-            StandardFbKind::P,
-        ];
-        container(
-            column![
-                row![
-                    text(lang.tr("CONTROL LOOP TUNING", "BOUCLE DE RÉGULATION"))
-                        .size(8.5)
-                        .font(iced::Font::MONOSPACE)
-                        .color(category.accent_color()),
-                    iced::widget::Space::with_width(Length::Fill),
-                    text("IEC 61131-3")
-                        .size(8.0)
-                        .font(iced::Font::MONOSPACE)
-                        .color(StudioTheme::TEXT_MUTED),
-                ]
-                .align_y(Alignment::Center),
-                row![
-                    text(lang.tr("Architecture:", "Architecture :"))
-                        .size(9.5)
-                        .color(StudioTheme::TEXT_SECONDARY),
-                    pick_list(corrector_kinds, Some(cur_k), {
-                        let p = p_blk.clone();
-                        move |k| Message::FbdChangeCorrectorKind(p.clone(), b_idx, k)
-                    })
-                    .text_size(10.0)
-                    .padding([3, 6])
-                    .width(Length::Fill),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-                container(
-                    row![
-                        text("ƒ(e):")
-                            .size(9.0)
-                            .font(iced::Font::MONOSPACE)
-                            .color(category.accent_color()),
-                        text(cur_k.formula_hint())
-                            .size(9.0)
-                            .font(iced::Font::MONOSPACE)
-                            .color(StudioTheme::ACCENT_CYAN)
-                            .wrapping(iced::widget::text::Wrapping::Word),
-                    ]
-                    .spacing(4)
-                    .align_y(Alignment::Center),
-                )
-                .padding([4, 7])
-                .style(|_| container::Style {
-                    background: Some(Background::Color(iced::Color::from_rgb(0.03, 0.05, 0.08))),
-                    border: Border {
-                        color: iced::Color::from_rgba(0.063, 0.725, 0.506, 0.25),
-                        width: 0.5,
-                        radius: Radius::from(4.0),
-                    },
-                    ..Default::default()
-                }),
-            ]
-            .spacing(5),
-        )
-        .padding([6, 8])
-        .style(|_| container::Style {
-            background: Some(Background::Color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.025))),
-            border: Border {
-                color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.05),
-                width: 1.0,
-                radius: Radius::from(5.0),
-            },
-            ..Default::default()
-        })
-    });
-
-    // Inputs Column
-    let mut sorted_inputs: Vec<_> = blk.inputs.iter().collect();
-    sorted_inputs.sort_by_key(|&(k, _)| k);
-
-    let mut inputs_col = column![].spacing(6);
-    if sorted_inputs.is_empty() {
-        inputs_col = inputs_col.push(
-            text(lang.tr("(No inputs)", "(Sans entrée)"))
-                .size(9.5)
-                .font(iced::Font::MONOSPACE)
-                .color(StudioTheme::TEXT_MUTED),
-        );
-    } else {
-        for (pin_name, src) in sorted_inputs {
-            let pin_n = pin_name.clone();
-            let expr_str = match src {
-                FbdInputSource::Value { expr } => expr.clone(),
-                FbdInputSource::Link {
-                    from_block,
-                    from_pin,
-                } => format!("{from_block}.{from_pin}"),
-            };
-
-            let is_energized = runtime.is_some_and(|rt| is_input_energized(rt, src));
-            let terminal_led = container(iced::widget::Space::with_width(Length::Fixed(8.0)))
-                .height(Length::Fixed(8.0))
-                .style(move |_theme: &Theme| container::Style {
-                    background: Some(Background::Color(if is_energized {
-                        StudioTheme::ACCENT_EMERALD
-                    } else {
-                        iced::Color::from_rgb(0.12, 0.15, 0.20)
-                    })),
-                    border: Border {
-                        color: if is_energized {
-                            iced::Color::from_rgb(0.3, 0.9, 0.6)
-                        } else {
-                            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.10)
-                        },
-                        width: 1.0,
-                        radius: Radius::from(4.0),
-                    },
-                    ..Default::default()
-                });
-
-            let display_pin = pin_display_label(pin_name, is_corrector, lang);
-            let pin_badge = container(
-                text(display_pin)
-                    .size(9.5)
-                    .font(iced::Font::MONOSPACE)
-                    .color(if is_energized {
-                        StudioTheme::TEXT_PRIMARY
-                    } else {
-                        StudioTheme::TEXT_SECONDARY
-                    }),
-            )
-            .padding([2, 5])
-            .style(move |_| container::Style {
-                background: Some(Background::Color(if is_energized {
-                    iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15)
-                } else {
-                    iced::Color::from_rgba(1.0, 1.0, 1.0, 0.04)
-                })),
-                border: Border {
-                    color: if is_energized {
-                        iced::Color::from_rgba(0.063, 0.725, 0.506, 0.4)
-                    } else {
-                        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.06)
-                    },
-                    width: 0.5,
-                    radius: Radius::from(3.0),
-                },
-                ..Default::default()
-            });
-
-            let live_badge: Element<'a, Message> = if let Some(rt) = runtime
-                && let Some(val_str) = read_input_live_value(rt, src)
-            {
-                container(
-                    text(val_str)
-                        .size(9.0)
-                        .font(iced::Font::MONOSPACE)
-                        .color(if is_energized {
-                            StudioTheme::ACCENT_EMERALD
-                        } else {
-                            StudioTheme::ACCENT_CYAN
-                        }),
-                )
-                .padding([2, 5])
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(iced::Color::from_rgb(0.03, 0.05, 0.08))),
-                    border: Border {
-                        color: if is_energized {
-                            iced::Color::from_rgba(0.063, 0.725, 0.506, 0.3)
-                        } else {
-                            iced::Color::from_rgba(0.220, 0.741, 0.973, 0.25)
-                        },
-                        width: 1.0,
-                        radius: Radius::from(3.0),
-                    },
-                    ..Default::default()
-                })
-                .into()
-            } else {
-                iced::widget::Space::with_width(Length::Shrink).into()
-            };
-
-            let wire_trace = container(iced::widget::Space::with_width(Length::Fixed(8.0)))
-                .height(Length::Fixed(2.0))
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(if is_energized {
-                        StudioTheme::ACCENT_EMERALD
-                    } else {
-                        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.12)
-                    })),
-                    ..Default::default()
-                });
-
-            let in_row = row![
-                terminal_led,
-                pin_badge,
-                text_input("Source", &expr_str)
-                    .on_input({
-                    let p = p_blk.clone();
- let bid = p_blk_id.clone();
- let pn = pin_n.clone();
- move |s| Message::FbdInputSourceChanged(p.clone(), bid.clone(), pn.clone(), s)
-                    })
-                    .font(iced::Font::MONOSPACE)
-                    .size(11.0)
-                    .width(Length::Fill)
-                    .padding([3, 6])
-                    .style(tech_terminal_input),
-                live_badge,
-                wire_trace,
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center);
-
-            inputs_col = inputs_col.push(in_row);
-        }
-    }
-
-    // Central Operator Core ("Processing Cell")
-    let center_box = container(
-        column![
-            text(op_symbol)
-                .size(20)
-                .font(iced::Font::MONOSPACE)
-                .color(if is_block_active {
-                    iced::Color::WHITE
-                } else {
-                    StudioTheme::TEXT_PRIMARY
-                }),
-            container(
-                text(op_desc)
-                    .size(8.5)
-                    .font(iced::Font::MONOSPACE)
-                    .color(category.accent_color())
-                    .wrapping(iced::widget::text::Wrapping::Word),
-            )
-            .padding([2, 5])
-            .style(move |_| container::Style {
-                background: Some(Background::Color(category.bg_subtle())),
-                border: Border {
-                    radius: Radius::from(3.0),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }),
-        ]
-        .spacing(4)
-        .align_x(Alignment::Center),
-    )
-    .padding([8, 12])
-    .style(move |theme: &Theme| {
-        let is_dark = StudioTheme::is_dark(theme);
-        let center_bg = if is_dark {
-            iced::Color::from_rgb(0.038, 0.048, 0.068)
-        } else {
-            iced::Color::WHITE
-        };
-        container::Style {
-            background: Some(Background::Color(center_bg)),
-            border: Border {
-                color: if is_block_active {
-                    StudioTheme::ACCENT_EMERALD
-                } else {
-                    iced::Color::from_rgba(
-                        category.accent_color().r,
-                        category.accent_color().g,
-                        category.accent_color().b,
-                        if is_dark { 0.35 } else { 0.50 },
-                    )
-                },
-                width: if is_block_active { 1.5 } else { 1.0 },
-                radius: Radius::from(6.0),
-            },
-            ..Default::default()
-        }
-    });
-
-    // Outputs Column
-    let mut sorted_outputs: Vec<_> = blk.outputs.iter().collect();
-    sorted_outputs.sort_by_key(|&(k, _)| k);
-
-    let mut outputs_col = column![].spacing(6);
-    if sorted_outputs.is_empty() {
-        let fb_live_summary = if let (
-            Some(rt),
-            FbdBlockKind::StandardFb { instance, .. },
-        ) = (runtime, &blk.kind)
-        {
-            rt.tags.get_fb(instance).map(|fb| {
-                format!(
-                    "Q={} OUT={:.1} CV={}",
-                    if fb.q { "1" } else { "0" },
-                    fb.out_real,
-                    fb.cv
-                )
-            })
-        } else {
-            None
-        };
-
-        if let Some(summary) = fb_live_summary {
-            outputs_col = outputs_col.push(
-                container(
-                    text(summary)
-                        .size(9.0)
-                        .font(iced::Font::MONOSPACE)
-                        .color(StudioTheme::ACCENT_EMERALD),
-                )
-                .padding([3, 7])
-                .style(|_| container::Style {
-                    background: Some(Background::Color(iced::Color::from_rgb(0.03, 0.05, 0.08))),
-                    border: Border {
-                        color: iced::Color::from_rgba(0.063, 0.725, 0.506, 0.3),
-                        width: 0.5,
-                        radius: Radius::from(4.0),
-                    },
-                    ..Default::default()
-                }),
-            );
-        } else {
-            outputs_col = outputs_col.push(
-                text(lang.tr("(Internal)", "(Interne)"))
-                    .size(9.5)
-                    .font(iced::Font::MONOSPACE)
-                    .color(StudioTheme::TEXT_MUTED),
-            );
-        }
-    } else {
-        for (pin_name, target) in sorted_outputs {
-            let pin_n = pin_name.clone();
-            let is_energized = runtime.is_some_and(|rt| is_output_energized(rt, target));
-            let terminal_led = container(iced::widget::Space::with_width(Length::Fixed(8.0)))
-                .height(Length::Fixed(8.0))
-                .style(move |_theme: &Theme| container::Style {
-                    background: Some(Background::Color(if is_energized {
-                        StudioTheme::ACCENT_EMERALD
-                    } else {
-                        iced::Color::from_rgb(0.12, 0.15, 0.20)
-                    })),
-                    border: Border {
-                        color: if is_energized {
-                            iced::Color::from_rgb(0.3, 0.9, 0.6)
-                        } else {
-                            iced::Color::from_rgba(1.0, 1.0, 1.0, 0.10)
-                        },
-                        width: 1.0,
-                        radius: Radius::from(4.0),
-                    },
-                    ..Default::default()
-                });
-
-            let display_pin = pin_display_label(pin_name, is_corrector, lang);
-            let pin_badge = container(
-                text(display_pin)
-                    .size(9.5)
-                    .font(iced::Font::MONOSPACE)
-                    .color(if is_energized {
-                        StudioTheme::TEXT_PRIMARY
-                    } else {
-                        StudioTheme::TEXT_SECONDARY
-                    }),
-            )
-            .padding([2, 5])
-            .style(move |_| container::Style {
-                background: Some(Background::Color(if is_energized {
-                    iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15)
-                } else {
-                    iced::Color::from_rgba(1.0, 1.0, 1.0, 0.04)
-                })),
-                border: Border {
-                    color: if is_energized {
-                        iced::Color::from_rgba(0.063, 0.725, 0.506, 0.4)
-                    } else {
-                        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.06)
-                    },
-                    width: 0.5,
-                    radius: Radius::from(3.0),
-                },
-                ..Default::default()
-            });
-
-            let out_live_badge: Element<'a, Message> = if let Some(rt) = runtime
-                && let Some(val_str) = read_output_live_value(rt, target)
-            {
-                container(
-                    text(val_str)
-                        .size(9.0)
-                        .font(iced::Font::MONOSPACE)
-                        .color(if is_energized {
-                            StudioTheme::ACCENT_EMERALD
-                        } else {
-                            StudioTheme::ACCENT_AMBER
-                        }),
-                )
-                .padding([2, 5])
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(iced::Color::from_rgb(0.03, 0.05, 0.08))),
-                    border: Border {
-                        color: if is_energized {
-                            iced::Color::from_rgba(0.063, 0.725, 0.506, 0.3)
-                        } else {
-                            iced::Color::from_rgba(0.96, 0.62, 0.04, 0.25)
-                        },
-                        width: 1.0,
-                        radius: Radius::from(3.0),
-                    },
-                    ..Default::default()
-                })
-                .into()
-            } else {
-                iced::widget::Space::with_width(Length::Shrink).into()
-            };
-
-            let wire_trace = container(iced::widget::Space::with_width(Length::Fixed(8.0)))
-                .height(Length::Fixed(2.0))
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(if is_energized {
-                        StudioTheme::ACCENT_EMERALD
-                    } else {
-                        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.12)
-                    })),
-                    ..Default::default()
-                });
-
-            let out_row = row![
-                wire_trace,
-                pin_badge,
-                text_input("Target", target)
-                    .on_input({
-                    let p = p_blk.clone();
- let bid = p_blk_id.clone();
- let pn = pin_n.clone();
- move |s| Message::FbdOutputTargetChanged(p.clone(), bid.clone(), pn.clone(), s)
-                    })
-                    .font(iced::Font::MONOSPACE)
-                    .size(11.0)
-                    .width(Length::Fill)
-                    .padding([3, 6])
-                    .style(tech_terminal_input),
-                out_live_badge,
-                terminal_led,
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center);
-
-            outputs_col = outputs_col.push(out_row);
-        }
-    }
-
-    let schematic_body = row![
-        container(inputs_col).width(Length::FillPortion(1)),
-        center_box,
-        container(outputs_col).width(Length::FillPortion(1)),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
-
-    let mut card_col = column![top_rail];
-    let mut inner_col = column![blk_header];
-    if let Some(arch) = arch_row {
-        inner_col = inner_col.push(arch);
-    }
-    inner_col = inner_col.push(
-        container(schematic_body)
-            .padding([8, 10])
-            .style(move |theme: &Theme| {
-                let is_dark = StudioTheme::is_dark(theme);
-                let body_bg = if is_dark {
-                    iced::Color::from_rgb(0.045, 0.055, 0.075)
-                } else {
-                    iced::Color::from_rgb(0.950, 0.960, 0.975)
-                };
-                container::Style {
-                    background: Some(Background::Color(body_bg)),
-                    border: Border {
-                        color: StudioTheme::border_hairline(theme),
-                        width: 1.0,
-                        radius: Radius::from(6.0),
-                    },
-                    ..Default::default()
-                }
-            })
-            .width(Length::Fill),
-    );
-
-    card_col = card_col.push(
-        container(inner_col.spacing(8)).padding(Padding {
-            top: 6.0,
-            right: 10.0,
-            bottom: 10.0,
-            left: 10.0,
-        }),
-    );
-
-    let card_style_fn = move |theme: &Theme| {
-        let is_dark = StudioTheme::is_dark(theme);
-        let border = if is_hovered {
-            Border {
-                color: iced::Color::from_rgb(0.25, 0.65, 1.0),
-                width: 2.0,
-                radius: Radius::from(8.0),
-            }
-        } else if is_selected {
-            Border {
-                color: StudioTheme::ACCENT_CYAN,
-                width: 2.0,
-                radius: Radius::from(8.0),
-            }
-        } else {
-            Border {
-                color: StudioTheme::border_card(theme),
-                width: 1.0,
-                radius: Radius::from(8.0),
-            }
-        };
-
-        let card_bg = if is_dark {
-            iced::Color::from_rgb(0.070, 0.082, 0.110)
-        } else {
-            iced::Color::WHITE
-        };
-
-        container::Style {
-            background: Some(Background::Color(card_bg)),
-            border,
-            ..Default::default()
-        }
-    };
-
-    let card_container = container(card_col.spacing(0))
-        .style(card_style_fn)
-        .width(Length::FillPortion(1));
-
-    mouse_area(card_container)
-        .on_enter(Message::FbdBlockDragHovered(p_blk, b_idx))
-        .on_release(Message::FbdBlockDragDropped)
-        .into()
-}
-
-const FBD_BLOCK_WIDTH: f32 = 176.0;
-const FBD_HEADER_HEIGHT: f32 = 26.0;
-const FBD_PIN_ROW_HEIGHT: f32 = 20.0;
-const FBD_BOTTOM_PAD: f32 = 8.0;
 const FBD_GRID_SIZE: f32 = 20.0;
 const FBD_PIN_HIT_RADIUS: f32 = 12.0;
 const FBD_MIN_ZOOM: f32 = 0.25;
 const FBD_MAX_ZOOM: f32 = 3.0;
 
-#[derive(Debug, Clone)]
+const MENU_COLS: usize = 3;
+const MENU_ITEM_W: f32 = 100.0;
+const MENU_ITEM_H: f32 = 20.0;
+const MENU_PAD: f32 = 4.0;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FbdEditTarget {
+    BlockId { block_id: String },
+    InputValue { block_id: String, pin: String },
+    OutputTarget { block_id: String, pin: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PinHover {
+    Input { block_id: String, pin: String },
+    Output { block_id: String, pin: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FbdKindMenu {
+    pub block_id: String,
+    pub anchor: Point,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum FbdDragState {
     None,
     MovingBlock {
         block_id: String,
         grab_offset: Vector,
+        origin_pos: Point,
+        preview_pos: Point,
     },
     Wiring {
         from_block: String,
@@ -1235,29 +327,39 @@ pub enum FbdDragState {
 
 #[derive(Debug, Clone)]
 pub struct FbdCanvasState {
+    pub drag: FbdDragState,
+    pub hover_pin: Option<PinHover>,
+    pub menu: Option<FbdKindMenu>,
+    pub editing_target: Option<FbdEditTarget>,
+    pub edit_buffer: Vec<char>,
+    pub cursor_pos: usize,
+    pub selected_block: Option<String>,
     pub pan: Vector,
     pub zoom: f32,
     pub is_panning: bool,
     pub pan_start: Option<Point>,
-    pub active_pou: String,
     pub per_pou_viewport: HashMap<String, (Vector, f32)>,
-    pub block_positions: HashMap<String, Point>,
-    pub drag: FbdDragState,
-    pub selected_block_id: Option<String>,
+    pub active_pou: String,
+    last_reported_viewport: Option<(String, Vector, f32, Size)>,
 }
 
 impl Default for FbdCanvasState {
     fn default() -> Self {
         Self {
+            drag: FbdDragState::None,
+            hover_pin: None,
+            menu: None,
+            editing_target: None,
+            edit_buffer: Vec::new(),
+            cursor_pos: 0,
+            selected_block: None,
             pan: Vector::default(),
             zoom: 1.0,
             is_panning: false,
             pan_start: None,
-            active_pou: String::new(),
             per_pou_viewport: HashMap::new(),
-            block_positions: HashMap::new(),
-            drag: FbdDragState::None,
-            selected_block_id: None,
+            active_pou: String::new(),
+            last_reported_viewport: None,
         }
     }
 }
@@ -1306,6 +408,12 @@ impl FbdCanvasState {
         self.is_panning = false;
         self.pan_start = None;
         self.drag = FbdDragState::None;
+        self.hover_pin = None;
+        self.menu = None;
+        if !was_uninitialized {
+            self.cancel_edit();
+            self.selected_block = None;
+        }
     }
 
     fn store_current_viewport(&mut self, pou_name: &str) {
@@ -1316,100 +424,86 @@ impl FbdCanvasState {
         }
     }
 
-    pub fn ensure_layout(&mut self, program: &FbdProgram) {
-        let defaults = compute_default_block_positions(program);
-        for blk in &program.blocks {
-            if !self.block_positions.contains_key(&blk.id)
-                && let Some(&pt) = defaults.get(&blk.id)
-            {
-                self.block_positions.insert(blk.id.clone(), pt);
-            }
+    pub fn start_edit(&mut self, target: FbdEditTarget, initial_text: &str) {
+        self.menu = None;
+        self.editing_target = Some(target);
+        self.edit_buffer = initial_text.chars().collect();
+        self.cursor_pos = self.edit_buffer.len();
+    }
+
+    pub fn cancel_edit(&mut self) {
+        self.menu = None;
+        self.editing_target = None;
+        self.edit_buffer.clear();
+        self.cursor_pos = 0;
+    }
+
+    pub fn edit_text(&self) -> String {
+        self.edit_buffer.iter().collect()
+    }
+
+    pub fn edit_display_with_caret(&self) -> String {
+        let pos = self.cursor_pos.min(self.edit_buffer.len());
+        let mut out = String::with_capacity(self.edit_buffer.len() + 1);
+        for ch in &self.edit_buffer[..pos] {
+            out.push(*ch);
+        }
+        out.push('|');
+        for ch in &self.edit_buffer[pos..] {
+            out.push(*ch);
+        }
+        out
+    }
+
+    pub fn insert_char(&mut self, c: char) {
+        if !c.is_control() {
+            let pos = self.cursor_pos.min(self.edit_buffer.len());
+            self.edit_buffer.insert(pos, c);
+            self.cursor_pos = pos + 1;
+        }
+    }
+
+    pub fn backspace(&mut self) {
+        let pos = self.cursor_pos.min(self.edit_buffer.len());
+        if pos > 0 {
+            self.edit_buffer.remove(pos - 1);
+            self.cursor_pos = pos - 1;
+        }
+    }
+
+    pub fn delete_forward(&mut self) {
+        if self.cursor_pos < self.edit_buffer.len() {
+            self.edit_buffer.remove(self.cursor_pos);
+        }
+    }
+
+    pub fn move_cursor_left(&mut self) {
+        self.cursor_pos = self.cursor_pos.saturating_sub(1);
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        if self.cursor_pos < self.edit_buffer.len() {
+            self.cursor_pos += 1;
         }
     }
 
     pub fn resolved_layout(&self, program: &FbdProgram) -> HashMap<String, Point> {
         let mut layout = compute_default_block_positions(program);
         for blk in &program.blocks {
-            if let Some(&pos) = self.block_positions.get(&blk.id) {
-                layout.insert(blk.id.clone(), pos);
+            if let Some([gx, gy]) = blk.grid_pos {
+                layout.insert(blk.id.clone(), Point::new(gx as f32, gy as f32));
             }
+        }
+        if let FbdDragState::MovingBlock {
+            ref block_id,
+            preview_pos,
+            ..
+        } = self.drag
+        {
+            layout.insert(block_id.clone(), preview_pos);
         }
         layout
     }
-}
-
-fn fbd_block_input_pins(blk: &FbdBlock) -> Vec<String> {
-    let mut pins: Vec<String> = blk.inputs.keys().cloned().collect();
-    pins.sort();
-    pins
-}
-
-fn fbd_block_output_pins(blk: &FbdBlock, composites: &[CompositeFbDef]) -> Vec<String> {
-    let mut pins: Vec<String> = match &blk.kind {
-        FbdBlockKind::StandardFb {
-            fb_type: Some(kind),
-            ..
-        } => match kind {
-            StandardFbKind::Ton | StandardFbKind::Tof | StandardFbKind::Tp => {
-                vec!["Q".to_string(), "ET".to_string()]
-            }
-            StandardFbKind::Ctu | StandardFbKind::Ctd => {
-                vec!["Q".to_string(), "CV".to_string()]
-            }
-            StandardFbKind::Ctud => {
-                vec!["QU".to_string(), "QD".to_string(), "CV".to_string()]
-            }
-            StandardFbKind::RampReal => vec!["OUT".to_string()],
-            StandardFbKind::ScaleLin => vec!["OUT".to_string(), "ERR".to_string()],
-            StandardFbKind::P
-            | StandardFbKind::Pi
-            | StandardFbKind::PidParallel
-            | StandardFbKind::PidSeries
-            | StandardFbKind::PidMixed => vec!["OUT".to_string(), "ERR".to_string()],
-            _ => vec!["Q".to_string()],
-        },
-        FbdBlockKind::StandardFb { fb_type: None, .. } => vec!["Q".to_string(), "OUT".to_string()],
-        FbdBlockKind::Composite { type_name } => composites
-            .iter()
-            .find(|c| &c.name == type_name)
-            .map(|c| c.output_pins.clone())
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| vec!["OUT".to_string()]),
-        _ => vec!["OUT".to_string()],
-    };
-
-    let mut configured: Vec<String> = blk.outputs.keys().cloned().collect();
-    configured.sort();
-    for pin in configured {
-        if !pins.iter().any(|p| p.eq_ignore_ascii_case(&pin)) {
-            pins.push(pin);
-        }
-    }
-    pins
-}
-
-fn fbd_block_size(blk: &FbdBlock, composites: &[CompositeFbDef]) -> Size {
-    let in_count = fbd_block_input_pins(blk).len();
-    let out_count = fbd_block_output_pins(blk, composites).len();
-    let rows = in_count.max(out_count).max(1) as f32;
-    Size::new(
-        FBD_BLOCK_WIDTH,
-        FBD_HEADER_HEIGHT + rows * FBD_PIN_ROW_HEIGHT + FBD_BOTTOM_PAD,
-    )
-}
-
-fn fbd_input_pin_pos(block_pos: Point, row_idx: usize) -> Point {
-    Point::new(
-        block_pos.x,
-        block_pos.y + FBD_HEADER_HEIGHT + 10.0 + row_idx as f32 * FBD_PIN_ROW_HEIGHT,
-    )
-}
-
-fn fbd_output_pin_pos(block_pos: Point, row_idx: usize) -> Point {
-    Point::new(
-        block_pos.x + FBD_BLOCK_WIDTH,
-        block_pos.y + FBD_HEADER_HEIGHT + 10.0 + row_idx as f32 * FBD_PIN_ROW_HEIGHT,
-    )
 }
 
 pub fn compute_default_block_positions(program: &FbdProgram) -> HashMap<String, Point> {
@@ -1440,14 +534,32 @@ pub fn compute_default_block_positions(program: &FbdProgram) -> HashMap<String, 
         }
     }
 
+    let mut col_widths: HashMap<usize, f32> = HashMap::new();
+    for (idx, blk) in program.blocks.iter().enumerate() {
+        let col = depths[idx];
+        let w = fbd_geometry::block_size(blk, &program.composites).width;
+        col_widths
+            .entry(col)
+            .and_modify(|cur| *cur = cur.max(w))
+            .or_insert(w);
+    }
+
+    let max_col = depths.iter().copied().max().unwrap_or(0);
+    let mut col_x: HashMap<usize, f32> = HashMap::with_capacity(max_col + 1);
+    let mut cur_x = 28.0_f32;
+    for col in 0..=max_col {
+        col_x.insert(col, cur_x);
+        cur_x += col_widths.get(&col).copied().unwrap_or(MIN_BLOCK_W) + 68.0;
+    }
+
     let mut col_y: HashMap<usize, f32> = HashMap::new();
     let mut positions = HashMap::with_capacity(count);
     for (idx, blk) in program.blocks.iter().enumerate() {
         let col = depths[idx];
-        let x = 28.0 + col as f32 * (FBD_BLOCK_WIDTH + 68.0);
+        let x = col_x.get(&col).copied().unwrap_or(28.0);
         let y = *col_y.get(&col).unwrap_or(&24.0);
         positions.insert(blk.id.clone(), Point::new(x, y));
-        let size = fbd_block_size(blk, &program.composites);
+        let size = fbd_geometry::block_size(blk, &program.composites);
         col_y.insert(col, y + size.height + 24.0);
     }
     positions
@@ -1471,11 +583,467 @@ fn build_bezier_wire_path(from: Point, to: Point) -> Path {
     })
 }
 
+fn editing_text_for_block(state: &FbdCanvasState, block_id: &str) -> Option<String> {
+    match state.editing_target.as_ref()? {
+        FbdEditTarget::BlockId { block_id: id }
+        | FbdEditTarget::InputValue { block_id: id, .. }
+        | FbdEditTarget::OutputTarget { block_id: id, .. }
+            if id == block_id =>
+        {
+            Some(state.edit_display_with_caret())
+        }
+        _ => None,
+    }
+}
+
+fn default_expr_for_new_pin(kind: &FbdBlockKind) -> &'static str {
+    match kind {
+        FbdBlockKind::Add | FbdBlockKind::Mul => "0",
+        _ => "TRUE",
+    }
+}
+
+#[derive(Debug, Clone)]
+enum FbdHit {
+    KindMenuItem(FbdBlockKind),
+    KindMenuBg,
+    InputDelete {
+        block_id: String,
+        pin: String,
+    },
+    OutputDelete {
+        block_id: String,
+        pin: String,
+    },
+    AddPin {
+        block_id: String,
+    },
+    KindBadge {
+        block_id: String,
+        badge: Rectangle,
+    },
+    Id {
+        block_id: String,
+    },
+    InputField {
+        block_id: String,
+        pin: String,
+    },
+    OutputField {
+        block_id: String,
+        pin: String,
+    },
+    OutputPin {
+        block_id: String,
+        pin: String,
+        pos: Point,
+    },
+    InputPin,
+    Body {
+        block_id: String,
+        origin: Point,
+    },
+    Canvas,
+}
+
 pub struct FbdSignalFlowCanvas<'a> {
     pub pou_name: &'a str,
     pub program: &'a FbdProgram,
     pub runtime: Option<&'a PlcRuntime>,
-    pub selected_block: Option<usize>,
+    pub selected_block: Option<&'a str>,
+}
+
+impl<'a> FbdSignalFlowCanvas<'a> {
+    pub fn kind_menu_items(&self) -> Vec<(FbdBlockKind, String)> {
+        let mut items: Vec<(FbdBlockKind, String)> = vec![
+            (FbdBlockKind::And, "AND".to_string()),
+            (FbdBlockKind::Or, "OR".to_string()),
+            (FbdBlockKind::Xor, "XOR".to_string()),
+            (FbdBlockKind::Not, "NOT".to_string()),
+            (FbdBlockKind::Add, "ADD".to_string()),
+            (FbdBlockKind::Sub, "SUB".to_string()),
+            (FbdBlockKind::Mul, "MUL".to_string()),
+            (FbdBlockKind::Div, "DIV".to_string()),
+            (FbdBlockKind::Eq, "EQ (=)".to_string()),
+            (FbdBlockKind::Ne, "NE (\u{2260})".to_string()),
+            (FbdBlockKind::Lt, "LT (<)".to_string()),
+            (FbdBlockKind::Le, "LE (\u{2264})".to_string()),
+            (FbdBlockKind::Gt, "GT (>)".to_string()),
+            (FbdBlockKind::Ge, "GE (\u{2265})".to_string()),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "TON_1".to_string(),
+                    fb_type: Some(StandardFbKind::Ton),
+                },
+                "TON".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "TOF_1".to_string(),
+                    fb_type: Some(StandardFbKind::Tof),
+                },
+                "TOF".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "TP_1".to_string(),
+                    fb_type: Some(StandardFbKind::Tp),
+                },
+                "TP".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "CTU_1".to_string(),
+                    fb_type: Some(StandardFbKind::Ctu),
+                },
+                "CTU".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "CTD_1".to_string(),
+                    fb_type: Some(StandardFbKind::Ctd),
+                },
+                "CTD".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "CTUD_1".to_string(),
+                    fb_type: Some(StandardFbKind::Ctud),
+                },
+                "CTUD".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "BLINK_1".to_string(),
+                    fb_type: Some(StandardFbKind::Blink),
+                },
+                "BLINK".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "R_TRIG_1".to_string(),
+                    fb_type: Some(StandardFbKind::RTrig),
+                },
+                "R_TRIG".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "F_TRIG_1".to_string(),
+                    fb_type: Some(StandardFbKind::FTrig),
+                },
+                "F_TRIG".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "SR_1".to_string(),
+                    fb_type: Some(StandardFbKind::Sr),
+                },
+                "SR".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "RS_1".to_string(),
+                    fb_type: Some(StandardFbKind::Rs),
+                },
+                "RS".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "HYST_1".to_string(),
+                    fb_type: Some(StandardFbKind::Hysteresis),
+                },
+                "HYST".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "RAMP_1".to_string(),
+                    fb_type: Some(StandardFbKind::RampReal),
+                },
+                "RAMP".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "SCALE_1".to_string(),
+                    fb_type: Some(StandardFbKind::ScaleLin),
+                },
+                "SCALE".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "P_1".to_string(),
+                    fb_type: Some(StandardFbKind::P),
+                },
+                "P".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "PI_1".to_string(),
+                    fb_type: Some(StandardFbKind::Pi),
+                },
+                "PI".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "PID_Par_1".to_string(),
+                    fb_type: Some(StandardFbKind::PidParallel),
+                },
+                "PID_PAR".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "PID_Ser_1".to_string(),
+                    fb_type: Some(StandardFbKind::PidSeries),
+                },
+                "PID_SER".to_string(),
+            ),
+            (
+                FbdBlockKind::StandardFb {
+                    instance: "PID_Mix_1".to_string(),
+                    fb_type: Some(StandardFbKind::PidMixed),
+                },
+                "PID_MIX".to_string(),
+            ),
+        ];
+        for comp in &self.program.composites {
+            items.push((
+                FbdBlockKind::Composite {
+                    type_name: comp.name.clone(),
+                },
+                comp.name.clone(),
+            ));
+        }
+        items
+    }
+
+    pub fn kind_menu_size(&self) -> Size {
+        let count = self.kind_menu_items().len();
+        let rows = count.div_ceil(MENU_COLS);
+        Size::new(
+            MENU_COLS as f32 * MENU_ITEM_W + MENU_PAD * 2.0,
+            rows as f32 * MENU_ITEM_H + MENU_PAD * 2.0,
+        )
+    }
+
+    pub fn kind_menu_item_rect(&self, anchor: Point, idx: usize) -> Rectangle {
+        let col = idx % MENU_COLS;
+        let row = idx / MENU_COLS;
+        Rectangle::new(
+            Point::new(
+                anchor.x + MENU_PAD + col as f32 * MENU_ITEM_W,
+                anchor.y + MENU_PAD + row as f32 * MENU_ITEM_H,
+            ),
+            Size::new(MENU_ITEM_W - 2.0, MENU_ITEM_H - 2.0),
+        )
+    }
+
+    pub fn commit_current_edit(&self, state: &mut FbdCanvasState) -> Option<Message> {
+        let target = state.editing_target.take()?;
+        let buffer: String = std::mem::take(&mut state.edit_buffer).into_iter().collect();
+        state.cursor_pos = 0;
+        let pou = self.pou_name.to_string();
+
+        match target {
+            FbdEditTarget::BlockId { block_id } => {
+                let trimmed = buffer.trim().to_string();
+                if trimmed.is_empty() || trimmed == block_id {
+                    None
+                } else {
+                    Some(Message::FbdBlockIdChanged(pou, block_id, trimmed))
+                }
+            }
+            FbdEditTarget::InputValue { block_id, pin } => {
+                let trimmed = buffer.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(Message::FbdInputSourceChanged(pou, block_id, pin, trimmed))
+                }
+            }
+            FbdEditTarget::OutputTarget { block_id, pin } => Some(Message::FbdOutputTargetChanged(
+                pou,
+                block_id,
+                pin,
+                buffer.trim().to_string(),
+            )),
+        }
+    }
+
+    fn hit_test(&self, state: &FbdCanvasState, cursor: Point) -> FbdHit {
+        if let Some(ref menu) = state.menu {
+            let menu_rect = Rectangle::new(menu.anchor, self.kind_menu_size());
+            if menu_rect.contains(cursor) {
+                for (idx, (kind, _label)) in self.kind_menu_items().into_iter().enumerate() {
+                    if self.kind_menu_item_rect(menu.anchor, idx).contains(cursor) {
+                        return FbdHit::KindMenuItem(kind);
+                    }
+                }
+                return FbdHit::KindMenuBg;
+            }
+        }
+
+        let layout = state.resolved_layout(self.program);
+        let hit_r_sq = FBD_PIN_HIT_RADIUS * FBD_PIN_HIT_RADIUS;
+
+        for blk in self.program.blocks.iter().rev() {
+            let Some(&origin) = layout.get(&blk.id) else {
+                continue;
+            };
+            let edit_txt = editing_text_for_block(state, &blk.id);
+            let size = block_size_with_edit(blk, &self.program.composites, edit_txt.as_deref());
+            let width = size.width;
+            let in_pins = input_pins(blk);
+            let out_pins = output_pins(blk, &self.program.composites);
+
+            if is_variadic(&blk.kind) {
+                for (i, pin) in in_pins.iter().enumerate() {
+                    if input_delete_rect(origin, width, i).contains(cursor) {
+                        return FbdHit::InputDelete {
+                            block_id: blk.id.clone(),
+                            pin: pin.clone(),
+                        };
+                    }
+                }
+            }
+
+            for (i, pin) in out_pins.iter().enumerate() {
+                if blk.outputs.contains_key(pin)
+                    && output_delete_rect(origin, width, in_pins.len(), i).contains(cursor)
+                {
+                    return FbdHit::OutputDelete {
+                        block_id: blk.id.clone(),
+                        pin: pin.clone(),
+                    };
+                }
+            }
+
+            if let Some(add_r) =
+                fbd_geometry::add_pin_rect_with_width(blk, &self.program.composites, origin, width)
+                && add_r.contains(cursor)
+            {
+                return FbdHit::AddPin {
+                    block_id: blk.id.clone(),
+                };
+            }
+
+            let badge = kind_badge_rect(blk, &self.program.composites, origin);
+            if badge.contains(cursor) {
+                return FbdHit::KindBadge {
+                    block_id: blk.id.clone(),
+                    badge,
+                };
+            }
+
+            let id_r = id_rect_with_width(blk, &self.program.composites, origin, width);
+            if id_r.contains(cursor) {
+                return FbdHit::Id {
+                    block_id: blk.id.clone(),
+                };
+            }
+
+            for (i, pin) in in_pins.iter().enumerate() {
+                if input_value_rect(origin, width, i).contains(cursor) {
+                    return FbdHit::InputField {
+                        block_id: blk.id.clone(),
+                        pin: pin.clone(),
+                    };
+                }
+            }
+
+            for (i, pin) in out_pins.iter().enumerate() {
+                if output_value_rect(origin, width, in_pins.len(), i).contains(cursor) {
+                    return FbdHit::OutputField {
+                        block_id: blk.id.clone(),
+                        pin: pin.clone(),
+                    };
+                }
+            }
+
+            for (i, pin) in out_pins.iter().enumerate() {
+                let pt = output_pin_point(origin, width, in_pins.len(), i);
+                if point_distance_sq(cursor, pt) <= hit_r_sq {
+                    return FbdHit::OutputPin {
+                        block_id: blk.id.clone(),
+                        pin: pin.clone(),
+                        pos: pt,
+                    };
+                }
+            }
+
+            for (i, _pin) in in_pins.iter().enumerate() {
+                let pt = input_pin_point(origin, i);
+                if point_distance_sq(cursor, pt) <= hit_r_sq {
+                    return FbdHit::InputPin;
+                }
+            }
+
+            if Rectangle::new(origin, size).contains(cursor) {
+                return FbdHit::Body {
+                    block_id: blk.id.clone(),
+                    origin,
+                };
+            }
+        }
+
+        FbdHit::Canvas
+    }
+
+    fn begin_inline_edit(
+        &self,
+        state: &mut FbdCanvasState,
+        block_id: &str,
+        target: FbdEditTarget,
+        initial_text: &str,
+    ) -> (event::Status, Option<Message>) {
+        if state.editing_target.as_ref() == Some(&target) {
+            return (
+                event::Status::Captured,
+                Some(Message::FbdInlineEditingChanged(true)),
+            );
+        }
+        if state.editing_target.is_some()
+            && let Some(commit_msg) = self.commit_current_edit(state)
+        {
+            return (event::Status::Captured, Some(commit_msg));
+        }
+        state.selected_block = Some(block_id.to_string());
+        state.start_edit(target, initial_text);
+        (
+            event::Status::Captured,
+            Some(Message::FbdInlineEditingChanged(true)),
+        )
+    }
+
+    fn compute_kind_menu_anchor(
+        &self,
+        state: &FbdCanvasState,
+        bounds: Rectangle,
+        badge: Rectangle,
+    ) -> Point {
+        let zoom = state.effective_zoom();
+        let menu_size = self.kind_menu_size();
+        let vis_min_x = -state.pan.x / zoom;
+        let vis_min_y = -state.pan.y / zoom;
+        let vis_max_x = (bounds.width - state.pan.x) / zoom;
+        let vis_max_y = (bounds.height - state.pan.y) / zoom;
+
+        let anchor_y = if badge.y + badge.height + 2.0 + menu_size.height > vis_max_y
+            && badge.y - vis_min_y >= menu_size.height + 4.0
+        {
+            badge.y - menu_size.height - 2.0
+        } else {
+            badge.y + badge.height + 2.0
+        };
+        let anchor_x = if badge.x + menu_size.width > vis_max_x {
+            (vis_max_x - menu_size.width - 4.0).max(vis_min_x)
+        } else {
+            badge.x
+        };
+        Point::new(anchor_x, anchor_y)
+    }
+
+    fn find_block(&self, block_id: &str) -> Option<&FbdBlock> {
+        self.program.blocks.iter().find(|b| b.id == block_id)
+    }
 }
 
 impl<'a> canvas::Program<Message> for FbdSignalFlowCanvas<'a> {
@@ -1489,7 +1057,92 @@ impl<'a> canvas::Program<Message> for FbdSignalFlowCanvas<'a> {
         cursor: mouse::Cursor,
     ) -> (event::Status, Option<Message>) {
         state.sync_pou(self.pou_name);
-        state.ensure_layout(self.program);
+
+        if let canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, text, .. }) = event
+        {
+            if state.editing_target.is_some() {
+                use iced::keyboard::Key;
+                use iced::keyboard::key::Named;
+                return match key {
+                    Key::Named(Named::Enter) => {
+                        let msg = self
+                            .commit_current_edit(state)
+                            .or(Some(Message::FbdInlineEditingChanged(false)));
+                        (event::Status::Captured, msg)
+                    }
+                    Key::Named(Named::Escape) => {
+                        state.cancel_edit();
+                        (
+                            event::Status::Captured,
+                            Some(Message::FbdInlineEditingChanged(false)),
+                        )
+                    }
+                    Key::Named(Named::Backspace) => {
+                        state.backspace();
+                        (event::Status::Captured, None)
+                    }
+                    Key::Named(Named::Delete) => {
+                        state.delete_forward();
+                        (
+                            event::Status::Captured,
+                            Some(Message::FbdInlineEditingChanged(true)),
+                        )
+                    }
+                    Key::Named(Named::ArrowLeft) => {
+                        state.move_cursor_left();
+                        (event::Status::Captured, None)
+                    }
+                    Key::Named(Named::ArrowRight) => {
+                        state.move_cursor_right();
+                        (event::Status::Captured, None)
+                    }
+                    Key::Named(Named::Home) => {
+                        state.cursor_pos = 0;
+                        (event::Status::Captured, None)
+                    }
+                    Key::Named(Named::End) => {
+                        state.cursor_pos = state.edit_buffer.len();
+                        (event::Status::Captured, None)
+                    }
+                    Key::Named(Named::Space) => {
+                        state.insert_char(' ');
+                        (event::Status::Captured, None)
+                    }
+                    _ => {
+                        if let Some(txt) = text {
+                            for c in txt.chars() {
+                                if !c.is_control() {
+                                    state.insert_char(c);
+                                }
+                            }
+                            (event::Status::Captured, None)
+                        } else if let Key::Character(s) = key {
+                            for c in s.chars() {
+                                if !c.is_control() {
+                                    state.insert_char(c);
+                                }
+                            }
+                            (event::Status::Captured, None)
+                        } else {
+                            (event::Status::Ignored, None)
+                        }
+                    }
+                };
+            }
+
+            if state.menu.is_some()
+                && matches!(
+                    key,
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
+                )
+            {
+                state.menu = None;
+                return (event::Status::Captured, None);
+            }
+
+            // Delete when not editing is owned by the global DeletePressed shortcut in app.rs.
+            return (event::Status::Ignored, None);
+        }
 
         let raw_cursor_pos = match cursor.position_in(bounds) {
             Some(p) => p,
@@ -1499,14 +1152,46 @@ impl<'a> canvas::Program<Message> for FbdSignalFlowCanvas<'a> {
                 {
                     state.is_panning = false;
                     state.pan_start = None;
-                    return (event::Status::Captured, None);
+                    state.store_current_viewport(self.pou_name);
+                    return (
+                        event::Status::Captured,
+                        Some(Message::FbdViewportChanged(
+                            self.pou_name.to_string(),
+                            state.pan,
+                            state.effective_zoom(),
+                            bounds.size(),
+                        )),
+                    );
                 }
                 if let canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) =
                     event
-                    && !matches!(state.drag, FbdDragState::None)
                 {
-                    state.drag = FbdDragState::None;
-                    return (event::Status::Captured, None);
+                    let prev_drag = std::mem::replace(&mut state.drag, FbdDragState::None);
+                    state.hover_pin = None;
+                    if let FbdDragState::MovingBlock {
+                        block_id,
+                        origin_pos,
+                        preview_pos,
+                        ..
+                    } = prev_drag
+                    {
+                        let moved = (preview_pos.x - origin_pos.x).abs() > f32::EPSILON
+                            || (preview_pos.y - origin_pos.y).abs() > f32::EPSILON;
+                        if moved {
+                            return (
+                                event::Status::Captured,
+                                Some(Message::FbdBlockMoved(
+                                    self.pou_name.to_string(),
+                                    block_id,
+                                    [preview_pos.x.round() as i32, preview_pos.y.round() as i32],
+                                )),
+                            );
+                        }
+                        return (event::Status::Captured, None);
+                    }
+                    if !matches!(prev_drag, FbdDragState::None) {
+                        return (event::Status::Captured, None);
+                    }
                 }
                 return (event::Status::Ignored, None);
             }
@@ -1529,7 +1214,18 @@ impl<'a> canvas::Program<Message> for FbdSignalFlowCanvas<'a> {
                     state.is_panning = false;
                     state.pan_start = None;
                     state.store_current_viewport(self.pou_name);
-                    (event::Status::Captured, None)
+                    let vp = (state.pan, state.effective_zoom(), bounds.size());
+                    state.last_reported_viewport =
+                        Some((self.pou_name.to_string(), vp.0, vp.1, vp.2));
+                    (
+                        event::Status::Captured,
+                        Some(Message::FbdViewportChanged(
+                            self.pou_name.to_string(),
+                            vp.0,
+                            vp.1,
+                            vp.2,
+                        )),
+                    )
                 } else {
                     (event::Status::Ignored, None)
                 }
@@ -1551,49 +1247,232 @@ impl<'a> canvas::Program<Message> for FbdSignalFlowCanvas<'a> {
                         raw_cursor_pos.y - world_y * new_zoom,
                     );
                     state.store_current_viewport(self.pou_name);
-                    return (event::Status::Captured, None);
+                    let vp = (state.pan, state.effective_zoom(), bounds.size());
+                    state.last_reported_viewport =
+                        Some((self.pou_name.to_string(), vp.0, vp.1, vp.2));
+                    return (
+                        event::Status::Captured,
+                        Some(Message::FbdViewportChanged(
+                            self.pou_name.to_string(),
+                            vp.0,
+                            vp.1,
+                            vp.2,
+                        )),
+                    );
                 }
                 (event::Status::Ignored, None)
             }
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                let hit_r_sq = FBD_PIN_HIT_RADIUS * FBD_PIN_HIT_RADIUS;
-                // 1. Hit-test output pins first to allow wiring
-                for blk in self.program.blocks.iter().rev() {
-                    if let Some(&pos) = state.block_positions.get(&blk.id) {
-                        let out_pins = fbd_block_output_pins(blk, &self.program.composites);
-                        for (row_idx, pin_name) in out_pins.iter().enumerate() {
-                            let pin_pt = fbd_output_pin_pos(pos, row_idx);
-                            if point_distance_sq(cursor_pos, pin_pt) <= hit_r_sq {
-                                state.drag = FbdDragState::Wiring {
-                                    from_block: blk.id.clone(),
-                                    from_pin: pin_name.clone(),
-                                    start_pt: pin_pt,
-                                    current_pt: cursor_pos,
-                                };
-                                return (event::Status::Captured, None);
+                let hit = self.hit_test(state, cursor_pos);
+                match hit {
+                    FbdHit::KindMenuItem(kind) => {
+                        let block_id = state.menu.take().map(|m| m.block_id).unwrap_or_default();
+                        if block_id.is_empty() {
+                            (event::Status::Captured, None)
+                        } else {
+                            (
+                                event::Status::Captured,
+                                Some(Message::FbdChangeKind(
+                                    self.pou_name.to_string(),
+                                    block_id,
+                                    kind,
+                                )),
+                            )
+                        }
+                    }
+                    FbdHit::KindMenuBg => {
+                        state.menu = None;
+                        (event::Status::Captured, None)
+                    }
+                    FbdHit::InputDelete { block_id, pin } => {
+                        state.menu = None;
+                        let commit_msg = self.commit_current_edit(state);
+                        if commit_msg.is_some() {
+                            return (event::Status::Captured, commit_msg);
+                        }
+                        let count = self.find_block(&block_id).map_or(0, |b| b.inputs.len());
+                        if count > 2 {
+                            (
+                                event::Status::Captured,
+                                Some(Message::FbdRemoveInputPin(
+                                    self.pou_name.to_string(),
+                                    block_id,
+                                    pin,
+                                )),
+                            )
+                        } else {
+                            (event::Status::Captured, None)
+                        }
+                    }
+                    FbdHit::OutputDelete { block_id, pin } => {
+                        state.menu = None;
+                        let commit_msg = self.commit_current_edit(state);
+                        if commit_msg.is_some() {
+                            return (event::Status::Captured, commit_msg);
+                        }
+                        (
+                            event::Status::Captured,
+                            Some(Message::FbdDisconnectOutput(
+                                self.pou_name.to_string(),
+                                block_id,
+                                pin,
+                            )),
+                        )
+                    }
+                    FbdHit::AddPin { block_id } => {
+                        state.menu = None;
+                        let commit_msg = self.commit_current_edit(state);
+                        if commit_msg.is_some() {
+                            return (event::Status::Captured, commit_msg);
+                        }
+                        if let Some(blk) = self.find_block(&block_id)
+                            && is_variadic(&blk.kind)
+                        {
+                            let mut n = blk.inputs.len() + 1;
+                            while blk.inputs.contains_key(&format!("IN{n}")) {
+                                n += 1;
                             }
+                            let new_pin = format!("IN{n}");
+                            let default_expr = default_expr_for_new_pin(&blk.kind);
+                            state.selected_block = Some(block_id.clone());
+                            state.start_edit(
+                                FbdEditTarget::InputValue {
+                                    block_id: block_id.clone(),
+                                    pin: new_pin,
+                                },
+                                default_expr,
+                            );
+                            return (
+                                event::Status::Captured,
+                                Some(Message::FbdAddInputPin(self.pou_name.to_string(), block_id)),
+                            );
+                        }
+                        (event::Status::Captured, None)
+                    }
+                    FbdHit::KindBadge { block_id, badge } => {
+                        let commit_msg = self.commit_current_edit(state);
+                        if commit_msg.is_some() {
+                            return (event::Status::Captured, commit_msg);
+                        }
+                        let anchor = self.compute_kind_menu_anchor(state, bounds, badge);
+                        state.selected_block = Some(block_id.clone());
+                        state.menu = Some(FbdKindMenu { block_id, anchor });
+                        (event::Status::Captured, None)
+                    }
+                    FbdHit::Id { block_id } => {
+                        let init = self
+                            .find_block(&block_id)
+                            .map(|b| b.id.as_str())
+                            .unwrap_or("");
+                        self.begin_inline_edit(
+                            state,
+                            &block_id,
+                            FbdEditTarget::BlockId {
+                                block_id: block_id.clone(),
+                            },
+                            init,
+                        )
+                    }
+                    FbdHit::InputField { block_id, pin } => {
+                        let init = self
+                            .find_block(&block_id)
+                            .map(|b| input_row_text(b.inputs.get(&pin)))
+                            .unwrap_or_default();
+                        self.begin_inline_edit(
+                            state,
+                            &block_id,
+                            FbdEditTarget::InputValue {
+                                block_id: block_id.clone(),
+                                pin,
+                            },
+                            &init,
+                        )
+                    }
+                    FbdHit::OutputField { block_id, pin } => {
+                        let init = self
+                            .find_block(&block_id)
+                            .and_then(|b| b.outputs.get(&pin))
+                            .cloned()
+                            .unwrap_or_default();
+                        self.begin_inline_edit(
+                            state,
+                            &block_id,
+                            FbdEditTarget::OutputTarget {
+                                block_id: block_id.clone(),
+                                pin,
+                            },
+                            &init,
+                        )
+                    }
+                    FbdHit::OutputPin { block_id, pin, pos } => {
+                        state.menu = None;
+                        let commit_msg = self.commit_current_edit(state);
+                        if commit_msg.is_some() {
+                            return (event::Status::Captured, commit_msg);
+                        }
+                        state.drag = FbdDragState::Wiring {
+                            from_block: block_id,
+                            from_pin: pin,
+                            start_pt: pos,
+                            current_pt: cursor_pos,
+                        };
+                        (event::Status::Captured, None)
+                    }
+                    FbdHit::InputPin => {
+                        state.menu = None;
+                        let commit_msg = self.commit_current_edit(state);
+                        (event::Status::Captured, commit_msg)
+                    }
+                    FbdHit::Body { block_id, origin } => {
+                        state.menu = None;
+                        let was_editing = state.editing_target.is_some();
+                        let commit_msg = self.commit_current_edit(state);
+                        state.selected_block = Some(block_id.clone());
+                        state.drag = FbdDragState::MovingBlock {
+                            block_id: block_id.clone(),
+                            grab_offset: Vector::new(
+                                cursor_pos.x - origin.x,
+                                cursor_pos.y - origin.y,
+                            ),
+                            origin_pos: origin,
+                            preview_pos: origin,
+                        };
+                        let msg = commit_msg
+                            .or(if was_editing {
+                                Some(Message::FbdInlineEditingChanged(false))
+                            } else {
+                                None
+                            })
+                            .or_else(|| {
+                                Some(Message::FbdBlockSelected(
+                                    self.pou_name.to_string(),
+                                    Some(block_id),
+                                ))
+                            });
+                        (event::Status::Captured, msg)
+                    }
+                    FbdHit::Canvas => {
+                        state.menu = None;
+                        let was_editing = state.editing_target.is_some();
+                        let commit_msg = self.commit_current_edit(state);
+                        let had_sel = state.selected_block.take().is_some();
+                        if let Some(msg) = commit_msg {
+                            (event::Status::Captured, Some(msg))
+                        } else if was_editing {
+                            (
+                                event::Status::Captured,
+                                Some(Message::FbdInlineEditingChanged(false)),
+                            )
+                        } else if had_sel {
+                            (
+                                event::Status::Captured,
+                                Some(Message::FbdBlockSelected(self.pou_name.to_string(), None)),
+                            )
+                        } else {
+                            (event::Status::Ignored, None)
                         }
                     }
                 }
-
-                // 2. Hit-test block bodies for selection & dragging
-                for blk in self.program.blocks.iter().rev() {
-                    if let Some(&pos) = state.block_positions.get(&blk.id) {
-                        let size = fbd_block_size(blk, &self.program.composites);
-                        let rect = Rectangle::new(pos, size);
-                        if rect.contains(cursor_pos) {
-                            state.selected_block_id = Some(blk.id.clone());
-                            state.drag = FbdDragState::MovingBlock {
-                                block_id: blk.id.clone(),
-                                grab_offset: Vector::new(cursor_pos.x - pos.x, cursor_pos.y - pos.y),
-                            };
-                            return (event::Status::Captured, None);
-                        }
-                    }
-                }
-
-                state.selected_block_id = None;
-                (event::Status::Ignored, None)
             }
             canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if state.is_panning
@@ -1607,61 +1486,205 @@ impl<'a> canvas::Program<Message> for FbdSignalFlowCanvas<'a> {
                     return (event::Status::Captured, None);
                 }
 
+                let layout = state.resolved_layout(self.program);
                 match &mut state.drag {
                     FbdDragState::MovingBlock {
-                        block_id,
                         grab_offset,
+                        preview_pos,
+                        ..
                     } => {
                         let snapped_x = ((cursor_pos.x - grab_offset.x) / 10.0).round() * 10.0;
                         let snapped_y = ((cursor_pos.y - grab_offset.y) / 10.0).round() * 10.0;
-                        state
-                            .block_positions
-                            .insert(block_id.clone(), Point::new(snapped_x, snapped_y));
+                        *preview_pos = Point::new(snapped_x, snapped_y);
                         (event::Status::Captured, None)
                     }
-                    FbdDragState::Wiring { current_pt, .. } => {
+                    FbdDragState::Wiring {
+                        from_block,
+                        current_pt,
+                        ..
+                    } => {
                         *current_pt = cursor_pos;
+                        let src_block = from_block.clone();
+                        state.hover_pin = fbd_geometry::resolve_input_drop(
+                            &self.program.blocks,
+                            &layout,
+                            &self.program.composites,
+                            Some(src_block.as_str()),
+                            cursor_pos,
+                        )
+                        .map(|(blk, pin)| PinHover::Input {
+                            block_id: blk.id.clone(),
+                            pin,
+                        });
                         (event::Status::Captured, None)
                     }
-                    FbdDragState::None => (event::Status::Ignored, None),
+                    FbdDragState::None => {
+                        let hit_r_sq = FBD_PIN_HIT_RADIUS * FBD_PIN_HIT_RADIUS;
+                        let mut next_hover = None;
+                        for blk in self.program.blocks.iter().rev() {
+                            let Some(&origin) = layout.get(&blk.id) else {
+                                continue;
+                            };
+                            let edit_txt = editing_text_for_block(state, &blk.id);
+                            let width = fbd_geometry::block_width(
+                                blk,
+                                &self.program.composites,
+                                edit_txt.as_deref(),
+                            );
+                            let in_pins = input_pins(blk);
+                            let out_pins = output_pins(blk, &self.program.composites);
+                            for (i, pin) in out_pins.iter().enumerate() {
+                                let pt = output_pin_point(origin, width, in_pins.len(), i);
+                                if point_distance_sq(cursor_pos, pt) <= hit_r_sq {
+                                    next_hover = Some(PinHover::Output {
+                                        block_id: blk.id.clone(),
+                                        pin: pin.clone(),
+                                    });
+                                    break;
+                                }
+                            }
+                            if next_hover.is_some() {
+                                break;
+                            }
+                            for (i, pin) in in_pins.iter().enumerate() {
+                                let pt = input_pin_point(origin, i);
+                                if point_distance_sq(cursor_pos, pt) <= hit_r_sq {
+                                    next_hover = Some(PinHover::Input {
+                                        block_id: blk.id.clone(),
+                                        pin: pin.clone(),
+                                    });
+                                    break;
+                                }
+                            }
+                            if next_hover.is_some() {
+                                break;
+                            }
+                        }
+                        state.hover_pin = next_hover;
+                        let vp = (state.pan, state.effective_zoom(), bounds.size());
+                        if state.last_reported_viewport.as_ref()
+                            != Some(&(self.pou_name.to_string(), vp.0, vp.1, vp.2))
+                        {
+                            state.last_reported_viewport =
+                                Some((self.pou_name.to_string(), vp.0, vp.1, vp.2));
+                            return (
+                                event::Status::Ignored,
+                                Some(Message::FbdViewportChanged(
+                                    self.pou_name.to_string(),
+                                    vp.0,
+                                    vp.1,
+                                    vp.2,
+                                )),
+                            );
+                        }
+                        (event::Status::Ignored, None)
+                    }
                 }
             }
             canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let prev_drag = std::mem::replace(&mut state.drag, FbdDragState::None);
+                state.hover_pin = None;
                 match prev_drag {
-                    FbdDragState::MovingBlock { .. } => (event::Status::Captured, None),
+                    FbdDragState::MovingBlock {
+                        block_id,
+                        origin_pos,
+                        preview_pos,
+                        ..
+                    } => {
+                        let moved = (preview_pos.x - origin_pos.x).abs() > f32::EPSILON
+                            || (preview_pos.y - origin_pos.y).abs() > f32::EPSILON;
+                        if moved {
+                            (
+                                event::Status::Captured,
+                                Some(Message::FbdBlockMoved(
+                                    self.pou_name.to_string(),
+                                    block_id,
+                                    [preview_pos.x.round() as i32, preview_pos.y.round() as i32],
+                                )),
+                            )
+                        } else {
+                            (event::Status::Captured, None)
+                        }
+                    }
                     FbdDragState::Wiring {
                         from_block,
                         from_pin,
                         ..
                     } => {
-                        let hit_r_sq = FBD_PIN_HIT_RADIUS * FBD_PIN_HIT_RADIUS;
-                        for blk in self.program.blocks.iter() {
-                            if blk.id == from_block {
-                                continue;
-                            }
-                            if let Some(&pos) = state.block_positions.get(&blk.id) {
-                                let in_pins = fbd_block_input_pins(blk);
-                                for (row_idx, in_pin) in in_pins.iter().enumerate() {
-                                    let pin_pt = fbd_input_pin_pos(pos, row_idx);
-                                    if point_distance_sq(cursor_pos, pin_pt) <= hit_r_sq {
-                                        return (
-                                            event::Status::Captured,
-                                            Some(Message::FbdInputSourceChanged(
-                                                self.pou_name.to_string(),
-                                                blk.id.clone(),
-                                                in_pin.clone(),
-                                                format!("{from_block}.{from_pin}"),
-                                            )),
-                                        );
-                                    }
-                                }
-                            }
+                        let layout = state.resolved_layout(self.program);
+                        if let Some((target_blk, target_pin)) = fbd_geometry::resolve_input_drop(
+                            &self.program.blocks,
+                            &layout,
+                            &self.program.composites,
+                            Some(&from_block),
+                            cursor_pos,
+                        ) {
+                            (
+                                event::Status::Captured,
+                                Some(Message::FbdInputSourceChanged(
+                                    self.pou_name.to_string(),
+                                    target_blk.id.clone(),
+                                    target_pin,
+                                    format!("{from_block}.{from_pin}"),
+                                )),
+                            )
+                        } else {
+                            (event::Status::Captured, None)
                         }
-                        (event::Status::Captured, None)
                     }
                     FbdDragState::None => (event::Status::Ignored, None),
                 }
+            }
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                state.menu = None;
+                let layout = state.resolved_layout(self.program);
+                for blk in self.program.blocks.iter().rev() {
+                    let Some(&origin) = layout.get(&blk.id) else {
+                        continue;
+                    };
+                    let edit_txt = editing_text_for_block(state, &blk.id);
+                    let width = fbd_geometry::block_width(
+                        blk,
+                        &self.program.composites,
+                        edit_txt.as_deref(),
+                    );
+                    if header_rect_with_width(origin, width).contains(cursor_pos) {
+                        return (
+                            event::Status::Captured,
+                            Some(Message::FbdRemoveBlock(
+                                self.pou_name.to_string(),
+                                blk.id.clone(),
+                            )),
+                        );
+                    }
+                    let in_pins = input_pins(blk);
+                    for (i, pin) in in_pins.iter().enumerate() {
+                        if input_row_rect(origin, width, i).contains(cursor_pos) {
+                            return (
+                                event::Status::Captured,
+                                Some(Message::FbdDisconnectInput(
+                                    self.pou_name.to_string(),
+                                    blk.id.clone(),
+                                    pin.clone(),
+                                )),
+                            );
+                        }
+                    }
+                    let out_pins = output_pins(blk, &self.program.composites);
+                    for (i, pin) in out_pins.iter().enumerate() {
+                        if output_row_rect(origin, width, in_pins.len(), i).contains(cursor_pos) {
+                            return (
+                                event::Status::Captured,
+                                Some(Message::FbdDisconnectOutput(
+                                    self.pou_name.to_string(),
+                                    blk.id.clone(),
+                                    pin.clone(),
+                                )),
+                            );
+                        }
+                    }
+                }
+                (event::Status::Ignored, None)
             }
             _ => (event::Status::Ignored, None),
         }
@@ -1673,7 +1696,7 @@ impl<'a> canvas::Program<Message> for FbdSignalFlowCanvas<'a> {
         renderer: &Renderer,
         theme: &Theme,
         bounds: Rectangle,
-        _cursor: mouse::Cursor,
+        cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         frame.fill_rectangle(Point::ORIGIN, bounds.size(), StudioTheme::bg_base(theme));
@@ -1703,12 +1726,26 @@ impl<'a> canvas::Program<Message> for FbdSignalFlowCanvas<'a> {
 
         let layout = state.resolved_layout(self.program);
 
+        let menu_rect_opt = state
+            .menu
+            .as_ref()
+            .map(|m| Rectangle::new(m.anchor, self.kind_menu_size()));
+        let is_occluded = |r: Rectangle| -> bool {
+            menu_rect_opt.is_some_and(|mr| {
+                let expanded = Rectangle::new(
+                    Point::new(mr.x - 2.0, mr.y - 2.0),
+                    Size::new(mr.width + 4.0, mr.height + 4.0),
+                );
+                expanded.intersection(&r).is_some()
+            })
+        };
+
         // Pass 1: Signal-flow Bezier wires and live values
         for blk in &self.program.blocks {
             let Some(&dst_pos) = layout.get(&blk.id) else {
                 continue;
             };
-            let in_pins = fbd_block_input_pins(blk);
+            let in_pins = input_pins(blk);
             for (in_idx, in_pin) in in_pins.iter().enumerate() {
                 let Some(src) = blk.inputs.get(in_pin) else {
                     continue;
@@ -1720,13 +1757,20 @@ impl<'a> canvas::Program<Message> for FbdSignalFlowCanvas<'a> {
                     && let Some(&src_pos) = layout.get(from_block)
                     && let Some(src_blk) = self.program.blocks.iter().find(|b| b.id == *from_block)
                 {
-                    let out_pins = fbd_block_output_pins(src_blk, &self.program.composites);
+                    let src_edit = editing_text_for_block(state, &src_blk.id);
+                    let src_width = fbd_geometry::block_width(
+                        src_blk,
+                        &self.program.composites,
+                        src_edit.as_deref(),
+                    );
+                    let src_in_len = input_pins(src_blk).len();
+                    let out_pins = output_pins(src_blk, &self.program.composites);
                     let out_idx = out_pins
                         .iter()
                         .position(|p| p.eq_ignore_ascii_case(from_pin))
                         .unwrap_or(0);
-                    let p1 = fbd_output_pin_pos(src_pos, out_idx);
-                    let p2 = fbd_input_pin_pos(dst_pos, in_idx);
+                    let p1 = output_pin_point(src_pos, src_width, src_in_len, out_idx);
+                    let p2 = input_pin_point(dst_pos, in_idx);
 
                     let energized = self.runtime.is_some_and(|rt| is_input_energized(rt, src));
                     let wire_color = if energized {
@@ -1743,14 +1787,20 @@ impl<'a> canvas::Program<Message> for FbdSignalFlowCanvas<'a> {
                         && let Some(live_txt) = read_input_live_value(rt, src)
                     {
                         let mid = Point::new((p1.x + p2.x) * 0.5, (p1.y + p2.y) * 0.5);
-                        frame.fill_text(canvas::Text {
-                            content: live_txt,
-                            position: Point::new(mid.x - 16.0, mid.y - 12.0),
-                            color: wire_color,
-                            size: iced::Pixels(9.5),
-                            font: iced::Font::MONOSPACE,
-                            ..Default::default()
-                        });
+                        let label_rect = Rectangle::new(
+                            Point::new(mid.x - 18.0, mid.y - 14.0),
+                            Size::new(48.0, 14.0),
+                        );
+                        if !is_occluded(label_rect) {
+                            frame.fill_text(canvas::Text {
+                                content: live_txt,
+                                position: Point::new(mid.x - 16.0, mid.y - 12.0),
+                                color: wire_color,
+                                size: iced::Pixels(9.5),
+                                font: iced::Font::MONOSPACE,
+                                ..Default::default()
+                            });
+                        }
                     }
                 }
             }
@@ -1770,39 +1820,51 @@ impl<'a> canvas::Program<Message> for FbdSignalFlowCanvas<'a> {
             );
         }
 
-        // Pass 2: 2D Function Blocks with live pin indicators
+        // Pass 2: On-block direct-editable Function Blocks
         let block_bg = if is_dark {
             Color::from_rgb(0.085, 0.100, 0.135)
         } else {
             Color::from_rgb(0.96, 0.97, 0.99)
         };
-        let header_text_color = Color::WHITE;
-        let pin_text_color = if is_dark {
-            Color::from_rgb(0.82, 0.86, 0.92)
+        let field_bg = if is_dark {
+            Color::from_rgba(0.0, 0.0, 0.0, 0.22)
         } else {
-            Color::from_rgb(0.15, 0.18, 0.24)
+            Color::from_rgba(0.0, 0.0, 0.0, 0.05)
         };
+        let edit_bg = if is_dark {
+            StudioTheme::BG_HOVER
+        } else {
+            Color::WHITE
+        };
+        let pin_text_color = if is_dark {
+            Color::from_rgb(0.86, 0.90, 0.95)
+        } else {
+            Color::from_rgb(0.12, 0.15, 0.22)
+        };
+        let muted_color = StudioTheme::text_muted(theme);
+        let active_sel = self.selected_block.or(state.selected_block.as_deref());
 
-        for blk in self.program.blocks.iter() {
-            let Some(&pos) = layout.get(&blk.id) else {
+        for blk in &self.program.blocks {
+            let Some(&origin) = layout.get(&blk.id) else {
                 continue;
             };
-            let size = fbd_block_size(blk, &self.program.composites);
+            let edit_txt = editing_text_for_block(state, &blk.id);
+            let size = block_size_with_edit(blk, &self.program.composites, edit_txt.as_deref());
+            let width = size.width;
             let cat = block_category(&blk.kind);
             let accent = cat.accent_color();
-            let (op_sym, _) = operator_symbol(&blk.kind);
-            let is_selected =
-                state.selected_block_id.as_deref() == Some(blk.id.as_str())
-                    || self.selected_block.is_some_and(|idx| self.program.blocks.get(idx).is_some_and(|b| b.id == blk.id));
+            let op_sym = operator_symbol(&blk.kind);
+            let is_selected = active_sel == Some(blk.id.as_str());
 
-            frame.fill_rectangle(pos, size, block_bg);
+            // Body & header
+            frame.fill_rectangle(origin, size, block_bg);
             frame.fill_rectangle(
-                pos,
-                Size::new(size.width, FBD_HEADER_HEIGHT),
-                Color::from_rgba(accent.r, accent.g, accent.b, 0.88),
+                origin,
+                Size::new(width, HEADER_H),
+                Color::from_rgba(accent.r, accent.g, accent.b, 0.85),
             );
             frame.stroke_rectangle(
-                pos,
+                origin,
                 size,
                 Stroke::default()
                     .with_color(if is_selected {
@@ -1813,74 +1875,454 @@ impl<'a> canvas::Program<Message> for FbdSignalFlowCanvas<'a> {
                     .with_width(if is_selected { 2.0 } else { 1.1 }),
             );
 
-            frame.fill_text(canvas::Text {
-                content: format!("{}  [{}]", blk.id, op_sym),
-                position: Point::new(pos.x + 8.0, pos.y + 6.0),
-                color: header_text_color,
-                size: iced::Pixels(11.0),
-                font: iced::Font::MONOSPACE,
-                ..Default::default()
-            });
-
-            let in_pins = fbd_block_input_pins(blk);
-            for (row_idx, in_pin) in in_pins.iter().enumerate() {
-                let p_pt = fbd_input_pin_pos(pos, row_idx);
-                let src_opt = blk.inputs.get(in_pin);
-                let energized = self.runtime.is_some_and(|rt| {
-                    src_opt.is_some_and(|s| is_input_energized(rt, s))
-                });
-                let pin_color = if energized {
-                    StudioTheme::ACCENT_EMERALD
+            // Kind badge
+            let badge = kind_badge_rect(blk, &self.program.composites, origin);
+            if !is_occluded(badge) {
+                frame.fill_rectangle(
+                    badge.position(),
+                    badge.size(),
+                    Color::from_rgba(0.0, 0.0, 0.0, 0.30),
+                );
+                frame.stroke_rectangle(
+                    badge.position(),
+                    badge.size(),
+                    Stroke::default()
+                        .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.45))
+                        .with_width(0.8),
+                );
+                let badge_label = if op_sym.chars().count() <= 3 {
+                    op_sym
                 } else {
-                    StudioTheme::ACCENT_CYAN
-                };
-                frame.fill(&Path::circle(p_pt, 4.5), pin_color);
-
-                let tag_hint = match src_opt {
-                    Some(FbdInputSource::Value { expr }) => format!("{in_pin}: {expr}"),
-                    _ => in_pin.clone(),
+                    block_glyph(&blk.kind)
                 };
                 frame.fill_text(canvas::Text {
-                    content: tag_hint,
-                    position: Point::new(pos.x + 8.0, p_pt.y - 6.0),
-                    color: pin_text_color,
+                    content: badge_label.to_string(),
+                    position: Point::new(badge.x + 4.0, badge.y + 3.0),
+                    color: Color::WHITE,
                     size: iced::Pixels(10.0),
                     font: iced::Font::MONOSPACE,
                     ..Default::default()
                 });
             }
 
-            let out_pins = fbd_block_output_pins(blk, &self.program.composites);
-            for (row_idx, out_pin) in out_pins.iter().enumerate() {
-                let p_pt = fbd_output_pin_pos(pos, row_idx);
-                let target_opt = blk.outputs.get(out_pin);
-                let energized = self.runtime.is_some_and(|rt| {
-                    target_opt.is_some_and(|t| is_output_energized(rt, t))
-                });
-                let pin_color = if energized {
-                    StudioTheme::ACCENT_EMERALD
+            // Inline block ID field
+            let id_r = id_rect_with_width(blk, &self.program.composites, origin, width);
+            if !is_occluded(id_r) {
+                let is_editing_id = state.editing_target.as_ref()
+                    == Some(&FbdEditTarget::BlockId {
+                        block_id: blk.id.clone(),
+                    });
+                if is_editing_id {
+                    frame.fill_rectangle(id_r.position(), id_r.size(), edit_bg);
+                    frame.stroke_rectangle(
+                        id_r.position(),
+                        id_r.size(),
+                        Stroke::default()
+                            .with_color(StudioTheme::ACCENT_CYAN)
+                            .with_width(1.5),
+                    );
+                }
+                let id_text = if is_editing_id {
+                    state.edit_display_with_caret()
                 } else {
-                    accent
-                };
-                frame.fill(&Path::circle(p_pt, 4.5), pin_color);
-
-                let label = if let Some(target) = target_opt {
-                    format!("{target} :{out_pin}")
-                } else {
-                    out_pin.clone()
+                    format_row_display(&blk.id, id_r.width, false)
                 };
                 frame.fill_text(canvas::Text {
-                    content: label,
-                    position: Point::new(pos.x + size.width - 62.0, p_pt.y - 6.0),
+                    content: id_text,
+                    position: Point::new(id_r.x + 3.0, id_r.y + 3.0),
+                    color: Color::WHITE,
+                    size: iced::Pixels(10.5),
+                    font: iced::Font::MONOSPACE,
+                    ..Default::default()
+                });
+            }
+
+            // Input rows
+            let in_pins = input_pins(blk);
+            let variadic = is_variadic(&blk.kind);
+            for (i, in_pin) in in_pins.iter().enumerate() {
+                let row_r = input_row_rect(origin, width, i);
+                let val_r = input_value_rect(origin, width, i);
+                let del_r = input_delete_rect(origin, width, i);
+                let pin_pt = input_pin_point(origin, i);
+                let src_opt = blk.inputs.get(in_pin);
+                let is_linked = matches!(src_opt, Some(FbdInputSource::Link { .. }));
+                let energized = self
+                    .runtime
+                    .is_some_and(|rt| src_opt.is_some_and(|s| is_input_energized(rt, s)));
+                let is_pin_hovered = state.hover_pin.as_ref()
+                    == Some(&PinHover::Input {
+                        block_id: blk.id.clone(),
+                        pin: in_pin.clone(),
+                    });
+
+                if is_pin_hovered {
+                    frame.fill_rectangle(
+                        row_r.position(),
+                        row_r.size(),
+                        Color::from_rgba(0.220, 0.741, 0.973, 0.14),
+                    );
+                    frame.stroke_rectangle(
+                        row_r.position(),
+                        row_r.size(),
+                        Stroke::default()
+                            .with_color(StudioTheme::ACCENT_CYAN)
+                            .with_width(1.0),
+                    );
+                }
+
+                if is_linked {
+                    frame.fill_rectangle(
+                        Point::new(row_r.x + 1.5, row_r.y + 2.0),
+                        Size::new(3.0, row_r.height - 4.0),
+                        if energized {
+                            StudioTheme::ACCENT_EMERALD
+                        } else {
+                            StudioTheme::ACCENT_CYAN
+                        },
+                    );
+                }
+
+                if !is_occluded(row_r) {
+                    frame.fill_text(canvas::Text {
+                        content: in_pin.clone(),
+                        position: Point::new(origin.x + ROW_INSET, row_r.y + 5.0),
+                        color: muted_color,
+                        size: iced::Pixels(9.5),
+                        font: iced::Font::MONOSPACE,
+                        ..Default::default()
+                    });
+
+                    let is_editing = state.editing_target.as_ref()
+                        == Some(&FbdEditTarget::InputValue {
+                            block_id: blk.id.clone(),
+                            pin: in_pin.clone(),
+                        });
+                    frame.fill_rectangle(
+                        val_r.position(),
+                        val_r.size(),
+                        if is_editing { edit_bg } else { field_bg },
+                    );
+                    frame.stroke_rectangle(
+                        val_r.position(),
+                        val_r.size(),
+                        Stroke::default()
+                            .with_color(if is_editing {
+                                StudioTheme::ACCENT_CYAN
+                            } else {
+                                StudioTheme::border_hairline(theme)
+                            })
+                            .with_width(if is_editing { 1.5 } else { 0.8 }),
+                    );
+
+                    let raw_text = input_row_text(src_opt);
+                    let (content, txt_color) = if is_editing {
+                        (state.edit_display_with_caret(), pin_text_color)
+                    } else if raw_text.trim().is_empty() {
+                        ("(0)".to_string(), muted_color)
+                    } else {
+                        (
+                            format_row_display(&raw_text, val_r.width, false),
+                            if is_linked {
+                                StudioTheme::ACCENT_CYAN
+                            } else {
+                                pin_text_color
+                            },
+                        )
+                    };
+                    frame.fill_text(canvas::Text {
+                        content,
+                        position: Point::new(val_r.x + 4.0, val_r.y + 3.0),
+                        color: txt_color,
+                        size: iced::Pixels(9.5),
+                        font: iced::Font::MONOSPACE,
+                        ..Default::default()
+                    });
+
+                    if variadic {
+                        let can_remove = blk.inputs.len() > 2;
+                        frame.fill_text(canvas::Text {
+                            content: "\u{00D7}".to_string(),
+                            position: Point::new(del_r.x + 3.0, del_r.y + 1.0),
+                            color: if can_remove {
+                                StudioTheme::ACCENT_ROSE
+                            } else {
+                                Color::from_rgba(muted_color.r, muted_color.g, muted_color.b, 0.35)
+                            },
+                            size: iced::Pixels(11.0),
+                            font: iced::Font::MONOSPACE,
+                            ..Default::default()
+                        });
+                    }
+                }
+
+                let pin_box = Rectangle::new(
+                    Point::new(pin_pt.x - 6.0, pin_pt.y - 6.0),
+                    Size::new(12.0, 12.0),
+                );
+                if !is_occluded(pin_box) {
+                    let pin_color = if is_pin_hovered {
+                        StudioTheme::ACCENT_AMBER
+                    } else if energized {
+                        StudioTheme::ACCENT_EMERALD
+                    } else {
+                        StudioTheme::ACCENT_CYAN
+                    };
+                    frame.fill(
+                        &Path::circle(pin_pt, if is_pin_hovered { 6.0 } else { 4.5 }),
+                        pin_color,
+                    );
+                }
+            }
+
+            // Output rows
+            let out_pins = output_pins(blk, &self.program.composites);
+            for (i, out_pin) in out_pins.iter().enumerate() {
+                let row_r = output_row_rect(origin, width, in_pins.len(), i);
+                let val_r = output_value_rect(origin, width, in_pins.len(), i);
+                let del_r = output_delete_rect(origin, width, in_pins.len(), i);
+                let pin_pt = output_pin_point(origin, width, in_pins.len(), i);
+                let target_opt = blk.outputs.get(out_pin);
+                let energized = self
+                    .runtime
+                    .is_some_and(|rt| target_opt.is_some_and(|t| is_output_energized(rt, t)));
+                let is_pin_hovered = state.hover_pin.as_ref()
+                    == Some(&PinHover::Output {
+                        block_id: blk.id.clone(),
+                        pin: out_pin.clone(),
+                    });
+
+                if i == 0 && !in_pins.is_empty() {
+                    frame.stroke(
+                        &Path::line(
+                            Point::new(origin.x + 4.0, row_r.y),
+                            Point::new(origin.x + width - 4.0, row_r.y),
+                        ),
+                        Stroke::default()
+                            .with_color(StudioTheme::border_hairline(theme))
+                            .with_width(0.8),
+                    );
+                }
+
+                if !is_occluded(row_r) {
+                    frame.fill_text(canvas::Text {
+                        content: out_pin.clone(),
+                        position: Point::new(origin.x + ROW_INSET, row_r.y + 5.0),
+                        color: muted_color,
+                        size: iced::Pixels(9.5),
+                        font: iced::Font::MONOSPACE,
+                        ..Default::default()
+                    });
+
+                    let is_editing = state.editing_target.as_ref()
+                        == Some(&FbdEditTarget::OutputTarget {
+                            block_id: blk.id.clone(),
+                            pin: out_pin.clone(),
+                        });
+                    frame.fill_rectangle(
+                        val_r.position(),
+                        val_r.size(),
+                        if is_editing { edit_bg } else { field_bg },
+                    );
+                    frame.stroke_rectangle(
+                        val_r.position(),
+                        val_r.size(),
+                        Stroke::default()
+                            .with_color(if is_editing {
+                                StudioTheme::ACCENT_CYAN
+                            } else {
+                                StudioTheme::border_hairline(theme)
+                            })
+                            .with_width(if is_editing { 1.5 } else { 0.8 }),
+                    );
+
+                    let (content, txt_color) = if is_editing {
+                        (state.edit_display_with_caret(), pin_text_color)
+                    } else if let Some(target) = target_opt
+                        && !target.trim().is_empty()
+                    {
+                        (
+                            format_row_display(target, val_r.width, false),
+                            if energized {
+                                StudioTheme::ACCENT_EMERALD
+                            } else {
+                                pin_text_color
+                            },
+                        )
+                    } else {
+                        ("(unbound)".to_string(), muted_color)
+                    };
+                    frame.fill_text(canvas::Text {
+                        content,
+                        position: Point::new(val_r.x + 4.0, val_r.y + 3.0),
+                        color: txt_color,
+                        size: iced::Pixels(9.5),
+                        font: iced::Font::MONOSPACE,
+                        ..Default::default()
+                    });
+
+                    if target_opt.is_some() {
+                        frame.fill_text(canvas::Text {
+                            content: "\u{00D7}".to_string(),
+                            position: Point::new(del_r.x + 3.0, del_r.y + 1.0),
+                            color: StudioTheme::ACCENT_ROSE,
+                            size: iced::Pixels(11.0),
+                            font: iced::Font::MONOSPACE,
+                            ..Default::default()
+                        });
+                    }
+                }
+
+                let pin_box = Rectangle::new(
+                    Point::new(pin_pt.x - 6.0, pin_pt.y - 6.0),
+                    Size::new(12.0, 12.0),
+                );
+                if !is_occluded(pin_box) {
+                    let pin_color = if is_pin_hovered {
+                        StudioTheme::ACCENT_AMBER
+                    } else if energized {
+                        StudioTheme::ACCENT_EMERALD
+                    } else {
+                        accent
+                    };
+                    frame.fill(
+                        &Path::circle(pin_pt, if is_pin_hovered { 6.0 } else { 4.5 }),
+                        pin_color,
+                    );
+                }
+            }
+
+            // `+ pin` footer for variadic blocks
+            if let Some(add_r) =
+                fbd_geometry::add_pin_rect_with_width(blk, &self.program.composites, origin, width)
+                && !is_occluded(add_r)
+            {
+                let pill = Rectangle::new(
+                    Point::new(add_r.x, add_r.y + 2.0),
+                    Size::new(add_r.width, (ADD_PIN_H - 4.0).max(12.0)),
+                );
+                frame.fill_rectangle(
+                    pill.position(),
+                    pill.size(),
+                    Color::from_rgba(accent.r, accent.g, accent.b, 0.12),
+                );
+                frame.stroke_rectangle(
+                    pill.position(),
+                    pill.size(),
+                    Stroke::default()
+                        .with_color(Color::from_rgba(accent.r, accent.g, accent.b, 0.35))
+                        .with_width(0.8),
+                );
+                frame.fill_text(canvas::Text {
+                    content: "+ pin".to_string(),
+                    position: Point::new(pill.x + (pill.width * 0.5 - 16.0).max(4.0), pill.y + 2.0),
                     color: pin_text_color,
-                    size: iced::Pixels(10.0),
+                    size: iced::Pixels(9.5),
                     font: iced::Font::MONOSPACE,
                     ..Default::default()
                 });
             }
         }
 
-        vec![frame.into_geometry()]
+        let base_geom = frame.into_geometry();
+
+        // Pass 3: Kind dropdown menu overlay
+        if let Some(ref menu) = state.menu {
+            let mut overlay = Frame::new(renderer, bounds.size());
+            overlay.translate(pan);
+            overlay.scale(zoom);
+
+            let menu_size = self.kind_menu_size();
+            let menu_rect = Rectangle::new(menu.anchor, menu_size);
+            overlay.fill_rectangle(
+                Point::new(menu_rect.x - 3.0, menu_rect.y - 2.0),
+                Size::new(menu_rect.width + 6.0, menu_rect.height + 6.0),
+                Color::from_rgba(0.0, 0.0, 0.0, 0.65),
+            );
+            let menu_bg = if is_dark {
+                Color::from_rgb(0.070, 0.094, 0.141)
+            } else {
+                Color::WHITE
+            };
+            overlay.fill_rectangle(menu_rect.position(), menu_rect.size(), menu_bg);
+            overlay.stroke_rectangle(
+                menu_rect.position(),
+                menu_rect.size(),
+                Stroke::default()
+                    .with_color(StudioTheme::ACCENT_CYAN)
+                    .with_width(1.5),
+            );
+
+            let cursor_world = cursor
+                .position_in(bounds)
+                .map(|p| Point::new((p.x - pan.x) / zoom, (p.y - pan.y) / zoom));
+            let current_kind = self.find_block(&menu.block_id).map(|b| &b.kind);
+
+            for (idx, (kind, label)) in self.kind_menu_items().into_iter().enumerate() {
+                let item_r = self.kind_menu_item_rect(menu.anchor, idx);
+                let is_hovered = cursor_world.is_some_and(|cp| item_r.contains(cp));
+                let is_current = current_kind.is_some_and(|cur| {
+                    std::mem::discriminant(cur) == std::mem::discriminant(&kind)
+                        && match (cur, &kind) {
+                            (
+                                FbdBlockKind::StandardFb {
+                                    fb_type: Some(a), ..
+                                },
+                                FbdBlockKind::StandardFb {
+                                    fb_type: Some(b), ..
+                                },
+                            ) => a == b,
+                            (
+                                FbdBlockKind::Composite { type_name: a },
+                                FbdBlockKind::Composite { type_name: b },
+                            ) => a == b,
+                            _ => true,
+                        }
+                });
+
+                let item_bg = if is_hovered {
+                    if is_dark {
+                        Color::from_rgb(0.149, 0.220, 0.329)
+                    } else {
+                        Color::from_rgb(0.86, 0.92, 0.98)
+                    }
+                } else if is_current {
+                    if is_dark {
+                        Color::from_rgb(0.102, 0.173, 0.267)
+                    } else {
+                        Color::from_rgb(0.91, 0.95, 0.99)
+                    }
+                } else if is_dark {
+                    Color::from_rgb(0.082, 0.106, 0.153)
+                } else {
+                    Color::from_rgb(0.97, 0.98, 0.99)
+                };
+
+                overlay.fill_rectangle(item_r.position(), item_r.size(), item_bg);
+                let item_accent = block_category(&kind).accent_color();
+                overlay.fill_rectangle(
+                    Point::new(item_r.x + 2.0, item_r.y + 3.0),
+                    Size::new(3.0, item_r.height - 6.0),
+                    item_accent,
+                );
+                overlay.fill_text(canvas::Text {
+                    content: label,
+                    position: Point::new(item_r.x + 8.0, item_r.y + 3.5),
+                    color: if is_current || is_hovered {
+                        StudioTheme::ACCENT_CYAN
+                    } else {
+                        pin_text_color
+                    },
+                    size: iced::Pixels(10.0),
+                    font: iced::Font::MONOSPACE,
+                    ..Default::default()
+                });
+            }
+
+            vec![base_geom, overlay.into_geometry()]
+        } else {
+            vec![base_geom]
+        }
     }
 
     fn mouse_interaction(
@@ -1903,12 +2345,10 @@ pub fn render_fbd_editor<'a>(
     program: &'a FbdProgram,
     runtime: Option<&'a PlcRuntime>,
     lang: UiLanguage,
-    selected_block: Option<usize>,
-    drag_hover_block: Option<usize>,
+    selected_block: Option<&'a str>,
 ) -> Element<'a, Message> {
     let pou_name = program.name.clone();
 
-    // 1. Header Toolbar with Quick Standard Blocks & Corrector Suite
     let header_row = row![
         row![
             container(
@@ -1919,9 +2359,11 @@ pub fn render_fbd_editor<'a>(
             )
             .padding([3, 7])
             .style(|_| container::Style {
-                background: Some(Background::Color(iced::Color::from_rgba(0.220, 0.741, 0.973, 0.12))),
+                background: Some(Background::Color(Color::from_rgba(
+                    0.220, 0.741, 0.973, 0.12
+                ))),
                 border: Border {
-                    color: iced::Color::from_rgba(0.220, 0.741, 0.973, 0.35),
+                    color: Color::from_rgba(0.220, 0.741, 0.973, 0.35),
                     width: 0.5,
                     radius: Radius::from(4.0),
                 },
@@ -1948,21 +2390,19 @@ pub fn render_fbd_editor<'a>(
         .style(StudioTheme::secondary_button)
         .padding([6, 14]),
         button(text(lang.tr("Clear POU", "Vider")).size(11))
-            .on_press(Message::ConfirmClearPou(pou_name.clone()))
+            .on_press(Message::ConfirmClearPou(pou_name))
             .style(StudioTheme::danger_button)
             .padding([6, 12]),
     ]
     .spacing(10)
     .align_y(Alignment::Center);
 
-    let scrollable_header = scrollable(
-        container(header_row).padding(Padding {
-            top: 2.0,
-            right: 4.0,
-            bottom: 6.0,
-            left: 2.0,
-        }),
-    )
+    let scrollable_header = scrollable(container(header_row).padding(Padding {
+        top: 2.0,
+        right: 4.0,
+        bottom: 6.0,
+        left: 2.0,
+    }))
     .direction(scrollable::Direction::Horizontal(
         scrollable::Scrollbar::new()
             .width(4)
@@ -1984,12 +2424,11 @@ pub fn render_fbd_editor<'a>(
             ..Default::default()
         });
 
-    // Info badge replaces the old always-visible tips bar: hover reveals the tip.
     let top_bar = row![
         header_container,
         crate::icons::info_tip(lang.tr(
-            "FBD Modular Instrument Rack: Double-column schematic with high-speed signal flow. Indicators glow green when energized in real time.",
-            "Rack modulaire FBD : Schéma double colonne avec bus de signaux rapides. Les voyants s'illuminent en vert lors de l'exécution en direct.",
+            "Direct FBD Canvas: Click a block ID, pin value, or output tag to edit inline. Click the kind badge to switch operator, drag an output pin onto a block to wire, and right-click a row to disconnect or a header to delete.",
+            "Canvas FBD direct : Cliquez sur l'ID, une entrée ou une sortie pour éditer en place. Cliquez sur le badge pour changer d'opérateur, glissez une sortie vers un bloc pour câbler, clic droit sur une ligne pour débrancher ou sur l'en-tête pour supprimer.",
         )),
     ]
     .spacing(8)
@@ -2004,9 +2443,10 @@ pub fn render_fbd_editor<'a>(
             selected_block,
         })
         .width(Length::Fill)
-        .height(Length::Fixed(280.0)),
+        .height(Length::Fill),
     )
     .width(Length::Fill)
+    .height(Length::Fill)
     .style(|theme: &Theme| container::Style {
         background: Some(Background::Color(StudioTheme::bg_base(theme))),
         border: Border {
@@ -2017,38 +2457,7 @@ pub fn render_fbd_editor<'a>(
         ..Default::default()
     });
 
-    let mut blocks_column = column![].spacing(14);
-
-    // Render blocks in 2-column grid layout
-    let chunk_size = 2;
-    for (row_idx, chunk) in program.blocks.chunks(chunk_size).enumerate() {
-        let b0_idx = row_idx * chunk_size;
-        let card0 = render_single_block_card(&pou_name, b0_idx, &chunk[0], runtime, lang, selected_block, drag_hover_block);
-
-        let grid_row = if chunk.len() > 1 {
-            let b1_idx = b0_idx + 1;
-            let card1 = render_single_block_card(&pou_name, b1_idx, &chunk[1], runtime, lang, selected_block, drag_hover_block);
-            row![card0, card1].spacing(12).width(Length::Fill)
-        } else {
-            let empty_placeholder = iced::widget::Space::with_width(Length::FillPortion(1));
-            row![card0, empty_placeholder]
-                .spacing(12)
-                .width(Length::Fill)
-        };
-
-        blocks_column = blocks_column.push(grid_row);
-    }
-
-    let scrollable_blocks = scrollable(blocks_column.padding(Padding {
-        top: 8.0,
-        right: 12.0,
-        bottom: 20.0,
-        left: 12.0,
-    }))
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    column![top_bar, signal_flow_canvas, scrollable_blocks]
+    column![top_bar, signal_flow_canvas]
         .spacing(8)
         .padding(8)
         .width(Length::Fill)
@@ -2059,8 +2468,72 @@ pub fn render_fbd_editor<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::keyboard::{Key, Location, Modifiers, key};
     use iced::widget::canvas::Program;
-    use std::collections::HashMap;
+
+    fn val_inputs(pairs: &[(&str, &str)]) -> HashMap<String, FbdInputSource> {
+        pairs
+            .iter()
+            .map(|(k, v)| {
+                (
+                    (*k).to_string(),
+                    FbdInputSource::Value {
+                        expr: (*v).to_string(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn key_press(key: Key, text: Option<&str>) -> canvas::Event {
+        canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: key.clone(),
+            location: Location::Standard,
+            modifiers: Modifiers::default(),
+            text: text.map(Into::into),
+            modified_key: key,
+            physical_key: key::Physical::Unidentified(key::NativeCode::Unidentified),
+        })
+    }
+
+    fn click_at(
+        canvas: &FbdSignalFlowCanvas<'_>,
+        state: &mut FbdCanvasState,
+        bounds: Rectangle,
+        pt: Point,
+        btn: mouse::Button,
+    ) -> (event::Status, Option<Message>) {
+        canvas.update(
+            state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(btn)),
+            bounds,
+            mouse::Cursor::Available(pt),
+        )
+    }
+
+    fn sample_program() -> FbdProgram {
+        FbdProgram {
+            name: "flow_pou".to_string(),
+            comment: String::new(),
+            composites: Vec::new(),
+            blocks: vec![
+                FbdBlock {
+                    id: "U1".to_string(),
+                    kind: FbdBlockKind::Not,
+                    inputs: val_inputs(&[("IN1", "TRUE")]),
+                    outputs: HashMap::new(),
+                    grid_pos: Some([40, 40]),
+                },
+                FbdBlock {
+                    id: "U2".to_string(),
+                    kind: FbdBlockKind::And,
+                    inputs: val_inputs(&[("IN1", "FALSE"), ("IN2", "TRUE")]),
+                    outputs: HashMap::new(),
+                    grid_pos: Some([340, 40]),
+                },
+            ],
+        }
+    }
 
     #[test]
     fn test_delete_fbd_block_rewires_links() {
@@ -2101,95 +2574,24 @@ mod tests {
             program.blocks[0].inputs.get("IN1"),
             Some(FbdInputSource::Value { expr }) if expr == "FALSE"
         ));
-        // Out-of-range index is a safe no-op
         delete_fbd_block(&mut program, 5);
         assert_eq!(program.blocks.len(), 1);
     }
 
     #[test]
-    fn test_fbd_editor_toolbar_renders_with_library_button() {
+    fn test_fbd_editor_renders_empty_program() {
         let program = FbdProgram {
-            name: "test_prog".to_string(),
+            name: "empty_prog".to_string(),
             comment: String::new(),
             composites: Vec::new(),
             blocks: Vec::new(),
         };
-        let _view = render_fbd_editor(&program, None, UiLanguage::En, None, None);
+        let _view = render_fbd_editor(&program, None, UiLanguage::En, None);
     }
 
     #[test]
-    fn test_fbd_block_drag_and_drop_reorder() {
-        let block_a = FbdBlock {
-            id: "BlockA".to_string(),
-            kind: FbdBlockKind::And,
-            inputs: HashMap::new(),
-            outputs: HashMap::new(),
-            grid_pos: None,
-        };
-        let block_b = FbdBlock {
-            id: "BlockB".to_string(),
-            kind: FbdBlockKind::Or,
-            inputs: HashMap::new(),
-            outputs: HashMap::new(),
-            grid_pos: None,
-        };
-        let program = FbdProgram {
-            name: "test_drag_fbd".to_string(),
-            comment: String::new(),
-            composites: Vec::new(),
-            blocks: vec![block_a, block_b],
-        };
-
-        // Renders with selection and drag-hover correctly
-        let _view = render_fbd_editor(&program, None, UiLanguage::En, Some(0), Some(1));
-    }
-
-    #[test]
-    fn test_fbd_signal_flow_canvas_pan_zoom_drag_and_pin_wiring() {
-        let mut blk_a_in = HashMap::new();
-        blk_a_in.insert(
-            "IN1".to_string(),
-            FbdInputSource::Value {
-                expr: "TRUE".to_string(),
-            },
-        );
-        let mut blk_b_in = HashMap::new();
-        blk_b_in.insert(
-            "IN1".to_string(),
-            FbdInputSource::Value {
-                expr: "FALSE".to_string(),
-            },
-        );
-        let mut blk_b_in2 = blk_b_in;
-        blk_b_in2.insert(
-            "IN2".to_string(),
-            FbdInputSource::Value {
-                expr: "TRUE".to_string(),
-            },
-        );
-
-        let program = FbdProgram {
-            name: "flow_pou".to_string(),
-            comment: String::new(),
-            composites: Vec::new(),
-            blocks: vec![
-                FbdBlock {
-                    id: "U1".to_string(),
-                    kind: FbdBlockKind::Not,
-                    inputs: blk_a_in,
-                    outputs: HashMap::new(),
-                    grid_pos: None,
-                },
-                FbdBlock {
-                    id: "U2".to_string(),
-                    kind: FbdBlockKind::And,
-                    inputs: blk_b_in2,
-                    outputs: HashMap::new(),
-                    grid_pos: None,
-                },
-            ],
-        };
-
+    fn test_fbd_edit_id_commits_on_enter() {
+        let program = sample_program();
         let canvas = FbdSignalFlowCanvas {
             pou_name: "flow_pou",
             program: &program,
@@ -2199,111 +2601,777 @@ mod tests {
         let mut state = FbdCanvasState::default();
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
 
-        // 1. Middle-mouse panning works and shifts pan
-        let _ = canvas.update(
-            &mut state,
-            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)),
-            bounds,
-            mouse::Cursor::Available(Point::new(100.0, 100.0)),
+        let origin = Point::new(40.0, 40.0);
+        let id_r = id_rect_with_width(
+            &program.blocks[0],
+            &program.composites,
+            origin,
+            fbd_geometry::block_width(&program.blocks[0], &program.composites, None),
         );
-        let _ = canvas.update(
+        let (st, msg) = click_at(
+            &canvas,
             &mut state,
-            canvas::Event::Mouse(mouse::Event::CursorMoved {
-                position: Point::new(140.0, 125.0),
-            }),
             bounds,
-            mouse::Cursor::Available(Point::new(140.0, 125.0)),
-        );
-        let _ = canvas.update(
-            &mut state,
-            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)),
-            bounds,
-            mouse::Cursor::Available(Point::new(140.0, 125.0)),
-        );
-        assert_eq!(state.pan, Vector::new(40.0, 25.0));
-
-        // Reset pan to simplify pin hit-testing
-        state.pan = Vector::default();
-        state.zoom = 1.0;
-
-        // 2. Output pin of U1 -> input pin IN1 of U2 wiring emits FbdInputSourceChanged
-        let u1_pos = state
-            .block_positions
-            .get("U1")
-            .copied()
-            .unwrap_or(Point::ORIGIN);
-        let u2_pos = state
-            .block_positions
-            .get("U2")
-            .copied()
-            .unwrap_or(Point::ORIGIN);
-        let u1_out = fbd_output_pin_pos(u1_pos, 0);
-        let u2_in1 = fbd_input_pin_pos(u2_pos, 0);
-
-        let (st, _) = canvas.update(
-            &mut state,
-            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
-            bounds,
-            mouse::Cursor::Available(u1_out),
+            Point::new(id_r.x + 4.0, id_r.y + 4.0),
+            mouse::Button::Left,
         );
         assert_eq!(st, event::Status::Captured);
-        assert!(matches!(state.drag, FbdDragState::Wiring { .. }));
+        assert!(matches!(msg, Some(Message::FbdInlineEditingChanged(true))));
+        assert_eq!(
+            state.editing_target,
+            Some(FbdEditTarget::BlockId {
+                block_id: "U1".to_string()
+            })
+        );
 
+        let _ = canvas.update(
+            &mut state,
+            key_press(Key::Character("X".into()), Some("X")),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
         let (st, msg) = canvas.update(
             &mut state,
-            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            key_press(Key::Named(key::Named::Enter), None),
             bounds,
-            mouse::Cursor::Available(u2_in1),
+            mouse::Cursor::Unavailable,
         );
         assert_eq!(st, event::Status::Captured);
         assert!(matches!(
             msg,
-            Some(Message::FbdInputSourceChanged(
-                ref p,
-                ref target_id,
-                ref pin,
-                ref val
-            )) if p == "flow_pou" && target_id == "U2" && pin == "IN1" && val == "U1.OUT"
+            Some(Message::FbdBlockIdChanged(ref p, ref old, ref new_id))
+                if p == "flow_pou" && old == "U1" && new_id == "U1X"
         ));
+        assert!(state.editing_target.is_none());
+    }
 
-        // 3. Left-dragging U1 block updates its 2D canvas coordinates
-        let u1_body = Point::new(u1_pos.x + 20.0, u1_pos.y + 10.0);
+    #[test]
+    fn test_fbd_edit_escape_reverts() {
+        let program = sample_program();
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+
+        let origin = Point::new(40.0, 40.0);
+        let id_r = id_rect_with_width(
+            &program.blocks[0],
+            &program.composites,
+            origin,
+            fbd_geometry::block_width(&program.blocks[0], &program.composites, None),
+        );
+        let _ = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(id_r.x + 4.0, id_r.y + 4.0),
+            mouse::Button::Left,
+        );
         let _ = canvas.update(
             &mut state,
-            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            key_press(Key::Character("Z".into()), Some("Z")),
             bounds,
-            mouse::Cursor::Available(u1_body),
+            mouse::Cursor::Unavailable,
+        );
+        let (st, msg) = canvas.update(
+            &mut state,
+            key_press(Key::Named(key::Named::Escape), None),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
+        assert_eq!(st, event::Status::Captured);
+        assert!(matches!(msg, Some(Message::FbdInlineEditingChanged(false))));
+        assert!(state.editing_target.is_none());
+        assert!(state.edit_buffer.is_empty());
+    }
+
+    #[test]
+    fn test_fbd_edit_delete_edits_text_not_block() {
+        let program = sample_program();
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+
+        let origin = Point::new(40.0, 40.0);
+        let id_r = id_rect_with_width(
+            &program.blocks[0],
+            &program.composites,
+            origin,
+            fbd_geometry::block_width(&program.blocks[0], &program.composites, None),
+        );
+        let (_, open_msg) = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(id_r.x + 4.0, id_r.y + 4.0),
+            mouse::Button::Left,
+        );
+        assert!(matches!(
+            open_msg,
+            Some(Message::FbdInlineEditingChanged(true))
+        ));
+
+        // Move caret left onto '1' and press Delete forward.
+        let _ = canvas.update(
+            &mut state,
+            key_press(Key::Named(key::Named::ArrowLeft), None),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
+        let (st, msg) = canvas.update(
+            &mut state,
+            key_press(Key::Named(key::Named::Delete), None),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
+        assert_eq!(st, event::Status::Captured);
+        assert!(matches!(msg, Some(Message::FbdInlineEditingChanged(true))));
+        assert_eq!(state.edit_text(), "U");
+
+        // When not editing, canvas does not consume or translate bare Delete into a deletion.
+        state.cancel_edit();
+        let (st_closed, msg_closed) = canvas.update(
+            &mut state,
+            key_press(Key::Named(key::Named::Delete), None),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
+        assert_eq!(st_closed, event::Status::Ignored);
+        assert!(msg_closed.is_none());
+    }
+
+    #[test]
+    fn test_fbd_edit_buffer_handles_multibyte_chars() {
+        let mut state = FbdCanvasState::default();
+        state.start_edit(
+            FbdEditTarget::BlockId {
+                block_id: "ab".to_string(),
+            },
+            "ab",
+        );
+        state.move_cursor_left();
+        state.insert_char('é');
+        assert_eq!(state.edit_text(), "aéb");
+        state.move_cursor_left();
+        state.delete_forward();
+        assert_eq!(state.edit_text(), "ab");
+        state.insert_char('ç');
+        state.backspace();
+        assert_eq!(state.edit_text(), "ab");
+    }
+
+    #[test]
+    fn test_fbd_click_id_starts_edit() {
+        let program = sample_program();
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+        let origin = Point::new(340.0, 40.0);
+        let w = fbd_geometry::block_width(&program.blocks[1], &program.composites, None);
+        let id_r = id_rect_with_width(&program.blocks[1], &program.composites, origin, w);
+        let (st, msg) = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(id_r.x + 6.0, id_r.y + 5.0),
+            mouse::Button::Left,
+        );
+        assert_eq!(st, event::Status::Captured);
+        assert!(matches!(msg, Some(Message::FbdInlineEditingChanged(true))));
+        assert_eq!(
+            state.editing_target,
+            Some(FbdEditTarget::BlockId {
+                block_id: "U2".to_string()
+            })
+        );
+        assert_eq!(state.selected_block.as_deref(), Some("U2"));
+    }
+
+    #[test]
+    fn test_fbd_click_input_row_targets_that_pin() {
+        let program = sample_program();
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+        let origin = Point::new(340.0, 40.0);
+        let w = fbd_geometry::block_width(&program.blocks[1], &program.composites, None);
+        let val_r = input_value_rect(origin, w, 1);
+
+        let (st, msg) = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(val_r.x + 8.0, val_r.y + 6.0),
+            mouse::Button::Left,
+        );
+        assert_eq!(st, event::Status::Captured);
+        assert!(matches!(msg, Some(Message::FbdInlineEditingChanged(true))));
+        assert_eq!(
+            state.editing_target,
+            Some(FbdEditTarget::InputValue {
+                block_id: "U2".to_string(),
+                pin: "IN2".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_fbd_click_add_pin_emits_message_and_opens_edit() {
+        let program = sample_program();
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+
+        // Non-variadic NOT block has no + pin affordance.
+        assert!(
+            fbd_geometry::add_pin_rect(
+                &program.blocks[0],
+                &program.composites,
+                Point::new(40.0, 40.0)
+            )
+            .is_none()
+        );
+
+        // Variadic AND block emits FbdAddInputPin and opens edit on IN3.
+        let Some(add_r) = fbd_geometry::add_pin_rect(
+            &program.blocks[1],
+            &program.composites,
+            Point::new(340.0, 40.0),
+        ) else {
+            panic!("AND has + pin");
+        };
+        let (st, msg) = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(add_r.x + 10.0, add_r.y + 6.0),
+            mouse::Button::Left,
+        );
+        assert_eq!(st, event::Status::Captured);
+        assert!(matches!(
+            msg,
+            Some(Message::FbdAddInputPin(ref p, ref id)) if p == "flow_pou" && id == "U2"
+        ));
+        assert_eq!(
+            state.editing_target,
+            Some(FbdEditTarget::InputValue {
+                block_id: "U2".to_string(),
+                pin: "IN3".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_fbd_click_remove_pin_refused_at_two_inputs() {
+        let program = sample_program();
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+        let origin = Point::new(340.0, 40.0);
+        let w = fbd_geometry::block_width(&program.blocks[1], &program.composites, None);
+        let del_r = input_delete_rect(origin, w, 0);
+
+        let (st, msg) = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(del_r.x + 4.0, del_r.y + 4.0),
+            mouse::Button::Left,
+        );
+        assert_eq!(st, event::Status::Captured);
+        assert!(msg.is_none(), "cannot shrink below 2 inputs");
+    }
+
+    #[test]
+    fn test_fbd_long_expression_is_truncated_at_rest() {
+        let long_expr = "Tank_Pressure_Sensor_Upstream_Primary_Control_Tag_Exceeding_Max_Width";
+        let mut program = sample_program();
+        program.blocks[1].inputs.insert(
+            "IN1".to_string(),
+            FbdInputSource::Value {
+                expr: long_expr.to_string(),
+            },
+        );
+        let rest_w = fbd_geometry::block_width(&program.blocks[1], &program.composites, None);
+        assert!(rest_w <= fbd_geometry::MAX_BLOCK_W);
+
+        let val_w = input_value_rect(Point::new(340.0, 40.0), rest_w, 0).width;
+        let rest_display = format_row_display(long_expr, val_w, false);
+        assert!(rest_display.ends_with('\u{2026}'));
+        assert!(rest_display.len() < long_expr.len());
+
+        let mut state = FbdCanvasState::default();
+        state.start_edit(
+            FbdEditTarget::InputValue {
+                block_id: "U2".to_string(),
+                pin: "IN1".to_string(),
+            },
+            long_expr,
+        );
+        let editing_text = state.edit_display_with_caret();
+        assert!(editing_text.starts_with(long_expr));
+        let edit_w =
+            fbd_geometry::block_width(&program.blocks[1], &program.composites, Some(&editing_text));
+        assert!(edit_w >= rest_w);
+    }
+
+    #[test]
+    fn test_fbd_kind_menu_opens_and_commits() {
+        let program = sample_program();
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 700.0));
+        let badge = kind_badge_rect(
+            &program.blocks[1],
+            &program.composites,
+            Point::new(340.0, 40.0),
+        );
+
+        let (st, msg) = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(badge.x + 5.0, badge.y + 5.0),
+            mouse::Button::Left,
+        );
+        assert_eq!(st, event::Status::Captured);
+        assert!(msg.is_none());
+        let Some(menu) = state.menu.clone() else {
+            panic!("kind menu should open");
+        };
+        assert_eq!(menu.block_id, "U2");
+
+        let Some(or_idx) = canvas
+            .kind_menu_items()
+            .iter()
+            .position(|(k, _)| *k == FbdBlockKind::Or)
+        else {
+            panic!("OR present in menu");
+        };
+        let item_r = canvas.kind_menu_item_rect(menu.anchor, or_idx);
+        let (st, msg) = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(item_r.x + 8.0, item_r.y + 6.0),
+            mouse::Button::Left,
+        );
+        assert_eq!(st, event::Status::Captured);
+        assert!(matches!(
+            msg,
+            Some(Message::FbdChangeKind(ref p, ref id, FbdBlockKind::Or))
+                if p == "flow_pou" && id == "U2"
+        ));
+        assert!(state.menu.is_none());
+    }
+
+    #[test]
+    fn test_fbd_kind_menu_flips_when_clipping() {
+        let mut program = sample_program();
+        program.blocks[1].grid_pos = Some([340, 520]);
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+        let badge = kind_badge_rect(
+            &program.blocks[1],
+            &program.composites,
+            Point::new(340.0, 520.0),
+        );
+
+        let _ = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(badge.x + 5.0, badge.y + 5.0),
+            mouse::Button::Left,
+        );
+        let Some(menu) = state.menu else {
+            panic!("menu opened");
+        };
+        assert!(
+            menu.anchor.y < badge.y,
+            "menu near bottom edge must flip above the badge (anchor.y={}, badge.y={})",
+            menu.anchor.y,
+            badge.y
+        );
+    }
+
+    #[test]
+    fn test_fbd_drag_block_commits_position_once() {
+        let program = sample_program();
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+
+        // Click body area (below the header, inside the row label column so no input box captures).
+        let body_pt = Point::new(40.0 + 18.0, 40.0 + HEADER_H + 8.0);
+        let (_, press_msg) = click_at(&canvas, &mut state, bounds, body_pt, mouse::Button::Left);
+        assert!(matches!(
+            press_msg,
+            Some(Message::FbdBlockSelected(ref p, Some(ref id))) if p == "flow_pou" && id == "U1"
+        ));
+        assert!(matches!(state.drag, FbdDragState::MovingBlock { .. }));
+
+        // Intermediate move emits nothing and updates preview only.
+        let (st_mv, msg_mv) = canvas.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(body_pt.x + 72.0, body_pt.y),
+            }),
+            bounds,
+            mouse::Cursor::Available(Point::new(body_pt.x + 72.0, body_pt.y)),
+        );
+        assert_eq!(st_mv, event::Status::Captured);
+        assert!(msg_mv.is_none());
+
+        // Release commits FbdBlockMoved once.
+        let (st_rel, msg_rel) = canvas.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(Point::new(body_pt.x + 72.0, body_pt.y)),
+        );
+        assert_eq!(st_rel, event::Status::Captured);
+        assert!(matches!(
+            msg_rel,
+            Some(Message::FbdBlockMoved(ref p, ref id, pos))
+                if p == "flow_pou" && id == "U1" && pos[0] > 40
+        ));
+    }
+
+    #[test]
+    fn test_fbd_wire_drop_on_body_targets_nearest_row() {
+        let program = sample_program();
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+
+        let u1_origin = Point::new(40.0, 40.0);
+        let u1_w = fbd_geometry::block_width(&program.blocks[0], &program.composites, None);
+        let u1_out = output_pin_point(u1_origin, u1_w, 1, 0);
+
+        let (st, _) = click_at(&canvas, &mut state, bounds, u1_out, mouse::Button::Left);
+        assert_eq!(st, event::Status::Captured);
+        assert!(matches!(state.drag, FbdDragState::Wiring { .. }));
+
+        // Drop inside inflated U2 body near row 2 (IN2).
+        let u2_origin = Point::new(340.0, 40.0);
+        let drop_pt = Point::new(u2_origin.x + 90.0, input_pin_point(u2_origin, 1).y);
+        let (st_rel, msg_rel) = canvas.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(drop_pt),
+        );
+        assert_eq!(st_rel, event::Status::Captured);
+        assert!(matches!(
+            msg_rel,
+            Some(Message::FbdInputSourceChanged(ref p, ref id, ref pin, ref val))
+                if p == "flow_pou" && id == "U2" && pin == "IN2" && val == "U1.OUT"
+        ));
+    }
+
+    #[test]
+    fn test_fbd_wire_release_on_empty_emits_nothing() {
+        let program = sample_program();
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+
+        let u1_origin = Point::new(40.0, 40.0);
+        let u1_w = fbd_geometry::block_width(&program.blocks[0], &program.composites, None);
+        let u1_out = output_pin_point(u1_origin, u1_w, 1, 0);
+        let _ = click_at(&canvas, &mut state, bounds, u1_out, mouse::Button::Left);
+
+        let (st_rel, msg_rel) = canvas.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(Point::new(800.0, 500.0)),
+        );
+        assert_eq!(st_rel, event::Status::Captured);
+        assert!(msg_rel.is_none());
+    }
+
+    #[test]
+    fn test_fbd_right_click_row_unlinks() {
+        let program = sample_program();
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+        let u2_origin = Point::new(340.0, 40.0);
+        let u2_w = fbd_geometry::block_width(&program.blocks[1], &program.composites, None);
+        let row_r = input_row_rect(u2_origin, u2_w, 0);
+
+        let (st, msg) = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(row_r.x + 20.0, row_r.y + 8.0),
+            mouse::Button::Right,
+        );
+        assert_eq!(st, event::Status::Captured);
+        assert!(matches!(
+            msg,
+            Some(Message::FbdDisconnectInput(ref p, ref id, ref pin))
+                if p == "flow_pou" && id == "U2" && pin == "IN1"
+        ));
+    }
+
+    #[test]
+    fn test_fbd_right_click_header_removes_block() {
+        let program = sample_program();
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+        let u2_origin = Point::new(340.0, 40.0);
+        let u2_w = fbd_geometry::block_width(&program.blocks[1], &program.composites, None);
+        let hdr_r = header_rect_with_width(u2_origin, u2_w);
+
+        let (st, msg) = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(hdr_r.x + 20.0, hdr_r.y + 8.0),
+            mouse::Button::Right,
+        );
+        assert_eq!(st, event::Status::Captured);
+        assert!(matches!(
+            msg,
+            Some(Message::FbdRemoveBlock(ref p, ref id))
+                if p == "flow_pou" && id == "U2"
+        ));
+    }
+
+    #[test]
+    fn test_fbd_pan_zoom_and_legacy_layout() {
+        let legacy = FbdProgram {
+            name: "legacy_pou".to_string(),
+            comment: String::new(),
+            composites: Vec::new(),
+            blocks: vec![
+                FbdBlock {
+                    id: "U1".to_string(),
+                    kind: FbdBlockKind::Not,
+                    inputs: val_inputs(&[("IN1", "TRUE")]),
+                    outputs: HashMap::new(),
+                    grid_pos: None,
+                },
+                FbdBlock {
+                    id: "U2".to_string(),
+                    kind: FbdBlockKind::And,
+                    inputs: [
+                        (
+                            "IN1".to_string(),
+                            FbdInputSource::Link {
+                                from_block: "U1".to_string(),
+                                from_pin: "OUT".to_string(),
+                            },
+                        ),
+                        (
+                            "IN2".to_string(),
+                            FbdInputSource::Value {
+                                expr: "TRUE".to_string(),
+                            },
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    outputs: HashMap::new(),
+                    grid_pos: None,
+                },
+            ],
+        };
+
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "legacy_pou",
+            program: &legacy,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+
+        // 1. Legacy blocks without grid_pos lay out deterministically with U2 right of U1.
+        let layout = state.resolved_layout(&legacy);
+        let u1_pos = layout["U1"];
+        let u2_pos = layout["U2"];
+        assert!(u2_pos.x > u1_pos.x);
+
+        // 2. Middle-mouse pan shifts pan and emits FbdViewportChanged on release.
+        let _ = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(100.0, 100.0),
+            mouse::Button::Middle,
         );
         let _ = canvas.update(
             &mut state,
             canvas::Event::Mouse(mouse::Event::CursorMoved {
-                position: Point::new(u1_body.x + 50.0, u1_body.y + 30.0),
+                position: Point::new(160.0, 130.0),
             }),
             bounds,
-            mouse::Cursor::Available(Point::new(u1_body.x + 50.0, u1_body.y + 30.0)),
+            mouse::Cursor::Available(Point::new(160.0, 130.0)),
         );
+        let (st, msg) = canvas.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)),
+            bounds,
+            mouse::Cursor::Available(Point::new(160.0, 130.0)),
+        );
+        assert_eq!(st, event::Status::Captured);
+        assert_eq!(state.pan, Vector::new(60.0, 30.0));
+        assert!(matches!(
+            msg,
+            Some(Message::FbdViewportChanged(ref p, pan, _, _))
+                if p == "legacy_pou" && pan == Vector::new(60.0, 30.0)
+        ));
+
+        // 3. Wheel zoom emits FbdViewportChanged and clamps zoom cleanly.
+        let (st_z, msg_z) = canvas.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+            }),
+            bounds,
+            mouse::Cursor::Available(Point::new(300.0, 200.0)),
+        );
+        assert_eq!(st_z, event::Status::Captured);
+        assert!(state.effective_zoom() > 1.0);
+        assert!(matches!(msg_z, Some(Message::FbdViewportChanged(..))));
+    }
+
+    #[test]
+    fn test_fbd_output_row_edit_and_right_click_disconnect() {
+        let mut program = sample_program();
+        program.blocks[0]
+            .outputs
+            .insert("OUT".to_string(), "Motor_Cmd".to_string());
+        let canvas = FbdSignalFlowCanvas {
+            pou_name: "flow_pou",
+            program: &program,
+            runtime: None,
+            selected_block: None,
+        };
+        let mut state = FbdCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 600.0));
+
+        let origin = Point::new(40.0, 40.0);
+        let w = fbd_geometry::block_width(&program.blocks[0], &program.composites, None);
+        let out_val_r = output_value_rect(origin, w, 1, 0);
+
+        let (st, msg) = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(out_val_r.x + 8.0, out_val_r.y + 6.0),
+            mouse::Button::Left,
+        );
+        assert_eq!(st, event::Status::Captured);
+        assert!(matches!(msg, Some(Message::FbdInlineEditingChanged(true))));
+        assert_eq!(
+            state.editing_target,
+            Some(FbdEditTarget::OutputTarget {
+                block_id: "U1".to_string(),
+                pin: "OUT".to_string(),
+            })
+        );
+
         let _ = canvas.update(
             &mut state,
-            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            key_press(Key::Character("2".into()), Some("2")),
             bounds,
-            mouse::Cursor::Available(Point::new(u1_body.x + 50.0, u1_body.y + 30.0)),
+            mouse::Cursor::Unavailable,
         );
-        let moved_pos = state
-            .block_positions
-            .get("U1")
-            .copied()
-            .unwrap_or(Point::ORIGIN);
-        assert!(moved_pos.x > u1_pos.x);
-        assert!(moved_pos.y > u1_pos.y);
+        let (_, commit_msg) = canvas.update(
+            &mut state,
+            key_press(Key::Named(key::Named::Enter), None),
+            bounds,
+            mouse::Cursor::Unavailable,
+        );
+        assert!(matches!(
+            commit_msg,
+            Some(Message::FbdOutputTargetChanged(ref p, ref id, ref pin, ref target))
+                if p == "flow_pou" && id == "U1" && pin == "OUT" && target == "Motor_Cmd2"
+        ));
 
-        // 4. Verify mouse_interaction, topological layout positions, and Bezier wire path builder
-        assert_eq!(
-            canvas.mouse_interaction(&state, bounds, mouse::Cursor::Unavailable),
-            mouse::Interaction::default()
+        let out_row_r = output_row_rect(origin, w, 1, 0);
+        let (_, rc_msg) = click_at(
+            &canvas,
+            &mut state,
+            bounds,
+            Point::new(out_row_r.x + 12.0, out_row_r.y + 8.0),
+            mouse::Button::Right,
         );
-        let default_layout = compute_default_block_positions(&program);
-        assert!(default_layout.contains_key("U1"));
-        assert!(default_layout.contains_key("U2"));
-        let _wire_path = build_bezier_wire_path(u1_out, u2_in1);
+        assert!(matches!(
+            rc_msg,
+            Some(Message::FbdDisconnectOutput(ref p, ref id, ref pin))
+                if p == "flow_pou" && id == "U1" && pin == "OUT"
+        ));
     }
 }

@@ -1,14 +1,12 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use iced::border::Radius;
 use iced::mouse;
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, event};
-use iced::widget::{
-    button, column, container, pick_list, row, scrollable, text, text_input,
-};
+use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Point, Rectangle, Renderer,
-    Size, Theme,
+    Size, Theme, Vector,
 };
 
 use ferrite_core::IecValue;
@@ -146,6 +144,12 @@ pub struct SfcCanvasState {
     pub cursor_pos: usize,
     pub last_click: Option<(std::time::Instant, Point)>,
     pub qualifier_dropdown: Option<SfcQualifierDropdown>,
+    pub pan: Vector,
+    pub zoom: f32,
+    pub is_panning: bool,
+    pub pan_start: Option<Point>,
+    pub active_pou: String,
+    pub per_pou_viewport: HashMap<String, (Vector, f32)>,
 }
 
 impl Default for SfcCanvasState {
@@ -160,11 +164,69 @@ impl Default for SfcCanvasState {
             cursor_pos: 0,
             last_click: None,
             qualifier_dropdown: None,
+            pan: Vector::default(),
+            zoom: 1.0,
+            is_panning: false,
+            pan_start: None,
+            active_pou: String::new(),
+            per_pou_viewport: HashMap::new(),
         }
     }
 }
 
 impl SfcCanvasState {
+    pub fn effective_zoom(&self) -> f32 {
+        if self.zoom.is_finite() && self.zoom > 0.0 {
+            self.zoom.clamp(0.25, 3.0)
+        } else {
+            1.0
+        }
+    }
+
+    pub fn viewport_for(&self, pou_name: &str) -> (Vector, f32) {
+        if self.active_pou == pou_name || self.active_pou.is_empty() {
+            (self.pan, self.effective_zoom())
+        } else if let Some(&(saved_pan, saved_zoom)) = self.per_pou_viewport.get(pou_name) {
+            (saved_pan, saved_zoom.clamp(0.25, 3.0))
+        } else {
+            (Vector::default(), 1.0)
+        }
+    }
+
+    pub fn sync_pou(&mut self, pou_name: &str) {
+        if self.active_pou == pou_name {
+            return;
+        }
+        if !self.active_pou.is_empty() {
+            self.per_pou_viewport
+                .insert(self.active_pou.clone(), (self.pan, self.effective_zoom()));
+        }
+        let was_uninitialized = self.active_pou.is_empty();
+        self.active_pou = pou_name.to_string();
+        if let Some(&(saved_pan, saved_zoom)) = self.per_pou_viewport.get(pou_name) {
+            self.pan = saved_pan;
+            self.zoom = saved_zoom.clamp(0.25, 3.0);
+        } else if !was_uninitialized {
+            self.pan = Vector::default();
+            self.zoom = 1.0;
+        }
+        let cur_pan = self.pan;
+        let eff_zoom = self.effective_zoom();
+        self.per_pou_viewport
+            .entry(pou_name.to_string())
+            .or_insert((cur_pan, eff_zoom));
+        self.is_panning = false;
+        self.pan_start = None;
+    }
+
+    fn store_current_viewport(&mut self, pou_name: &str) {
+        if !pou_name.is_empty() {
+            self.active_pou = pou_name.to_string();
+            self.per_pou_viewport
+                .insert(pou_name.to_string(), (self.pan, self.effective_zoom()));
+        }
+    }
+
     pub fn start_edit(&mut self, target: SfcEditTarget, initial_text: &str) {
         self.qualifier_dropdown = None;
         self.editing_target = Some(target);
@@ -806,9 +868,14 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> (event::Status, Option<Message>) {
-        if let canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, text, .. }) = event {
+        state.sync_pou(self.pou_name);
+        if let canvas::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, text, .. }) = event
+        {
             if state.qualifier_dropdown.is_some()
-                && matches!(key, iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape))
+                && matches!(
+                    key,
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
+                )
             {
                 state.qualifier_dropdown = None;
                 return (event::Status::Captured, None);
@@ -875,12 +942,64 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             }
         }
 
-        let cursor_pos = match cursor.position_in(bounds) {
+        let raw_cursor_pos = match cursor.position_in(bounds) {
             Some(p) => p,
-            None => return (event::Status::Ignored, None),
+            None => {
+                if let canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) =
+                    event
+                {
+                    state.is_panning = false;
+                    state.pan_start = None;
+                    return (event::Status::Captured, None);
+                }
+                return (event::Status::Ignored, None);
+            }
         };
 
+        let zoom = state.effective_zoom();
+        let cursor_pos = Point::new(
+            (raw_cursor_pos.x - state.pan.x) / zoom,
+            (raw_cursor_pos.y - state.pan.y) / zoom,
+        );
+
         match event {
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+                state.is_panning = true;
+                state.pan_start = Some(raw_cursor_pos);
+                (event::Status::Captured, None)
+            }
+            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) => {
+                if state.is_panning {
+                    state.is_panning = false;
+                    state.pan_start = None;
+                    state.store_current_viewport(self.pou_name);
+                    (event::Status::Captured, None)
+                } else {
+                    (event::Status::Ignored, None)
+                }
+            }
+            canvas::Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                let scroll_y = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => y,
+                    mouse::ScrollDelta::Pixels { y, .. } => y / 30.0,
+                };
+                if scroll_y.abs() > f32::EPSILON {
+                    let old_zoom = state.effective_zoom();
+                    let factor = (1.0 + scroll_y * 0.12).clamp(0.5, 2.0);
+                    let new_zoom = (old_zoom * factor).clamp(0.25, 3.0);
+                    let world_x = (raw_cursor_pos.x - state.pan.x) / old_zoom;
+                    let world_y = (raw_cursor_pos.y - state.pan.y) / old_zoom;
+                    state.zoom = new_zoom;
+                    state.pan = Vector::new(
+                        raw_cursor_pos.x - world_x * new_zoom,
+                        raw_cursor_pos.y - world_y * new_zoom,
+                    );
+                    state.store_current_viewport(self.pou_name);
+                    return (event::Status::Captured, None);
+                }
+                (event::Status::Ignored, None)
+            }
+
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 // 0. Check if an active Qualifier Dropdown Menu is open
                 if let Some(dd) = state.qualifier_dropdown.take() {
@@ -1062,15 +1181,19 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                             let _ = self.commit_current_edit(state);
                             let dd_width = 160.0;
                             let dd_height = 8.0 * 22.0 + 4.0;
-                            let dd_y = if q_rect.y + q_rect.height + 2.0 + dd_height > bounds.height
-                                && q_rect.y >= dd_height + 4.0
+                            let vis_max_x = (bounds.width - state.pan.x) / zoom;
+                            let vis_max_y = (bounds.height - state.pan.y) / zoom;
+                            let vis_min_x = -state.pan.x / zoom;
+                            let vis_min_y = -state.pan.y / zoom;
+                            let dd_y = if q_rect.y + q_rect.height + 2.0 + dd_height > vis_max_y
+                                && q_rect.y - vis_min_y >= dd_height + 4.0
                             {
                                 q_rect.y - dd_height - 2.0
                             } else {
                                 q_rect.y + q_rect.height + 2.0
                             };
-                            let dd_x = if q_rect.x + dd_width > bounds.width {
-                                (bounds.width - dd_width - 4.0).max(0.0)
+                            let dd_x = if q_rect.x + dd_width > vis_max_x {
+                                (vis_max_x - dd_width - 4.0).max(vis_min_x)
                             } else {
                                 q_rect.x
                             };
@@ -1346,6 +1469,17 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             }
 
             canvas::Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if state.is_panning
+                    && let Some(start) = state.pan_start
+                {
+                    let dx = raw_cursor_pos.x - start.x;
+                    let dy = raw_cursor_pos.y - start.y;
+                    state.pan = Vector::new(state.pan.x + dx, state.pan.y + dy);
+                    state.pan_start = Some(raw_cursor_pos);
+                    state.store_current_viewport(self.pou_name);
+                    return (event::Status::Captured, None);
+                }
+
                 match &mut state.drag {
                     DragState::MovingElement {
                         offset_x,
@@ -1873,15 +2007,22 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
         } else {
             Color::from_rgba(0.0, 0.0, 0.0, 0.08)
         };
-        for x in (0..width as i32).step_by(20) {
-            for y in (0..height as i32).step_by(20) {
-                frame.fill_rectangle(
-                    Point::new(x as f32, y as f32),
-                    Size::new(1.5, 1.5),
-                    dot_color,
-                );
+        let (pan, zoom) = state.viewport_for(self.pou_name);
+        let dot_spacing = (GRID_SIZE * zoom).max(4.0);
+        let offset_x = pan.x.rem_euclid(dot_spacing);
+        let offset_y = pan.y.rem_euclid(dot_spacing);
+        let mut gx = offset_x;
+        while gx < width {
+            let mut gy = offset_y;
+            while gy < height {
+                frame.fill_rectangle(Point::new(gx, gy), Size::new(1.5, 1.5), dot_color);
+                gy += dot_spacing;
             }
+            gx += dot_spacing;
         }
+
+        frame.translate(pan);
+        frame.scale(zoom);
 
         // 3. Wires and IEC 60848 AND Double Lines (===)
         // 3. Render Inter-Element Directed Links & Wires
@@ -2388,17 +2529,17 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
 
             let s_width = self.step_width(step);
 
-            frame.fill_rectangle(
-                Point::new(x, y),
-                Size::new(s_width, STEP_HEIGHT),
-                bg_color,
-            );
+            frame.fill_rectangle(Point::new(x, y), Size::new(s_width, STEP_HEIGHT), bg_color);
             frame.stroke_rectangle(
                 Point::new(x, y),
                 Size::new(s_width, STEP_HEIGHT),
-                Stroke::default()
-                    .with_color(border_color)
-                    .with_width(if is_selected || has_error || step_timeout { 2.5 } else { 2.0 }),
+                Stroke::default().with_color(border_color).with_width(
+                    if is_selected || has_error || step_timeout {
+                        2.5
+                    } else {
+                        2.0
+                    },
+                ),
             );
 
             // Error halo outline
@@ -2422,15 +2563,22 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
             } else if step.kind == StepKind::Macro {
                 // IEC 60848 Macro Step: double horizontal bars at top and bottom of step box
                 frame.stroke(
-                    &Path::line(Point::new(x + 2.0, y + 5.0), Point::new(x + s_width - 2.0, y + 5.0)),
-                    Stroke::default().with_color(StudioTheme::ACCENT_PURPLE).with_width(2.0),
+                    &Path::line(
+                        Point::new(x + 2.0, y + 5.0),
+                        Point::new(x + s_width - 2.0, y + 5.0),
+                    ),
+                    Stroke::default()
+                        .with_color(StudioTheme::ACCENT_PURPLE)
+                        .with_width(2.0),
                 );
                 frame.stroke(
                     &Path::line(
                         Point::new(x + 2.0, y + STEP_HEIGHT - 5.0),
                         Point::new(x + s_width - 2.0, y + STEP_HEIGHT - 5.0),
                     ),
-                    Stroke::default().with_color(StudioTheme::ACCENT_PURPLE).with_width(2.0),
+                    Stroke::default()
+                        .with_color(StudioTheme::ACCENT_PURPLE)
+                        .with_width(2.0),
                 );
             }
 
@@ -2884,8 +3032,8 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 width: 12.0,
                 height: 12.0,
             }) {
-                let is_out_hovered =
-                    state.hover_port.as_ref() == Some(&PortHover::StepOutput(step.id.clone(), out_p));
+                let is_out_hovered = state.hover_port.as_ref()
+                    == Some(&PortHover::StepOutput(step.id.clone(), out_p));
                 frame.fill(
                     &Path::circle(out_p, if is_out_hovered { 6.0 } else { PORT_RADIUS }),
                     if is_out_hovered {
@@ -3116,8 +3264,8 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 width: 12.0,
                 height: 12.0,
             }) {
-                let is_in_hovered =
-                    state.hover_port.as_ref() == Some(&PortHover::TransitionInput(tr.id.clone(), in_p));
+                let is_in_hovered = state.hover_port.as_ref()
+                    == Some(&PortHover::TransitionInput(tr.id.clone(), in_p));
                 frame.fill(
                     &Path::circle(in_p, if is_in_hovered { 6.0 } else { PORT_RADIUS }),
                     if is_in_hovered {
@@ -3199,6 +3347,8 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
         // 8. Open Qualifier Dropdown Floating Menu (in a dedicated overlay Geometry layer rendered in front of everything)
         if let Some(ref dd) = state.qualifier_dropdown {
             let mut overlay_frame = Frame::new(renderer, bounds.size());
+            overlay_frame.translate(pan);
+            overlay_frame.scale(zoom);
 
             // Dark diffuse outer drop shadow
             overlay_frame.fill_rectangle(
@@ -3230,8 +3380,9 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
                 .map(|a| a.qualifier);
 
             let hovered_idx = cursor.position_in(bounds).and_then(|pos| {
-                if dd.rect.contains(pos) {
-                    let rel_y = pos.y - (dd.rect.y + 2.0);
+                let canvas_pos = Point::new((pos.x - pan.x) / zoom, (pos.y - pan.y) / zoom);
+                if dd.rect.contains(canvas_pos) {
+                    let rel_y = canvas_pos.y - (dd.rect.y + 2.0);
                     let idx = (rel_y / 22.0) as usize;
                     if idx < SFC_QUALIFIER_ITEMS.len() {
                         Some(idx)
@@ -3312,9 +3463,14 @@ impl<'a> canvas::Program<Message> for SfcCanvasProgram<'a> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
+        if state.is_panning {
+            return mouse::Interaction::Grabbing;
+        }
         if let Some(pos) = cursor.position_in(bounds) {
+            let (pan, zoom) = state.viewport_for(self.pou_name);
+            let canvas_pos = Point::new((pos.x - pan.x) / zoom, (pos.y - pan.y) / zoom);
             if let Some(ref dd) = state.qualifier_dropdown
-                && dd.rect.contains(pos)
+                && dd.rect.contains(canvas_pos)
             {
                 return mouse::Interaction::Pointer;
             }
@@ -3719,14 +3875,12 @@ pub fn render_sfc_editor<'a>(
         toolbar_row = toolbar_row.push(sb);
     }
 
-    let scrollable_toolbar = scrollable(
-        container(toolbar_row).padding(Padding {
-            top: 2.0,
-            right: 4.0,
-            bottom: 8.0,
-            left: 2.0,
-        }),
-    )
+    let scrollable_toolbar = scrollable(container(toolbar_row).padding(Padding {
+        top: 2.0,
+        right: 4.0,
+        bottom: 8.0,
+        left: 2.0,
+    }))
     .direction(scrollable::Direction::Horizontal(
         scrollable::Scrollbar::new()
             .width(4)
@@ -3765,18 +3919,22 @@ pub fn render_sfc_editor<'a>(
         )
     });
 
-    let tip = text("Tip: Direct in-place editing on canvas (click names/actions/transitions to edit). Double-click or click [+ Act] on steps. Drag wires (● to ●). Right-click any port to disconnect.")
-        .size(10.5)
-        .color(StudioTheme::TEXT_MUTED);
-
+    // Info badge replaces the old always-visible tips bar: hover reveals the tip.
     let mut top_bar_col = column![
-        container(scrollable_toolbar)
-            .width(Length::Fill)
-            .padding([4, 8])
-            .style(StudioTheme::subtle_badge_style(Color::from_rgba(
-                0.2, 0.4, 0.6, 0.12,
-            ))),
-        tip,
+        row![
+            container(scrollable_toolbar)
+                .width(Length::Fill)
+                .padding([4, 8])
+                .style(StudioTheme::subtle_badge_style(Color::from_rgba(
+                    0.2, 0.4, 0.6, 0.12,
+                ))),
+            crate::icons::info_tip(
+                "Tip: Direct in-place editing on canvas (click names/actions/transitions to edit). Double-click or click [+ Act] on steps. Drag wires (● to ●). Right-click any port to disconnect.",
+            ),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .width(Length::Fill),
     ]
     .spacing(4);
 
@@ -3835,14 +3993,12 @@ pub fn render_sfc_editor<'a>(
         .spacing(12)
         .align_y(Alignment::Center);
 
-        let scrollable_multi = scrollable(
-            container(multi_row).padding(Padding {
-                top: 2.0,
-                right: 4.0,
-                bottom: 8.0,
-                left: 2.0,
-            }),
-        )
+        let scrollable_multi = scrollable(container(multi_row).padding(Padding {
+            top: 2.0,
+            right: 4.0,
+            bottom: 8.0,
+            left: 2.0,
+        }))
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new()
                 .width(4)
@@ -3926,14 +4082,12 @@ pub fn render_sfc_editor<'a>(
     };
 
     let inspector_bar: Option<Element<'a, Message>> = single_inspector.map(|content| {
-        let scrollable_insp = scrollable(
-            container(content).padding(Padding {
-                top: 2.0,
-                right: 4.0,
-                bottom: 8.0,
-                left: 2.0,
-            }),
-        )
+        let scrollable_insp = scrollable(container(content).padding(Padding {
+            top: 2.0,
+            right: 4.0,
+            bottom: 8.0,
+            left: 2.0,
+        }))
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new()
                 .width(4)
@@ -3992,8 +4146,8 @@ mod tests {
             kind: StepKind::Normal,
             actions: vec![],
             grid_pos: Some((60, 40)),
-                    ..Default::default()
-                };
+            ..Default::default()
+        };
         let canvas = SfcCanvasProgram {
             pou_name: "test",
             program: &SfcProgram {
@@ -4013,13 +4167,12 @@ mod tests {
         let w = canvas.step_width(&canvas.program.steps[0]);
 
         assert_eq!(in_p, Point::new(60.0 + w * 0.5, 40.0));
-        assert_eq!(
-            out_p,
-            Point::new(60.0 + w * 0.5, 40.0 + STEP_HEIGHT)
-        );
+        assert_eq!(out_p, Point::new(60.0 + w * 0.5, 40.0 + STEP_HEIGHT));
 
         // Hit testing within PORT_HIT_DIST
-        assert!(Point::new(60.0 + w * 0.5, 40.0 + STEP_HEIGHT + 2.0).distance(out_p) <= PORT_HIT_DIST);
+        assert!(
+            Point::new(60.0 + w * 0.5, 40.0 + STEP_HEIGHT + 2.0).distance(out_p) <= PORT_HIT_DIST
+        );
     }
 
     #[test]
@@ -4292,7 +4445,8 @@ mod tests {
                         target: "Valve_Water".to_string(),
                         duration: None,
                     }],
-                    grid_pos: None, ..Default::default()
+                    grid_pos: None,
+                    ..Default::default()
                 },
                 SfcStep {
                     id: "2".to_string(),
@@ -4303,7 +4457,8 @@ mod tests {
                         target: "Count := Count + 1;".to_string(),
                         duration: None,
                     }],
-                    grid_pos: None, ..Default::default()
+                    grid_pos: None,
+                    ..Default::default()
                 },
                 SfcStep::new("3".to_string(), "Step_Choice".to_string(), StepKind::Normal),
                 SfcStep::new("4".to_string(), "Step_AltA".to_string(), StepKind::Normal),
@@ -4621,7 +4776,10 @@ mod tests {
         // Render editor without panic or errors
         let _elem = render_sfc_editor(&valid_or_conv, None, UiLanguage::En, None, &[], None);
         let report = validate_sfc_topology(&valid_or_conv);
-        assert!(report.is_valid, "Valid IEC 60848 OR convergence with multiple branch transitions is valid");
+        assert!(
+            report.is_valid,
+            "Valid IEC 60848 OR convergence with multiple branch transitions is valid"
+        );
 
         // Single transition attempting to merge multiple steps with ConvergenceKind::Or is rejected by IEC 60848 Rule 4
         let invalid_program = SfcProgram {
@@ -4873,9 +5031,21 @@ mod tests {
         let _ = app.update(Message::SfcAddOrDivergence("seq_test".to_string()));
         if let Some(ferrite_project::PouSource::Sfc(sfc)) = app.project.pous.get("seq_test") {
             // In IEC 60848, OR divergence has an independent transition on each branch:
-            let branch1 = sfc.transitions.iter().find(|t| t.to_steps.contains(&"1".to_string())).ok_or("Branch 1 transition must exist")?;
-            let branch2 = sfc.transitions.iter().find(|t| t.to_steps.contains(&"2".to_string())).ok_or("Branch 2 transition must exist")?;
-            let branch3 = sfc.transitions.iter().find(|t| t.to_steps.contains(&"3".to_string())).ok_or("Branch 3 transition must exist")?;
+            let branch1 = sfc
+                .transitions
+                .iter()
+                .find(|t| t.to_steps.contains(&"1".to_string()))
+                .ok_or("Branch 1 transition must exist")?;
+            let branch2 = sfc
+                .transitions
+                .iter()
+                .find(|t| t.to_steps.contains(&"2".to_string()))
+                .ok_or("Branch 2 transition must exist")?;
+            let branch3 = sfc
+                .transitions
+                .iter()
+                .find(|t| t.to_steps.contains(&"3".to_string()))
+                .ok_or("Branch 3 transition must exist")?;
             assert_eq!(branch1.to_steps, vec!["1".to_string()]);
             assert_eq!(branch2.to_steps, vec!["2".to_string()]);
             assert_eq!(branch3.to_steps, vec!["3".to_string()]);
@@ -5003,8 +5173,8 @@ mod tests {
                 },
             ],
             grid_pos: Some((100, 100)),
-                    ..Default::default()
-                };
+            ..Default::default()
+        };
 
         let transition = SfcTransition {
             id: "1".to_string(),
@@ -5034,15 +5204,30 @@ mod tests {
 
         // 3. Verify render_sfc_editor renders full view with Step inspector (horizontal scrollable with bottom padding)
         let sel_step_key = SfcElementKey::Step("10".to_string());
-        let _elem_step =
-            render_sfc_editor(&program, None, UiLanguage::En, Some(&sel_step_key), &[], None);
+        let _elem_step = render_sfc_editor(
+            &program,
+            None,
+            UiLanguage::En,
+            Some(&sel_step_key),
+            &[],
+            None,
+        );
 
-        let multi_sel = [SfcElementKey::Step("10".to_string()), SfcElementKey::Transition("1".to_string())];
+        let multi_sel = [
+            SfcElementKey::Step("10".to_string()),
+            SfcElementKey::Transition("1".to_string()),
+        ];
         let _elem_multi = render_sfc_editor(&program, None, UiLanguage::En, None, &multi_sel, None);
         // 4. Verify render_sfc_editor renders full view with Transition inspector
         let sel_trans_key = SfcElementKey::Transition("1".to_string());
-        let _elem_trans =
-            render_sfc_editor(&program, None, UiLanguage::En, Some(&sel_trans_key), &[], None);
+        let _elem_trans = render_sfc_editor(
+            &program,
+            None,
+            UiLanguage::En,
+            Some(&sel_trans_key),
+            &[],
+            None,
+        );
     }
 
     #[test]
@@ -5155,8 +5340,8 @@ mod tests {
                 kind: StepKind::Initial,
                 actions: vec![],
                 grid_pos: Some((60, 40)),
-                    ..Default::default()
-                }],
+                ..Default::default()
+            }],
             transitions: vec![],
         };
         project.pous.insert(
@@ -5327,7 +5512,10 @@ mod tests {
         let w_short = canvas_prog.step_width(&short_step);
         let w_long = canvas_prog.step_width(&long_step);
         assert!(w_short >= 170.0, "Short step must have minimum width 170");
-        assert!(w_long > w_short, "Long step must expand wider than short step");
+        assert!(
+            w_long > w_short,
+            "Long step must expand wider than short step"
+        );
         assert!(w_long <= 320.0, "Step width must cap at 320");
 
         // 2. Verify [+ Act] button rect is inside step bounds
@@ -5343,12 +5531,18 @@ mod tests {
 
         // 4. Verify transition receptivity badge width scales exactly to text plus small padding
         let tr_rect = canvas_prog.trans_receptivity_rect(&prog.transitions[0], &state);
-        assert!(tr_rect.width >= 100.0, "Long receptivity must have wide badge");
+        assert!(
+            tr_rect.width >= 100.0,
+            "Long receptivity must have wide badge"
+        );
 
         let mut short_trans = prog.transitions[0].clone();
         short_trans.receptivity = "1".to_string();
         let short_tr_rect = canvas_prog.trans_receptivity_rect(&short_trans, &state);
-        assert_eq!(short_tr_rect.width, 18.0, "Single-char receptivity must be compact with small padding");
+        assert_eq!(
+            short_tr_rect.width, 18.0,
+            "Single-char receptivity must be compact with small padding"
+        );
     }
 
     #[test]
@@ -5454,7 +5648,10 @@ mod tests {
                 width: (act1_del_rect.x + act1_del_rect.width) - act1_q_rect.x,
                 height: act1_q_rect.height,
             };
-            assert!(dd.rect.intersects(&act1_row), "Underlying action row must be occluded by dropdown menu");
+            assert!(
+                dd.rect.intersects(&act1_row),
+                "Underlying action row must be occluded by dropdown menu"
+            );
 
             // A transition positioned underneath the dropdown menu is occluded:
             let trans_under = SfcTransition {
@@ -5466,11 +5663,17 @@ mod tests {
                 ..Default::default()
             };
             let trans_rec = canvas_prog.trans_receptivity_rect(&trans_under, &state);
-            assert!(dd.rect.intersects(&trans_rec), "Transition receptivity underneath dropdown menu must be occluded");
+            assert!(
+                dd.rect.intersects(&trans_rec),
+                "Transition receptivity underneath dropdown menu must be occluded"
+            );
         }
 
         // Click 2nd item in dropdown: index 1 is ActionQualifier::S (S - Set)
-        let item_click = Point::new(q_rect.x + 20.0, q_rect.y + q_rect.height + 2.0 + 2.0 + 22.0 * 1.0 + 5.0);
+        let item_click = Point::new(
+            q_rect.x + 20.0,
+            q_rect.y + q_rect.height + 2.0 + 2.0 + 22.0 * 1.0 + 5.0,
+        );
         let (status, msg) = canvas_prog.update(
             &mut state,
             canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
@@ -5505,7 +5708,9 @@ mod tests {
                 modifiers: iced::keyboard::Modifiers::default(),
                 text: None,
                 modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Escape),
+                physical_key: iced::keyboard::key::Physical::Code(
+                    iced::keyboard::key::Code::Escape,
+                ),
             }),
             bounds,
             mouse::Cursor::Unavailable,
@@ -5540,7 +5745,9 @@ mod tests {
                 modifiers: iced::keyboard::Modifiers::default(),
                 text: Some("2".into()),
                 modified_key: iced::keyboard::Key::Character("2".into()),
-                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Digit2),
+                physical_key: iced::keyboard::key::Physical::Code(
+                    iced::keyboard::key::Code::Digit2,
+                ),
             }),
             bounds,
             mouse::Cursor::Unavailable,
@@ -5655,7 +5862,9 @@ mod tests {
                 modifiers: iced::keyboard::Modifiers::default(),
                 text: None,
                 modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Escape),
+                physical_key: iced::keyboard::key::Physical::Code(
+                    iced::keyboard::key::Code::Escape,
+                ),
             }),
             bounds,
             mouse::Cursor::Unavailable,
@@ -5722,5 +5931,188 @@ mod tests {
                 0
             )) if p == "test_inline"
         ));
+    }
+
+    #[test]
+    fn test_sfc_canvas_middle_mouse_pan_and_hit_testing() {
+        use ferrite_lang_sfc::{SfcProgram, SfcStep};
+        use iced::mouse;
+
+        let step = SfcStep {
+            id: "10".to_string(),
+            name: "Step_Pan".to_string(),
+            kind: StepKind::Initial,
+            actions: vec![],
+            grid_pos: Some((100, 100)),
+            ..Default::default()
+        };
+
+        let prog = SfcProgram {
+            name: "test_pan".to_string(),
+            comment: String::new(),
+            steps: vec![step],
+            transitions: vec![],
+        };
+
+        let canvas_prog = SfcCanvasProgram {
+            pou_name: "test_pan",
+            program: &prog,
+            runtime: None,
+            selected: None,
+            selected_elements: &[],
+            validation_report: None,
+        };
+
+        let mut state = SfcCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 800.0));
+
+        // 1. Middle mouse press starts panning and sets Grabbing cursor interaction
+        let start_pt = Point::new(300.0, 250.0);
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)),
+            bounds,
+            mouse::Cursor::Available(start_pt),
+        );
+        assert_eq!(status, event::Status::Captured);
+        assert!(msg.is_none());
+        assert!(state.is_panning);
+        assert_eq!(state.pan_start, Some(start_pt));
+        assert_eq!(
+            canvas_prog.mouse_interaction(&state, bounds, mouse::Cursor::Available(start_pt)),
+            mouse::Interaction::Grabbing
+        );
+
+        // 2. Cursor movement while middle-dragging updates state.pan by the movement delta
+        let moved_pt = Point::new(345.0, 220.0);
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::CursorMoved { position: moved_pt }),
+            bounds,
+            mouse::Cursor::Available(moved_pt),
+        );
+        assert_eq!(status, event::Status::Captured);
+        assert!(msg.is_none());
+        assert_eq!(state.pan, Vector::new(45.0, -30.0));
+        assert_eq!(state.pan_start, Some(moved_pt));
+
+        // 3. Releasing middle mouse button stops panning while preserving state.pan
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)),
+            bounds,
+            mouse::Cursor::Available(moved_pt),
+        );
+        assert_eq!(status, event::Status::Captured);
+        assert!(msg.is_none());
+        assert!(!state.is_panning);
+        assert_eq!(state.pan_start, None);
+        assert_eq!(state.pan, Vector::new(45.0, -30.0));
+
+        // 4. With pan applied, left-clicking the step at its panned screen coordinates hits it
+        // Step body is at (100, 100); click at canvas (160, 115) -> screen (160 + 45, 115 - 30) = (205, 85)
+        let panned_click = Point::new(160.0 + state.pan.x, 115.0 + state.pan.y);
+        let (status, msg) = canvas_prog.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            bounds,
+            mouse::Cursor::Available(panned_click),
+        );
+        assert_eq!(status, event::Status::Captured);
+        assert!(matches!(
+            msg,
+            Some(Message::SfcSelectElements(ref p, ref keys))
+                if p == "test_pan" && keys == &[SfcElementKey::Step("10".to_string())]
+        ));
+        assert_eq!(state.selected, Some(SfcElementKey::Step("10".to_string())));
+        assert!(matches!(
+            state.drag,
+            DragState::MovingElement {
+                key: SfcElementKey::Step(ref id),
+                ..
+            } if id == "10"
+        ));
+    }
+
+    #[test]
+    fn test_sfc_canvas_wheel_zoom_and_per_pou_persistence() {
+        let prog_a = SfcProgram {
+            name: "pou_a".to_string(),
+            comment: String::new(),
+            steps: vec![SfcStep {
+                id: "1".to_string(),
+                name: "Init".to_string(),
+                kind: StepKind::Initial,
+                actions: vec![],
+                grid_pos: Some((100, 100)),
+                ..Default::default()
+            }],
+            transitions: vec![],
+        };
+        let prog_b = SfcProgram {
+            name: "pou_b".to_string(),
+            ..prog_a.clone()
+        };
+
+        let mut state = SfcCanvasState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(1000.0, 800.0));
+        let cursor_pt = Point::new(220.0, 180.0);
+
+        let canvas_a = SfcCanvasProgram {
+            pou_name: "pou_a",
+            program: &prog_a,
+            runtime: None,
+            selected: None,
+            selected_elements: &[],
+            validation_report: None,
+        };
+        let (status, _) = canvas_a.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Lines { x: 0.0, y: 2.0 },
+            }),
+            bounds,
+            mouse::Cursor::Available(cursor_pt),
+        );
+        assert_eq!(status, event::Status::Captured);
+        assert!(state.zoom > 1.0 && state.zoom <= 3.0);
+        // Cursor world coordinate stays fixed at (220, 180)
+        let world_x = (cursor_pt.x - state.pan.x) / state.zoom;
+        let world_y = (cursor_pt.y - state.pan.y) / state.zoom;
+        assert!((world_x - 220.0).abs() < 0.01);
+        assert!((world_y - 180.0).abs() < 0.01);
+        let saved_a = (state.pan, state.zoom);
+
+        // Switching to pou_b initializes fresh default viewport (pan 0, zoom 1.0)
+        let canvas_b = SfcCanvasProgram {
+            pou_name: "pou_b",
+            program: &prog_b,
+            runtime: None,
+            selected: None,
+            selected_elements: &[],
+            validation_report: None,
+        };
+        let _ = canvas_b.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::CursorMoved {
+                position: cursor_pt,
+            }),
+            bounds,
+            mouse::Cursor::Available(cursor_pt),
+        );
+        assert_eq!(state.pan, Vector::default());
+        assert_eq!(state.zoom, 1.0);
+
+        // Switching back to pou_a restores pou_a's zoom and pan
+        let _ = canvas_a.update(
+            &mut state,
+            canvas::Event::Mouse(mouse::Event::CursorMoved {
+                position: cursor_pt,
+            }),
+            bounds,
+            mouse::Cursor::Available(cursor_pt),
+        );
+        assert_eq!(state.pan, saved_a.0);
+        assert!((state.zoom - saved_a.1).abs() < 1e-5);
     }
 }

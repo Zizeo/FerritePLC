@@ -13,17 +13,11 @@ pub fn render_alarms_panel<'a>(
     lang: UiLanguage,
 ) -> Element<'a, Message> {
     let Some(runtime) = runtime_opt else {
-        return container(
-            text(lang.tr(
-                "PLC Runtime inactive. Start or step scan to monitor alarms.",
-                "API inactive. Démarrez ou avancez le cycle pour surveiller les alarmes.",
-            ))
-            .color(StudioTheme::TEXT_MUTED),
-        )
-        .padding(24)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into();
+        return container(text(crate::tr!("alarms.inactive", lang)).color(StudioTheme::TEXT_MUTED))
+            .padding(24)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into();
     };
 
     let active_count = runtime
@@ -43,7 +37,7 @@ pub fn render_alarms_panel<'a>(
     // Toolbar Header
     let unack_badge = if unack_count > 0 {
         container(
-            text(format!("! {unack_count} Unack"))
+            text(crate::tr!("alarms.unack_count", lang, count = unack_count))
                 .size(12)
                 .color(StudioTheme::ACCENT_ROSE),
         )
@@ -53,7 +47,7 @@ pub fn render_alarms_panel<'a>(
         )))
     } else {
         container(
-            text(lang.tr("[OK] All Acknowledged", "[OK] Tout Acquitté"))
+            text(crate::tr!("alarms.all_acknowledged", lang))
                 .size(12)
                 .color(StudioTheme::ACCENT_EMERALD),
         )
@@ -64,13 +58,17 @@ pub fn render_alarms_panel<'a>(
     };
 
     let toolbar = row![
-        text(lang.tr("ISA-18.2 Alarm Management", "Gestion des Alarmes ISA-18.2")).size(15),
+        text(crate::tr!("alarms.title", lang)).size(15),
         unack_badge,
-        text(format!("({active_count} {})", lang.tr("Active", "Actif")))
-            .size(12)
-            .color(StudioTheme::TEXT_SECONDARY),
+        text(crate::tr!(
+            "alarms.active_count",
+            lang,
+            count = active_count
+        ))
+        .size(12)
+        .color(StudioTheme::TEXT_SECONDARY),
         iced::widget::Space::with_width(Length::Fill),
-        button(text(lang.tr("Acknowledge All", "Tout Acquitter")).size(12))
+        button(text(crate::tr!("alarms.ack_all", lang)).size(12))
             .on_press(Message::AcknowledgeAllAlarms)
             .style(StudioTheme::primary_button)
             .padding([6, 12]),
@@ -81,27 +79,27 @@ pub fn render_alarms_panel<'a>(
     // Left card: Active Alarms
     let mut active_list = column![
         row![
-            text(lang.tr("Severity", "Gravité"))
+            text(crate::tr!("alarms.col.severity", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(1)),
-            text(lang.tr("ID", "ID"))
+            text(crate::tr!("alarms.col.id", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(2)),
-            text(lang.tr("Tag", "Variable"))
+            text(crate::tr!("alarms.col.tag", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(2)),
-            text(lang.tr("State", "État"))
+            text(crate::tr!("alarms.col.state", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(1)),
-            text(lang.tr("Message", "Message"))
+            text(crate::tr!("alarms.col.message", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(4)),
-            text(lang.tr("Action", "Action"))
+            text(crate::tr!("alarms.col.action", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::Shrink),
@@ -137,9 +135,16 @@ pub fn render_alarms_panel<'a>(
         };
 
         let item_row = row![
-            text(sev_txt).size(11).color(sev_color).width(Length::FillPortion(1)),
-            text(alarm.definition.id.clone()).size(11).width(Length::FillPortion(2)),
-            text(alarm.definition.tag.clone()).size(11).width(Length::FillPortion(2)),
+            text(sev_txt)
+                .size(11)
+                .color(sev_color)
+                .width(Length::FillPortion(1)),
+            text(alarm.definition.id.clone())
+                .size(11)
+                .width(Length::FillPortion(2)),
+            text(alarm.definition.tag.clone())
+                .size(11)
+                .width(Length::FillPortion(2)),
             text(state_txt).size(11).width(Length::FillPortion(1)),
             text(alarm.definition.message.clone())
                 .size(11)
@@ -155,18 +160,15 @@ pub fn render_alarms_panel<'a>(
 
     if !found_active {
         active_list = active_list.push(
-            text(lang.tr(
-                "No active alarms. System operating normally.",
-                "Aucune alarme active. Fonctionnement normal.",
-            ))
-            .color(StudioTheme::TEXT_MUTED)
-            .size(12),
+            text(crate::tr!("alarms.no_active", lang))
+                .color(StudioTheme::TEXT_MUTED)
+                .size(12),
         );
     }
 
     let active_card = container(
         column![
-            text(lang.tr("Active Alarms", "Alarmes Actives")).size(13),
+            text(crate::tr!("alarms.active_title", lang)).size(13),
             scrollable(active_list).height(160),
         ]
         .spacing(10),
@@ -178,23 +180,23 @@ pub fn render_alarms_panel<'a>(
     // Right card: Sequence of Events (SOE) Journal
     let mut journal_list = column![
         row![
-            text(lang.tr("Time", "Heure"))
+            text(crate::tr!("alarms.col.time", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(2)),
-            text(lang.tr("Severity", "Gravité"))
+            text(crate::tr!("alarms.col.severity", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(1)),
-            text(lang.tr("ID", "ID"))
+            text(crate::tr!("alarms.col.id", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(2)),
-            text(lang.tr("State", "État"))
+            text(crate::tr!("alarms.col.state", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(2)),
-            text(lang.tr("Event", "Événement"))
+            text(crate::tr!("alarms.col.event", lang))
                 .size(11)
                 .color(StudioTheme::TEXT_MUTED)
                 .width(Length::FillPortion(4)),
@@ -205,7 +207,7 @@ pub fn render_alarms_panel<'a>(
 
     if runtime.alarm_journal.is_empty() {
         journal_list = journal_list.push(
-            text(lang.tr("Journal empty.", "Journal vide."))
+            text(crate::tr!("alarms.journal_empty", lang))
                 .color(StudioTheme::TEXT_MUTED)
                 .size(12),
         );
@@ -222,9 +224,16 @@ pub fn render_alarms_panel<'a>(
                 text(format!("T+{}ms", record.timestamp_ms))
                     .size(11)
                     .width(Length::FillPortion(2)),
-                text(sev_txt).size(11).color(sev_color).width(Length::FillPortion(1)),
-                text(record.alarm_id.clone()).size(11).width(Length::FillPortion(2)),
-                text(format!("{:?}", record.state)).size(11).width(Length::FillPortion(2)),
+                text(sev_txt)
+                    .size(11)
+                    .color(sev_color)
+                    .width(Length::FillPortion(1)),
+                text(record.alarm_id.clone())
+                    .size(11)
+                    .width(Length::FillPortion(2)),
+                text(format!("{:?}", record.state))
+                    .size(11)
+                    .width(Length::FillPortion(2)),
                 text(record.message.clone())
                     .size(11)
                     .width(Length::FillPortion(4))
@@ -239,11 +248,7 @@ pub fn render_alarms_panel<'a>(
 
     let journal_card = container(
         column![
-            text(lang.tr(
-                "Sequence of Events (SOE) Journal",
-                "Journal Chronologique d'Événements (SOE)"
-            ))
-            .size(13),
+            text(crate::tr!("alarms.journal_title", lang)).size(13),
             scrollable(journal_list).height(160),
         ]
         .spacing(10),

@@ -138,7 +138,6 @@ pub static FBD_CATALOG: &[FbdCatalogItem] = &[
         pin_signature: "IN1, IN2 -> OUT",
         make_kind: |_| FbdBlockKind::Ne,
     },
-
     // --- Timers & Counters ---
     FbdCatalogItem {
         name: "TON",
@@ -217,7 +216,6 @@ pub static FBD_CATALOG: &[FbdCatalogItem] = &[
             fb_type: Some(StandardFbKind::Blink),
         },
     },
-
     // --- Regulation & Controllers ---
     FbdCatalogItem {
         name: "HYSTERESIS",
@@ -307,7 +305,6 @@ pub static FBD_CATALOG: &[FbdCatalogItem] = &[
             fb_type: Some(StandardFbKind::P),
         },
     },
-
     // --- Bistables & Edge Triggers ---
     FbdCatalogItem {
         name: "SR",
@@ -375,11 +372,7 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
     };
 
     let target_caption = if let Some(ref target) = active_fbd_pou {
-        format!(
-            "{}: {}",
-            lang.tr("Target FBD POU", "POU FBD cible"),
-            target
-        )
+        format!("{}: {}", lang.tr("Target FBD POU", "POU FBD cible"), target)
     } else {
         lang.tr(
             "No active FBD POU (open an FBD POU first)",
@@ -389,8 +382,11 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
     };
 
     let header = row![
-        text(lang.tr("Function Block Library", "Bibliothèque de Blocs Fonctionnels"))
-            .size(16),
+        text(lang.tr(
+            "Function Block Library",
+            "Bibliothèque de Blocs Fonctionnels"
+        ))
+        .size(16),
         iced::widget::Space::with_width(Length::Fill),
         button(
             row![
@@ -433,7 +429,10 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
     .align_y(Alignment::Center);
 
     let search_input = text_input(
-        lang.tr("Filter blocks (e.g. PID, TON, AND)...", "Filtrer les blocs (ex: PID, TON, ET)..."),
+        lang.tr(
+            "Filter blocks (e.g. PID, TON, AND)...",
+            "Filtrer les blocs (ex: PID, TON, ET)...",
+        ),
         &app.fbd_library_search_query,
     )
     .on_input(Message::FbdLibrarySearchChanged)
@@ -441,10 +440,35 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
     .style(StudioTheme::styled_input);
 
     let categories = [
-        ("Logic & Math", lang.tr("Logic & Math Primitives", "Primitives Logiques & Arithmétiques"), StudioTheme::ACCENT_CYAN),
-        ("Timers & Counters", lang.tr("Timers & Counters (IEC 61131-3)", "Temporisateurs & Compteurs (IEC 61131-3)"), StudioTheme::ACCENT_AMBER),
-        ("Regulation & PID", lang.tr("Regulation & Correctors", "Régulation & Correcteurs"), StudioTheme::ACCENT_PURPLE),
-        ("Bistables & Triggers", lang.tr("Bistables & Edge Triggers", "Bascules & Détecteurs de Fronts"), StudioTheme::ACCENT_EMERALD),
+        (
+            "Logic & Math",
+            lang.tr(
+                "Logic & Math Primitives",
+                "Primitives Logiques & Arithmétiques",
+            ),
+            StudioTheme::ACCENT_CYAN,
+        ),
+        (
+            "Timers & Counters",
+            lang.tr(
+                "Timers & Counters (IEC 61131-3)",
+                "Temporisateurs & Compteurs (IEC 61131-3)",
+            ),
+            StudioTheme::ACCENT_AMBER,
+        ),
+        (
+            "Regulation & PID",
+            lang.tr("Regulation & Correctors", "Régulation & Correcteurs"),
+            StudioTheme::ACCENT_PURPLE,
+        ),
+        (
+            "Bistables & Triggers",
+            lang.tr(
+                "Bistables & Edge Triggers",
+                "Bascules & Détecteurs de Fronts",
+            ),
+            StudioTheme::ACCENT_EMERALD,
+        ),
     ];
 
     let mut content_col = column![].spacing(14);
@@ -459,8 +483,14 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
             }
             item.name.to_lowercase().contains(&query)
                 || item.description.to_lowercase().contains(&query)
-                || item.input_pins.iter().any(|p| p.to_lowercase().contains(&query))
-                || item.output_pins.iter().any(|p| p.to_lowercase().contains(&query))
+                || item
+                    .input_pins
+                    .iter()
+                    .any(|p| p.to_lowercase().contains(&query))
+                || item
+                    .output_pins
+                    .iter()
+                    .any(|p| p.to_lowercase().contains(&query))
         })
         .collect();
 
@@ -471,9 +501,12 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
                 .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
                     1.0, 1.0, 1.0, 0.05
                 ))),
-            text(lang.tr("Custom Blocks (Structured Text)", "Blocs Personnalisés (Texte Structuré)"))
-                .size(13)
-                .color(StudioTheme::TEXT_PRIMARY),
+            text(lang.tr(
+                "Custom Blocks (Structured Text)",
+                "Blocs Personnalisés (Texte Structuré)"
+            ))
+            .size(13)
+            .color(StudioTheme::TEXT_PRIMARY),
         ]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -492,9 +525,16 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
                     .padding([8, 16])
             };
 
-            let pin_sig = format!("{} -> {}", item.input_pins.join(", "), item.output_pins.join(", "));
+            let pin_sig = format!(
+                "{} -> {}",
+                item.input_pins.join(", "),
+                item.output_pins.join(", ")
+            );
             let desc = if item.description.is_empty() {
-                lang.tr("Custom ST Function Block", "Bloc fonctionnel ST personnalisé")
+                lang.tr(
+                    "Custom ST Function Block",
+                    "Bloc fonctionnel ST personnalisé",
+                )
             } else {
                 &item.description
             };
@@ -505,12 +545,12 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
                         row![
                             text(&item.name).size(12),
                             text("|").size(11).color(StudioTheme::BORDER_CARD),
-                            text(pin_sig)
-                                .size(11)
-                                .color(StudioTheme::ACCENT_AMBER),
+                            text(pin_sig).size(11).color(StudioTheme::ACCENT_AMBER),
                             container(text("ST").size(9).color(StudioTheme::ACCENT_CYAN))
                                 .padding([1, 4])
-                                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.0, 0.8, 1.0, 0.1))),
+                                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                                    0.0, 0.8, 1.0, 0.1
+                                ))),
                         ]
                         .spacing(6)
                         .align_y(Alignment::Center),
@@ -594,32 +634,40 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
 
         for item in matching_items {
             let desc = match lang {
-
                 crate::i18n::UiLanguage::Fr => item.description_fr,
                 _ => item.description_en,
             };
 
             let add_btn = if let Some(ref target_pou) = active_fbd_pou {
-                let next_free_idx = if let Some(PouSource::Fbd(fbd)) = app.project.pous.get(target_pou) {
-                    let prefix = format!("{}_", item.name);
-                    let mut candidate: usize = 1;
-                    while fbd.blocks.iter().any(|b| b.id == format!("{prefix}{candidate}"))
-                        || app
-                            .project
-                            .fb_instances
-                            .instances
+                let next_free_idx =
+                    if let Some(PouSource::Fbd(fbd)) = app.project.pous.get(target_pou) {
+                        let prefix = format!("{}_", item.name);
+                        let mut candidate: usize = 1;
+                        while fbd
+                            .blocks
                             .iter()
-                            .any(|fb| fb.name == format!("{prefix}{candidate}"))
-                    {
-                        candidate += 1;
-                    }
-                    candidate.saturating_sub(1)
-                } else {
-                    0
-                };
+                            .any(|b| b.id == format!("{prefix}{candidate}"))
+                            || app
+                                .project
+                                .fb_instances
+                                .instances
+                                .iter()
+                                .any(|fb| fb.name == format!("{prefix}{candidate}"))
+                        {
+                            candidate += 1;
+                        }
+                        candidate.saturating_sub(1)
+                    } else {
+                        0
+                    };
                 let kind = (item.make_kind)(next_free_idx);
+                let insert_pos = app.fbd_next_block_position(target_pou);
                 button(text(lang.tr("+ Add", "+ Ajouter")).size(11))
-                    .on_press(Message::FbdAddBlock(target_pou.clone(), kind))
+                    .on_press(Message::FbdAddBlock(
+                        target_pou.clone(),
+                        kind,
+                        Some(insert_pos),
+                    ))
                     .style(StudioTheme::primary_button)
                     .padding([8, 16])
             } else {
@@ -673,9 +721,17 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
     let builder_panel: Option<Element<'_, Message>> = if app.custom_fbd_builder_open {
         let builder_header = row![
             text(if let Some(ref editing) = app.custom_fbd_editing_name {
-                format!("{}: {}", lang.tr("Edit Custom Block", "Modifier le bloc"), editing)
+                format!(
+                    "{}: {}",
+                    lang.tr("Edit Custom Block", "Modifier le bloc"),
+                    editing
+                )
             } else {
-                lang.tr("Create New Custom FBD Block (ST)", "Créer un nouveau bloc FBD (ST)").to_string()
+                lang.tr(
+                    "Create New Custom FBD Block (ST)",
+                    "Créer un nouveau bloc FBD (ST)",
+                )
+                .to_string()
             })
             .size(13)
             .color(StudioTheme::ACCENT_CYAN),
@@ -693,7 +749,9 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
 
         let name_row = row![
             column![
-                text(lang.tr("Block Name:", "Nom du bloc :")).size(11).color(StudioTheme::TEXT_SECONDARY),
+                text(lang.tr("Block Name:", "Nom du bloc :"))
+                    .size(11)
+                    .color(StudioTheme::TEXT_SECONDARY),
                 text_input("Name (e.g. DualCheck)", &app.custom_fbd_name_input)
                     .on_input(Message::CustomFbdNameChanged)
                     .padding([5, 8])
@@ -702,7 +760,9 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
             .width(Length::FillPortion(1))
             .spacing(3),
             column![
-                text(lang.tr("Description:", "Description :")).size(11).color(StudioTheme::TEXT_SECONDARY),
+                text(lang.tr("Description:", "Description :"))
+                    .size(11)
+                    .color(StudioTheme::TEXT_SECONDARY),
                 text_input("Description...", &app.custom_fbd_desc_input)
                     .on_input(Message::CustomFbdDescChanged)
                     .padding([5, 8])
@@ -715,7 +775,12 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
 
         let pins_row = row![
             column![
-                text(lang.tr("Input Pins (comma separated):", "Entrées (séparées par virgule) :")).size(11).color(StudioTheme::TEXT_SECONDARY),
+                text(lang.tr(
+                    "Input Pins (comma separated):",
+                    "Entrées (séparées par virgule) :"
+                ))
+                .size(11)
+                .color(StudioTheme::TEXT_SECONDARY),
                 text_input("IN1, IN2", &app.custom_fbd_inputs_input)
                     .on_input(Message::CustomFbdInputsChanged)
                     .padding([5, 8])
@@ -724,7 +789,12 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
             .width(Length::FillPortion(1))
             .spacing(3),
             column![
-                text(lang.tr("Output Pins (comma separated):", "Sorties (séparées par virgule) :")).size(11).color(StudioTheme::TEXT_SECONDARY),
+                text(lang.tr(
+                    "Output Pins (comma separated):",
+                    "Sorties (séparées par virgule) :"
+                ))
+                .size(11)
+                .color(StudioTheme::TEXT_SECONDARY),
                 text_input("OUT, ALARM", &app.custom_fbd_outputs_input)
                     .on_input(Message::CustomFbdOutputsChanged)
                     .padding([5, 8])
@@ -764,13 +834,25 @@ pub fn render_fbd_library_window(app: &FerriteStudioApp) -> Element<'_, Message>
         .spacing(4);
 
         let status_badge = if let Some(ref err) = app.custom_fbd_validation_error {
-            container(text(format!("⚠ {err}")).size(11).color(StudioTheme::ACCENT_ROSE))
-                .padding([3, 8])
-                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.957, 0.247, 0.369, 0.15)))
+            container(
+                text(format!("⚠ {err}"))
+                    .size(11)
+                    .color(StudioTheme::ACCENT_ROSE),
+            )
+            .padding([3, 8])
+            .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                0.957, 0.247, 0.369, 0.15,
+            )))
         } else {
-            container(text(lang.tr("✔ Valid ST logic", "✔ Logique ST valide")).size(11).color(StudioTheme::ACCENT_EMERALD))
-                .padding([3, 8])
-                .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(0.063, 0.725, 0.506, 0.15)))
+            container(
+                text(lang.tr("✔ Valid ST logic", "✔ Logique ST valide"))
+                    .size(11)
+                    .color(StudioTheme::ACCENT_EMERALD),
+            )
+            .padding([3, 8])
+            .style(StudioTheme::subtle_badge_style(iced::Color::from_rgba(
+                0.063, 0.725, 0.506, 0.15,
+            )))
         };
 
         let actions_row = row![
@@ -838,7 +920,8 @@ mod tests {
     use ferrite_project::Project;
 
     #[test]
-    fn test_render_fbd_library_window_with_custom_blocks() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_render_fbd_library_window_with_custom_blocks() -> Result<(), Box<dyn std::error::Error>>
+    {
         let unique_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();
@@ -846,14 +929,15 @@ mod tests {
         let p = Project::scaffold(&temp_dir, "PaletteTest")?;
         let mut app = FerriteStudioApp::new(p);
 
-        app.global_custom_fbs.push(ferrite_lang_fbd::CompositeFbDef {
-            name: "MathClamp".to_string(),
-            description: "Clamps value between min and max".to_string(),
-            input_pins: vec!["IN".to_string(), "MIN".to_string(), "MAX".to_string()],
-            output_pins: vec!["OUT".to_string()],
-            st_code: Some("OUT := LIMIT(MIN, IN, MAX);".to_string()),
-            blocks: vec![],
-        });
+        app.global_custom_fbs
+            .push(ferrite_lang_fbd::CompositeFbDef {
+                name: "MathClamp".to_string(),
+                description: "Clamps value between min and max".to_string(),
+                input_pins: vec!["IN".to_string(), "MIN".to_string(), "MAX".to_string()],
+                output_pins: vec!["OUT".to_string()],
+                st_code: Some("OUT := LIMIT(MIN, IN, MAX);".to_string()),
+                blocks: vec![],
+            });
 
         // 1. Render when builder is closed
         let _ = render_fbd_library_window(&app);
@@ -862,7 +946,8 @@ mod tests {
         app.custom_fbd_builder_open = true;
         app.custom_fbd_name_input = "MathClamp".to_string();
         app.custom_fbd_st_code_input = "OUT := LIMIT(MIN, IN, MAX);".to_string();
-        app.custom_fbd_st_content = iced::widget::text_editor::Content::with_text(&app.custom_fbd_st_code_input);
+        app.custom_fbd_st_content =
+            iced::widget::text_editor::Content::with_text(&app.custom_fbd_st_code_input);
         let _ = render_fbd_library_window(&app);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
