@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use ferrite_core::{
     CoreError, ExecutablePou, IecType, IecValue, LanguageKind, PouId, RuntimeError, ScanContext,
-    TagTable, parse_iec_time_literal,
+    TagId, TagTable, parse_iec_time_literal,
 };
 use ferrite_ir::{IrError, IrExpr, IrStmt, SymbolResolver};
 use ferrite_lang_st::{StError, parse_st_expression, parse_st_statements};
@@ -507,7 +507,9 @@ pub fn validate_sfc_topology(program: &SfcProgram) -> SfcValidationReport {
             if tr.from_steps.is_empty() {
                 errors.push(SfcValidationError::InvalidAndDivergence {
                     transition_id: tr.id.clone(),
-                    reason: "IEC 60848: AND divergence must be preceded by an upstream step/transition".to_string(),
+                    reason:
+                        "IEC 60848: AND divergence must be preceded by an upstream step/transition"
+                            .to_string(),
                 });
             }
             let unique_targets: HashSet<&String> = tr.to_steps.iter().collect();
@@ -524,14 +526,16 @@ pub fn validate_sfc_topology(program: &SfcProgram) -> SfcValidationReport {
             if tr.to_steps.is_empty() {
                 errors.push(SfcValidationError::InvalidAndConvergence {
                     transition_id: tr.id.clone(),
-                    reason: "IEC 60848: AND convergence must transition into a target step".to_string(),
+                    reason: "IEC 60848: AND convergence must transition into a target step"
+                        .to_string(),
                 });
             }
             let unique_sources: HashSet<&String> = tr.from_steps.iter().collect();
             if unique_sources.len() < tr.from_steps.len() {
                 errors.push(SfcValidationError::InvalidAndConvergence {
                     transition_id: tr.id.clone(),
-                    reason: "IEC 60848: AND convergence sources contain duplicate steps".to_string(),
+                    reason: "IEC 60848: AND convergence sources contain duplicate steps"
+                        .to_string(),
                 });
             }
         }
@@ -568,7 +572,8 @@ pub fn validate_sfc_topology(program: &SfcProgram) -> SfcValidationReport {
                 })
             });
             if let Some(shared) = shared_step
-                && (tr_a.divergence == DivergenceKind::And || tr_b.divergence == DivergenceKind::And)
+                && (tr_a.divergence == DivergenceKind::And
+                    || tr_b.divergence == DivergenceKind::And)
             {
                 let offending_id = if tr_a.divergence == DivergenceKind::And {
                     &tr_a.id
@@ -704,7 +709,8 @@ pub fn validate_sfc_topology(program: &SfcProgram) -> SfcValidationReport {
                         for ts in &tr.to_steps {
                             let trimmed = ts.trim();
                             let stripped = trimmed.trim_start_matches(['X', 'x']);
-                            if let Some(&tgt_idx) = step_map.get(trimmed).or_else(|| step_map.get(stripped))
+                            if let Some(&tgt_idx) =
+                                step_map.get(trimmed).or_else(|| step_map.get(stripped))
                                 && comp_steps.contains(&tgt_idx)
                                 && reachable_from_init.insert(tgt_idx)
                             {
@@ -886,7 +892,10 @@ fn qualify_ir_stmt(stmt: &mut IrStmt, map: &HashMap<String, String>) {
             }
             qualify_ir_expr(expr, map);
         }
-        IrStmt::If { branches, else_body } => {
+        IrStmt::If {
+            branches,
+            else_body,
+        } => {
             for (cond, body) in branches {
                 qualify_ir_expr(cond, map);
                 for s in body {
@@ -987,7 +996,10 @@ impl SfcProgram {
     /// Expands any macro steps with embedded `macro_sfc` into an inlined flat SfcProgram
     /// with entry step SM_IN and exit step SM_OUT connected appropriately.
     pub fn expand_macro_steps(&self) -> Result<SfcProgram, SfcError> {
-        let has_macros = self.steps.iter().any(|s| s.kind == StepKind::Macro || s.macro_sfc.is_some());
+        let has_macros = self
+            .steps
+            .iter()
+            .any(|s| s.kind == StepKind::Macro || s.macro_sfc.is_some());
         if !has_macros {
             return Ok(self.clone());
         }
@@ -1079,7 +1091,8 @@ impl SfcProgram {
                         }
                     }
                     for from_s in &mut tr.from_steps {
-                        if *from_s == macro_id || (!macro_name.is_empty() && *from_s == macro_name) {
+                        if *from_s == macro_id || (!macro_name.is_empty() && *from_s == macro_name)
+                        {
                             *from_s = exit_inlined_id.clone();
                         }
                     }
@@ -1301,7 +1314,6 @@ impl SfcProgram {
     }
 
     fn compile_expanded(&self, tags: &TagTable) -> Result<CompiledSfcPou, SfcError> {
-
         let report = validate_sfc_topology(self);
         if !report.is_valid {
             // Check if entirely missing initial step (preserves exact SfcError::MissingInitialStep)
@@ -1423,12 +1435,13 @@ impl SfcProgram {
 
                 // Allow SFC actions (`in_sfc = true`) to set, reset, or force step states of other SFC programs
                 let kind = if is_statement {
-                    let mut stmts = parse_st_statements(&act.target, &self.name).map_err(|source| {
-                        SfcError::St {
-                            pou: self.name.clone(),
-                            source,
-                        }
-                    })?;
+                    let mut stmts =
+                        parse_st_statements(&act.target, &self.name).map_err(|source| {
+                            SfcError::St {
+                                pou: self.name.clone(),
+                                source,
+                            }
+                        })?;
                     for s in &mut stmts {
                         qualify_ir_stmt(s, &own_symbol_map);
                         s.validate(tags, &self.name, true)
@@ -1465,7 +1478,8 @@ impl SfcProgram {
                             },
                         });
                     }
-                    CompiledActionKind::BooleanSymbol(resolved_target)
+                    let resolved_id = tags.tag_id(&resolved_target);
+                    CompiledActionKind::BooleanSymbol(resolved_target, resolved_id)
                 };
 
                 compiled_actions.push(CompiledAction {
@@ -1486,12 +1500,16 @@ impl SfcProgram {
             } else {
                 format!("{}.{short_prefix}.t", self.name)
             };
+            let state_tag_id = tags.tag_id(&state_sym);
+            let time_tag_id = tags.tag_id(&time_sym);
 
             compiled_steps.push(CompiledStep {
                 id: step.id.clone(),
                 name: step.name.clone(),
                 state_sym,
                 time_sym,
+                state_tag_id,
+                time_tag_id,
                 initial: step.kind == StepKind::Initial,
                 active: step.kind == StepKind::Initial,
                 prev_active: false,
@@ -1586,7 +1604,7 @@ impl SfcProgram {
 
 #[derive(Debug, Clone)]
 enum CompiledActionKind {
-    BooleanSymbol(String),
+    BooleanSymbol(String, Option<TagId>),
     Statements(Vec<IrStmt>),
 }
 
@@ -1603,6 +1621,8 @@ struct CompiledStep {
     name: String,
     state_sym: String,
     time_sym: String,
+    state_tag_id: Option<TagId>,
+    time_tag_id: Option<TagId>,
     initial: bool,
     active: bool,
     prev_active: bool,
@@ -1633,11 +1653,32 @@ pub struct CompiledSfcPou {
 }
 
 impl CompiledSfcPou {
+    fn write_action_bool(
+        ctx: &mut ScanContext<'_>,
+        sym: &str,
+        tag_id: Option<TagId>,
+        val: bool,
+    ) -> Result<(), RuntimeError> {
+        if let Some(id) = tag_id {
+            ctx.write_tag_id(id, IecValue::Bool(val))
+        } else {
+            ctx.write_symbol(sym, IecValue::Bool(val))
+        }
+    }
+
     fn sync_introspection_symbols(&self, ctx: &mut ScanContext<'_>) -> Result<(), RuntimeError> {
         ctx.with_sfc_engine(|sfc_ctx| -> Result<(), RuntimeError> {
             for step in &self.steps {
-                let _ = sfc_ctx.write_symbol(&step.state_sym, IecValue::Bool(step.active));
-                let _ = sfc_ctx.write_symbol(&step.time_sym, IecValue::Time(step.elapsed_ms));
+                if let Some(id) = step.state_tag_id {
+                    let _ = sfc_ctx.write_tag_id(id, IecValue::Bool(step.active));
+                } else {
+                    let _ = sfc_ctx.write_symbol(&step.state_sym, IecValue::Bool(step.active));
+                }
+                if let Some(id) = step.time_tag_id {
+                    let _ = sfc_ctx.write_tag_id(id, IecValue::Time(step.elapsed_ms));
+                } else {
+                    let _ = sfc_ctx.write_symbol(&step.time_sym, IecValue::Time(step.elapsed_ms));
+                }
             }
             Ok(())
         })
@@ -1647,7 +1688,11 @@ impl CompiledSfcPou {
     /// (for example by another SFC program's action or by interactive GUI Set/Force).
     fn sync_external_step_overrides(&mut self, ctx: &ScanContext<'_>) {
         for step in &mut self.steps {
-            if let Some(tag) = ctx.tags.get_tag(&step.state_sym) {
+            let tag_opt = step
+                .state_tag_id
+                .and_then(|id| ctx.tags.get_tag_by_id(id))
+                .or_else(|| ctx.tags.get_tag(&step.state_sym));
+            if let Some(tag) = tag_opt {
                 if let Some(IecValue::Bool(forced_b)) = tag.forced {
                     if step.active != forced_b {
                         step.active = forced_b;
@@ -1666,7 +1711,11 @@ impl CompiledSfcPou {
     /// Enforces active Forces (`tag.forced`) on step states after transition evolution.
     fn enforce_forced_steps(&mut self, ctx: &ScanContext<'_>) {
         for step in &mut self.steps {
-            if let Some(tag) = ctx.tags.get_tag(&step.state_sym)
+            let tag_opt = step
+                .state_tag_id
+                .and_then(|id| ctx.tags.get_tag_by_id(id))
+                .or_else(|| ctx.tags.get_tag(&step.state_sym));
+            if let Some(tag) = tag_opt
                 && let Some(IecValue::Bool(forced_b)) = tag.forced
             {
                 step.active = forced_b;
@@ -1808,12 +1857,13 @@ impl ExecutablePou for CompiledSfcPou {
                             | ActionQualifier::L
                             | ActionQualifier::D
                             | ActionQualifier::P => {
-                                if let CompiledActionKind::BooleanSymbol(ref sym) = act.kind {
-                                    sfc_ctx.write_symbol(sym, IecValue::Bool(false))?;
+                                if let CompiledActionKind::BooleanSymbol(ref sym, tag_id) = act.kind
+                                {
+                                    Self::write_action_bool(sfc_ctx, sym, tag_id, false)?;
                                 }
                             }
                             ActionQualifier::F | ActionQualifier::FZ => {
-                                if let CompiledActionKind::BooleanSymbol(ref sym) = act.kind {
+                                if let CompiledActionKind::BooleanSymbol(ref sym, _) = act.kind {
                                     sfc_ctx.unforce_symbol(sym)?;
                                 }
                             }
@@ -1831,8 +1881,8 @@ impl ExecutablePou for CompiledSfcPou {
                 for act in &step.actions {
                     match act.qualifier {
                         ActionQualifier::N => match &act.kind {
-                            CompiledActionKind::BooleanSymbol(sym) => {
-                                sfc_ctx.write_symbol(sym, IecValue::Bool(true))?;
+                            CompiledActionKind::BooleanSymbol(sym, tag_id) => {
+                                Self::write_action_bool(sfc_ctx, sym, *tag_id, true)?;
                             }
                             CompiledActionKind::Statements(stmts) => {
                                 for s in stmts {
@@ -1841,8 +1891,8 @@ impl ExecutablePou for CompiledSfcPou {
                             }
                         },
                         ActionQualifier::S if rising_edge => match &act.kind {
-                            CompiledActionKind::BooleanSymbol(sym) => {
-                                sfc_ctx.write_symbol(sym, IecValue::Bool(true))?;
+                            CompiledActionKind::BooleanSymbol(sym, tag_id) => {
+                                Self::write_action_bool(sfc_ctx, sym, *tag_id, true)?;
                             }
                             CompiledActionKind::Statements(stmts) => {
                                 for s in stmts {
@@ -1851,8 +1901,8 @@ impl ExecutablePou for CompiledSfcPou {
                             }
                         },
                         ActionQualifier::R if rising_edge => match &act.kind {
-                            CompiledActionKind::BooleanSymbol(sym) => {
-                                sfc_ctx.write_symbol(sym, IecValue::Bool(false))?;
+                            CompiledActionKind::BooleanSymbol(sym, tag_id) => {
+                                Self::write_action_bool(sfc_ctx, sym, *tag_id, false)?;
                             }
                             CompiledActionKind::Statements(stmts) => {
                                 for s in stmts {
@@ -1862,20 +1912,20 @@ impl ExecutablePou for CompiledSfcPou {
                         },
                         ActionQualifier::S | ActionQualifier::R => {}
                         ActionQualifier::F => {
-                            if let CompiledActionKind::BooleanSymbol(sym) = &act.kind {
+                            if let CompiledActionKind::BooleanSymbol(sym, _) = &act.kind {
                                 sfc_ctx.force_symbol(sym, IecValue::Bool(true))?;
                             }
                         }
                         ActionQualifier::FZ => {
-                            if let CompiledActionKind::BooleanSymbol(sym) = &act.kind {
+                            if let CompiledActionKind::BooleanSymbol(sym, _) = &act.kind {
                                 sfc_ctx.force_symbol(sym, IecValue::Bool(false))?;
                             }
                         }
                         ActionQualifier::L => {
                             let active_now = step.elapsed_ms < act.duration_ms;
                             match &act.kind {
-                                CompiledActionKind::BooleanSymbol(sym) => {
-                                    sfc_ctx.write_symbol(sym, IecValue::Bool(active_now))?;
+                                CompiledActionKind::BooleanSymbol(sym, tag_id) => {
+                                    Self::write_action_bool(sfc_ctx, sym, *tag_id, active_now)?;
                                 }
                                 CompiledActionKind::Statements(stmts) if active_now => {
                                     for s in stmts {
@@ -1888,8 +1938,8 @@ impl ExecutablePou for CompiledSfcPou {
                         ActionQualifier::D => {
                             let active_now = step.elapsed_ms >= act.duration_ms;
                             match &act.kind {
-                                CompiledActionKind::BooleanSymbol(sym) => {
-                                    sfc_ctx.write_symbol(sym, IecValue::Bool(active_now))?;
+                                CompiledActionKind::BooleanSymbol(sym, tag_id) => {
+                                    Self::write_action_bool(sfc_ctx, sym, *tag_id, active_now)?;
                                 }
                                 CompiledActionKind::Statements(stmts) if active_now => {
                                     for s in stmts {
@@ -1900,8 +1950,8 @@ impl ExecutablePou for CompiledSfcPou {
                             }
                         }
                         ActionQualifier::P => match &act.kind {
-                            CompiledActionKind::BooleanSymbol(sym) => {
-                                sfc_ctx.write_symbol(sym, IecValue::Bool(rising_edge))?;
+                            CompiledActionKind::BooleanSymbol(sym, tag_id) => {
+                                Self::write_action_bool(sfc_ctx, sym, *tag_id, rising_edge)?;
                             }
                             CompiledActionKind::Statements(stmts) if rising_edge => {
                                 for s in stmts {
@@ -2638,7 +2688,8 @@ mod tests {
                         target: "Batch_Count := Batch_Count + 1;".to_string(), // 32 chars
                         duration: None,
                     }],
-                    grid_pos: None, ..Default::default()
+                    grid_pos: None,
+                    ..Default::default()
                 },
                 SfcStep::new("2", "Branch_B", StepKind::Normal),
             ],
@@ -2757,7 +2808,10 @@ mod tests {
         };
         let rep_valid = validate_sfc_topology(&valid_and_div);
         assert!(
-            rep_valid.errors.iter().all(|e| !matches!(e, SfcValidationError::InvalidAndDivergence { .. })),
+            rep_valid
+                .errors
+                .iter()
+                .all(|e| !matches!(e, SfcValidationError::InvalidAndDivergence { .. })),
             "Valid AND divergence should not have InvalidAndDivergence errors"
         );
 
@@ -2822,7 +2876,10 @@ mod tests {
         };
         let rep_valid = validate_sfc_topology(&valid_and_conv);
         assert!(
-            rep_valid.errors.iter().all(|e| !matches!(e, SfcValidationError::InvalidAndConvergence { .. })),
+            rep_valid
+                .errors
+                .iter()
+                .all(|e| !matches!(e, SfcValidationError::InvalidAndConvergence { .. })),
             "Valid AND convergence should not have InvalidAndConvergence errors"
         );
 
@@ -2886,7 +2943,10 @@ mod tests {
         };
         let rep_valid = validate_sfc_topology(&valid_or_div);
         assert!(
-            rep_valid.errors.iter().all(|e| !matches!(e, SfcValidationError::InvalidOrDivergence { .. })),
+            rep_valid
+                .errors
+                .iter()
+                .all(|e| !matches!(e, SfcValidationError::InvalidOrDivergence { .. })),
             "Valid OR divergence should not have InvalidOrDivergence errors"
         );
 
@@ -2947,7 +3007,10 @@ mod tests {
         };
         let rep_valid = validate_sfc_topology(&valid_or_conv);
         assert!(
-            rep_valid.errors.iter().all(|e| !matches!(e, SfcValidationError::InvalidOrConvergence { .. })),
+            rep_valid
+                .errors
+                .iter()
+                .all(|e| !matches!(e, SfcValidationError::InvalidOrConvergence { .. })),
             "Valid OR convergence should not produce InvalidOrConvergence errors"
         );
 
@@ -2979,7 +3042,8 @@ mod tests {
     }
 
     #[test]
-    fn test_sfc_or_convergence_state_passes_when_variables_true() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_sfc_or_convergence_state_passes_when_variables_true()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut img = ProcessImage::default();
         let mut tags = TagTable::new();
         tags.register_tag(TagEntry::new(
@@ -3039,33 +3103,61 @@ mod tests {
 
         // Scan 1: Initialize initial step 0
         compiled.execute(&mut ctx)?;
-        assert!(ctx.read_bool("or_conv_run.X0.state")?, "Step 0 should be active on first scan");
-        assert!(!ctx.read_bool("or_conv_run.X1.state")?, "Step 1 should not be active yet");
+        assert!(
+            ctx.read_bool("or_conv_run.X0.state")?,
+            "Step 0 should be active on first scan"
+        );
+        assert!(
+            !ctx.read_bool("or_conv_run.X1.state")?,
+            "Step 1 should not be active yet"
+        );
 
         // Scan 2: T0 (TRUE) fires -> Step 0 clears, Step 1 activates
         compiled.execute(&mut ctx)?;
-        assert!(ctx.read_bool("or_conv_run.X1.state")?, "Step 1 should be active after T0 fires");
-        assert!(!ctx.read_bool("or_conv_run.X2.state")?, "Step 2 should be inactive");
-        assert!(!ctx.read_bool("or_conv_run.X3.state")?, "Step 3 should not be active yet");
+        assert!(
+            ctx.read_bool("or_conv_run.X1.state")?,
+            "Step 1 should be active after T0 fires"
+        );
+        assert!(
+            !ctx.read_bool("or_conv_run.X2.state")?,
+            "Step 2 should be inactive"
+        );
+        assert!(
+            !ctx.read_bool("or_conv_run.X3.state")?,
+            "Step 3 should not be active yet"
+        );
 
         // Scan 3: Merge_Permissive is still FALSE -> Step 1 remains active, Step 3 inactive.
         compiled.execute(&mut ctx)?;
-        assert!(ctx.read_bool("or_conv_run.X1.state")?, "Step 1 should remain active");
-        assert!(!ctx.read_bool("or_conv_run.X3.state")?, "Step 3 should not be active yet");
+        assert!(
+            ctx.read_bool("or_conv_run.X1.state")?,
+            "Step 1 should remain active"
+        );
+        assert!(
+            !ctx.read_bool("or_conv_run.X3.state")?,
+            "Step 3 should not be active yet"
+        );
 
         // Set Merge_Permissive to TRUE:
         ctx.write_symbol("Merge_Permissive", IecValue::Bool(true))?;
 
         // Scan 4: OR convergence transition T1_Merge must fire because Step 1 is active and Merge_Permissive is TRUE!
         compiled.execute(&mut ctx)?;
-        assert!(!ctx.read_bool("or_conv_run.X1.state")?, "Step 1 should clear when T1_Merge fires");
-        assert!(ctx.read_bool("or_conv_run.X3.state")?, "State MUST pass to Step 3 through OR convergence!");
+        assert!(
+            !ctx.read_bool("or_conv_run.X1.state")?,
+            "Step 1 should clear when T1_Merge fires"
+        );
+        assert!(
+            ctx.read_bool("or_conv_run.X3.state")?,
+            "State MUST pass to Step 3 through OR convergence!"
+        );
 
         Ok(())
     }
 
     #[test]
-    fn test_i12_external_step_override_edge_preservation() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_i12_external_step_override_edge_preservation() -> Result<(), Box<dyn std::error::Error>>
+    {
         let mut img = ProcessImage::default();
         let mut tags = TagTable::new();
 
@@ -3219,7 +3311,10 @@ mod tests {
         compiled_slave.execute(&mut ctx)?;
         assert!(!ctx.read_bool("slave_seq.X1.state")?);
         // Assert Pump_Cmd returns false on deactivation!
-        assert!(!ctx.read_bool("Pump_Cmd")?, "Pump_Cmd must return false after external reset [R]");
+        assert!(
+            !ctx.read_bool("Pump_Cmd")?,
+            "Pump_Cmd must return false after external reset [R]"
+        );
         assert_eq!(ctx.read_symbol("Pulse_Count")?, IecValue::Int(1));
 
         // Scan 5: Master applies [S] on slave_seq.X1.state
@@ -3229,20 +3324,32 @@ mod tests {
         // Master executed [S] slave_seq.X1.state
         compiled_slave.execute(&mut ctx)?;
         assert!(ctx.read_bool("slave_seq.X1.state")?);
-        assert!(ctx.read_bool("Pump_Cmd")?, "Pump_Cmd must activate TRUE after external set [S]");
+        assert!(
+            ctx.read_bool("Pump_Cmd")?,
+            "Pump_Cmd must activate TRUE after external set [S]"
+        );
         // Assert P fires once on activation edge!
-        assert_eq!(ctx.read_symbol("Pulse_Count")?, IecValue::Int(2), "P action must fire once on rising edge after external [S]");
+        assert_eq!(
+            ctx.read_symbol("Pulse_Count")?,
+            IecValue::Int(2),
+            "P action must fire once on rising edge after external [S]"
+        );
 
         // Scan 6: Steady state after [S]
         compiled_slave.execute(&mut ctx)?;
         assert!(ctx.read_bool("Pump_Cmd")?);
-        assert_eq!(ctx.read_symbol("Pulse_Count")?, IecValue::Int(2), "P action must NOT re-fire in steady state");
+        assert_eq!(
+            ctx.read_symbol("Pulse_Count")?,
+            IecValue::Int(2),
+            "P action must NOT re-fire in steady state"
+        );
 
         Ok(())
     }
 
     #[test]
-    fn test_i13_c13_reject_invalid_action_qualifier_statement_targets() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_i13_c13_reject_invalid_action_qualifier_statement_targets()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut tags = TagTable::new();
 
         let make_prog = |qualifier: ActionQualifier| -> SfcProgram {
@@ -3258,7 +3365,10 @@ mod tests {
                         actions: vec![SfcAction {
                             qualifier,
                             target: "Setpoint := 100;".to_string(),
-                            duration: if matches!(qualifier, ActionQualifier::L | ActionQualifier::D) {
+                            duration: if matches!(
+                                qualifier,
+                                ActionQualifier::L | ActionQualifier::D
+                            ) {
                                 Some("T#100ms".to_string())
                             } else {
                                 None
@@ -3284,7 +3394,8 @@ mod tests {
             let res = prog.compile(&tags);
             assert!(
                 matches!(res, Err(SfcError::UnsupportedActionTarget { qualifier, .. }) if qualifier == q),
-                "Expected UnsupportedActionTarget for qualifier {:?}", q
+                "Expected UnsupportedActionTarget for qualifier {:?}",
+                q
             );
         }
 
@@ -3295,7 +3406,8 @@ mod tests {
             let res = prog.compile(&tags);
             assert!(
                 matches!(res, Err(SfcError::UnsupportedActionTarget { qualifier, .. }) if qualifier == q),
-                "Expected UnsupportedActionTarget for qualifier {:?}", q
+                "Expected UnsupportedActionTarget for qualifier {:?}",
+                q
             );
         }
 
@@ -3303,7 +3415,8 @@ mod tests {
     }
 
     #[test]
-    fn test_i14_sr_actions_execute_only_on_activation_edge() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_i14_sr_actions_execute_only_on_activation_edge()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut img = ProcessImage::default();
         let mut tags = TagTable::new();
 
@@ -3365,7 +3478,10 @@ mod tests {
         ctx.write_symbol("Latched_Out", IecValue::Bool(false))?;
         compiled.execute(&mut ctx)?;
         // Step 1 is active, but NOT on rising edge: S action must not re-latch Latched_Out!
-        assert!(!ctx.read_bool("Latched_Out")?, "S action must execute only on activation edge, not every scan");
+        assert!(
+            !ctx.read_bool("Latched_Out")?,
+            "S action must execute only on activation edge, not every scan"
+        );
 
         Ok(())
     }
@@ -3431,8 +3547,14 @@ mod tests {
         compiled_b.execute(&mut ctx)?;
         // If bare "X0.t" bound to POU A, TB0 would have fired immediately!
         // But because it binds to own POU ("chart_b.X0.t"), TB0 does not fire!
-        assert!(ctx.read_bool("chart_b.X0.state")?, "POU B step 0 should still be active");
-        assert!(!ctx.read_bool("chart_b.X1.state")?, "POU B step 1 should NOT be active yet");
+        assert!(
+            ctx.read_bool("chart_b.X0.state")?,
+            "POU B step 0 should still be active"
+        );
+        assert!(
+            !ctx.read_bool("chart_b.X1.state")?,
+            "POU B step 1 should NOT be active yet"
+        );
 
         // Scan 2 (+50ms): POU B's own X0.t is now 50ms (< 100ms)
         compiled_b.execute(&mut ctx)?;
@@ -3440,7 +3562,10 @@ mod tests {
 
         // Scan 3 (+50ms): POU B's own X0.t reaches 100ms -> TB0 fires!
         compiled_b.execute(&mut ctx)?;
-        assert!(ctx.read_bool("chart_b.X1.state")?, "POU B step 1 must activate after its own X0.t reaches 100ms");
+        assert!(
+            ctx.read_bool("chart_b.X1.state")?,
+            "POU B step 1 must activate after its own X0.t reaches 100ms"
+        );
 
         Ok(())
     }
@@ -3465,7 +3590,11 @@ mod tests {
         };
         let rep1 = validate_sfc_topology(&prog_dup_id);
         assert!(!rep1.is_valid);
-        assert!(rep1.errors.iter().any(|e| matches!(e, SfcValidationError::DuplicateStepId { .. })));
+        assert!(
+            rep1.errors
+                .iter()
+                .any(|e| matches!(e, SfcValidationError::DuplicateStepId { .. }))
+        );
 
         // 2. Ambiguous step name colliding with another step's ID
         let prog_ambig_name = SfcProgram {
@@ -3485,7 +3614,11 @@ mod tests {
         };
         let rep2 = validate_sfc_topology(&prog_ambig_name);
         assert!(!rep2.is_valid);
-        assert!(rep2.errors.iter().any(|e| matches!(e, SfcValidationError::AmbiguousStepName { .. })));
+        assert!(
+            rep2.errors
+                .iter()
+                .any(|e| matches!(e, SfcValidationError::AmbiguousStepName { .. }))
+        );
 
         // 3. Two steps with duplicate names
         let prog_dup_name = SfcProgram {
@@ -3505,7 +3638,11 @@ mod tests {
         };
         let rep3 = validate_sfc_topology(&prog_dup_name);
         assert!(!rep3.is_valid);
-        assert!(rep3.errors.iter().any(|e| matches!(e, SfcValidationError::AmbiguousStepName { .. })));
+        assert!(
+            rep3.errors
+                .iter()
+                .any(|e| matches!(e, SfcValidationError::AmbiguousStepName { .. }))
+        );
     }
 
     #[test]
@@ -3540,11 +3677,16 @@ mod tests {
         };
         let rep = validate_sfc_topology(&prog);
         assert!(!rep.is_valid);
-        assert!(rep.errors.iter().any(|e| matches!(e, SfcValidationError::InvalidAlternation { .. })));
+        assert!(
+            rep.errors
+                .iter()
+                .any(|e| matches!(e, SfcValidationError::InvalidAlternation { .. }))
+        );
     }
 
     #[test]
-    fn test_macro_step_embedded_sfc_compilation_and_execution() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_macro_step_embedded_sfc_compilation_and_execution()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut tags = TagTable::new();
         tags.register_tag(ferrite_core::tag_table::TagEntry::new(
             "InnerDone",
@@ -3704,8 +3846,11 @@ mod tests {
         };
         let rep = validate_sfc_topology(&prog);
         assert!(
-            rep.warnings.iter().any(|w| w.contains("Step '99'") && w.contains("unreachable")),
-            "Expected unreachable step warning for Step 99, warnings: {:?}", rep.warnings
+            rep.warnings
+                .iter()
+                .any(|w| w.contains("Step '99'") && w.contains("unreachable")),
+            "Expected unreachable step warning for Step 99, warnings: {:?}",
+            rep.warnings
         );
     }
 }
