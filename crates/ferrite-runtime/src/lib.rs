@@ -217,6 +217,8 @@ pub struct RetainSnapshot {
     pub markers: Vec<u8>,
 }
 
+pub const MAX_DEADLINE_VIOLATIONS: usize = 1000;
+
 /// Deterministic PLC runtime executing the 4-phase scan cycle:
 /// 1. Input Scan -> 2. Task & POU Execution -> 3. Output Scan -> 4. Diagnostics & Watchdog.
 pub struct PlcRuntime {
@@ -230,8 +232,8 @@ pub struct PlcRuntime {
     /// When `true` (strict hard real-time fail-stop mode), a task deadline overrun immediately
     /// halts the runtime with `RuntimeError::WatchdogTimeout`.
     pub strict_deadline_mode: bool,
-    /// Cumulative record of task deadline violations: `(task_name, scan, overrun_us)`.
-    pub task_deadline_violations: Vec<(String, u64, u64)>,
+    /// Bounded record of task deadline violations: `(task_name, scan, overrun_us)`.
+    pub task_deadline_violations: VecDeque<(String, u64, u64)>,
     /// High-frequency synchronous in-scan trace buffer (sampled in Phase 4).
     pub trace_buffer: TraceBuffer,
     pub scan_count: u64,
@@ -241,6 +243,8 @@ pub struct PlcRuntime {
     pub breakpoints: Vec<Breakpoint>,
     pub watch_list: Vec<String>,
     input_tag_bindings: Vec<(TagId, DirectAddress, IecType)>,
+    executed_pous_scratch: Vec<PouId>,
+    scan_violations_scratch: Vec<(String, u64, u64)>,
     pub alarms: Vec<ActiveAlarm>,
     pub alarm_journal: VecDeque<AlarmEventRecord>,
 }
@@ -248,7 +252,7 @@ pub struct PlcRuntime {
 impl PlcRuntime {
     pub fn from_project(project: &Project) -> Result<Self, ProjectError> {
         let (tags, compiled_tasks) = project.compile_tasks()?;
-        let tasks = compiled_tasks
+        let tasks: Vec<ScheduledTask> = compiled_tasks
             .into_iter()
             .map(|t| {
                 let pou_ids = t.pous.iter().map(|p| p.id()).collect();
@@ -321,6 +325,9 @@ impl PlcRuntime {
             }));
         }
 
+        let total_pous: usize = tasks.iter().map(|t| t.pous.len()).sum();
+        let task_cap = tasks.len().max(4);
+
         Ok(Self {
             process_image,
             tags,
@@ -328,7 +335,7 @@ impl PlcRuntime {
             scan_cycle_ms: project.manifest.scan_cycle_ms,
             watchdog_us: project.manifest.watchdog_us,
             strict_deadline_mode: false,
-            task_deadline_violations: Vec::new(),
+            task_deadline_violations: VecDeque::with_capacity(64),
             trace_buffer: TraceBuffer::default(),
             scan_count: 0,
             virtual_time_ms: 0,
@@ -337,6 +344,8 @@ impl PlcRuntime {
             breakpoints: Vec::new(),
             watch_list,
             input_tag_bindings,
+            executed_pous_scratch: Vec::with_capacity(total_pous.max(8)),
+            scan_violations_scratch: Vec::with_capacity(task_cap),
             alarms,
             alarm_journal: VecDeque::new(),
         })
@@ -612,8 +621,8 @@ impl PlcRuntime {
         let mut hit_breakpoint: Option<Breakpoint> = None;
 
         // Phase 2: Task & POU Execution
-        let mut executed_pous = Vec::new();
-        let mut scan_task_violations = Vec::new();
+        self.executed_pous_scratch.clear();
+        self.scan_violations_scratch.clear();
         {
             let dt_ms = self.scan_cycle_ms;
             let scan_count = self.scan_count;
@@ -657,15 +666,18 @@ impl PlcRuntime {
                     );
                     for pou in &mut task.pous {
                         pou.execute(&mut ctx)?;
-                        executed_pous.push(pou.id());
+                        self.executed_pous_scratch.push(pou.id());
                     }
                     let task_elapsed_us = task_start.elapsed().as_micros() as u64;
                     if task.watchdog_us > 0 && task_elapsed_us > task.watchdog_us {
                         let overrun_us = task_elapsed_us.saturating_sub(task.watchdog_us);
                         task.task_faulted = true;
                         let violation = (task.name.clone(), scan_count, overrun_us);
-                        scan_task_violations.push(violation.clone());
-                        self.task_deadline_violations.push(violation);
+                        self.scan_violations_scratch.push(violation.clone());
+                        if self.task_deadline_violations.len() >= MAX_DEADLINE_VIOLATIONS {
+                            self.task_deadline_violations.pop_front();
+                        }
+                        self.task_deadline_violations.push_back(violation);
 
                         if self.strict_deadline_mode {
                             return Err(RuntimeError::WatchdogTimeout {
@@ -735,7 +747,7 @@ impl PlcRuntime {
                             break;
                         }
                     }
-                    Breakpoint::Pou(id) if executed_pous.contains(id) => {
+                    Breakpoint::Pou(id) if self.executed_pous_scratch.contains(id) => {
                         hit_breakpoint = Some(bp.clone());
                         break;
                     }
@@ -744,6 +756,11 @@ impl PlcRuntime {
             }
         }
         let breakpoint_hit = hit_breakpoint.is_some();
+        let scan_task_violations = if self.scan_violations_scratch.is_empty() {
+            Vec::new()
+        } else {
+            self.scan_violations_scratch.clone()
+        };
 
         Ok(ScanTelemetry {
             scan_count: self.scan_count,
@@ -828,35 +845,42 @@ impl PlcRuntime {
 
                     // Evaluate explicit ScenarioAssert assertions (FB instances, range gates, operators)
                     for assert in &step.asserts {
-                        let (target_sym, expected_val) = if let Some((fb, field)) = assert.target_fb_and_field() {
-                            let sym = format!("{fb}.{field}");
-                            (sym, assert.value.clone())
-                        } else if let Some(ref step_name) = assert.sfc_step {
-                            let sym = format!("{step_name}.state");
-                            (sym, assert.value.clone().or(Some(IecValue::Bool(true))))
-                        } else if !assert.fb.is_empty() {
-                            (assert.fb.clone(), assert.value.clone())
-                        } else {
-                            continue;
-                        };
+                        let (target_sym, expected_val) =
+                            if let Some((fb, field)) = assert.target_fb_and_field() {
+                                let sym = format!("{fb}.{field}");
+                                (sym, assert.value.clone())
+                            } else if let Some(ref step_name) = assert.sfc_step {
+                                let sym = format!("{step_name}.state");
+                                (sym, assert.value.clone().or(Some(IecValue::Bool(true))))
+                            } else if !assert.fb.is_empty() {
+                                (assert.fb.clone(), assert.value.clone())
+                            } else {
+                                continue;
+                            };
 
-                        let actual = self.read_value(&target_sym).map_err(|source| ScenarioError::Runtime {
-                            scenario: scenario.name.clone(),
-                            scan: scan_idx,
-                            source,
+                        let actual = self.read_value(&target_sym).map_err(|source| {
+                            ScenarioError::Runtime {
+                                scenario: scenario.name.clone(),
+                                scan: scan_idx,
+                                source,
+                            }
                         })?;
 
                         match assert.op {
                             ferrite_project::AssertOp::Equal => {
-                                let expected = expected_val.ok_or_else(|| ScenarioError::Runtime {
-                                    scenario: scenario.name.clone(),
-                                    scan: scan_idx,
-                                    source: RuntimeError::ExecutionError {
-                                        pou: scenario.name.clone(),
-                                        message: "Assertion requires expected value".to_string(),
-                                    },
-                                })?;
-                                let coerced = expected.coerce_to(actual.iec_type()).unwrap_or(expected.clone());
+                                let expected =
+                                    expected_val.ok_or_else(|| ScenarioError::Runtime {
+                                        scenario: scenario.name.clone(),
+                                        scan: scan_idx,
+                                        source: RuntimeError::ExecutionError {
+                                            pou: scenario.name.clone(),
+                                            message: "Assertion requires expected value"
+                                                .to_string(),
+                                        },
+                                    })?;
+                                let coerced = expected
+                                    .coerce_to(actual.iec_type())
+                                    .unwrap_or(expected.clone());
                                 if actual != coerced {
                                     return Err(ScenarioError::AssertionFailed {
                                         scenario: scenario.name.clone(),
@@ -868,15 +892,19 @@ impl PlcRuntime {
                                 }
                             }
                             ferrite_project::AssertOp::NotEqual => {
-                                let expected = expected_val.ok_or_else(|| ScenarioError::Runtime {
-                                    scenario: scenario.name.clone(),
-                                    scan: scan_idx,
-                                    source: RuntimeError::ExecutionError {
-                                        pou: scenario.name.clone(),
-                                        message: "Assertion requires expected value".to_string(),
-                                    },
-                                })?;
-                                let coerced = expected.coerce_to(actual.iec_type()).unwrap_or(expected.clone());
+                                let expected =
+                                    expected_val.ok_or_else(|| ScenarioError::Runtime {
+                                        scenario: scenario.name.clone(),
+                                        scan: scan_idx,
+                                        source: RuntimeError::ExecutionError {
+                                            pou: scenario.name.clone(),
+                                            message: "Assertion requires expected value"
+                                                .to_string(),
+                                        },
+                                    })?;
+                                let coerced = expected
+                                    .coerce_to(actual.iec_type())
+                                    .unwrap_or(expected.clone());
                                 if actual == coerced {
                                     return Err(ScenarioError::AssertionFailed {
                                         scenario: scenario.name.clone(),
@@ -888,15 +916,19 @@ impl PlcRuntime {
                                 }
                             }
                             ferrite_project::AssertOp::LessThan => {
-                                let expected = expected_val.ok_or_else(|| ScenarioError::Runtime {
-                                    scenario: scenario.name.clone(),
-                                    scan: scan_idx,
-                                    source: RuntimeError::ExecutionError {
-                                        pou: scenario.name.clone(),
-                                        message: "Assertion requires expected value".to_string(),
-                                    },
-                                })?;
-                                let coerced = expected.coerce_to(actual.iec_type()).unwrap_or(expected.clone());
+                                let expected =
+                                    expected_val.ok_or_else(|| ScenarioError::Runtime {
+                                        scenario: scenario.name.clone(),
+                                        scan: scan_idx,
+                                        source: RuntimeError::ExecutionError {
+                                            pou: scenario.name.clone(),
+                                            message: "Assertion requires expected value"
+                                                .to_string(),
+                                        },
+                                    })?;
+                                let coerced = expected
+                                    .coerce_to(actual.iec_type())
+                                    .unwrap_or(expected.clone());
                                 if actual.partial_cmp(&coerced) != Some(std::cmp::Ordering::Less) {
                                     return Err(ScenarioError::AssertionFailed {
                                         scenario: scenario.name.clone(),
@@ -908,16 +940,23 @@ impl PlcRuntime {
                                 }
                             }
                             ferrite_project::AssertOp::LessEqual => {
-                                let expected = expected_val.ok_or_else(|| ScenarioError::Runtime {
-                                    scenario: scenario.name.clone(),
-                                    scan: scan_idx,
-                                    source: RuntimeError::ExecutionError {
-                                        pou: scenario.name.clone(),
-                                        message: "Assertion requires expected value".to_string(),
-                                    },
-                                })?;
-                                let coerced = expected.coerce_to(actual.iec_type()).unwrap_or(expected.clone());
-                                if !matches!(actual.partial_cmp(&coerced), Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)) {
+                                let expected =
+                                    expected_val.ok_or_else(|| ScenarioError::Runtime {
+                                        scenario: scenario.name.clone(),
+                                        scan: scan_idx,
+                                        source: RuntimeError::ExecutionError {
+                                            pou: scenario.name.clone(),
+                                            message: "Assertion requires expected value"
+                                                .to_string(),
+                                        },
+                                    })?;
+                                let coerced = expected
+                                    .coerce_to(actual.iec_type())
+                                    .unwrap_or(expected.clone());
+                                if !matches!(
+                                    actual.partial_cmp(&coerced),
+                                    Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                                ) {
                                     return Err(ScenarioError::AssertionFailed {
                                         scenario: scenario.name.clone(),
                                         scan: scan_idx,
@@ -928,16 +967,21 @@ impl PlcRuntime {
                                 }
                             }
                             ferrite_project::AssertOp::GreaterThan => {
-                                let expected = expected_val.ok_or_else(|| ScenarioError::Runtime {
-                                    scenario: scenario.name.clone(),
-                                    scan: scan_idx,
-                                    source: RuntimeError::ExecutionError {
-                                        pou: scenario.name.clone(),
-                                        message: "Assertion requires expected value".to_string(),
-                                    },
-                                })?;
-                                let coerced = expected.coerce_to(actual.iec_type()).unwrap_or(expected.clone());
-                                if actual.partial_cmp(&coerced) != Some(std::cmp::Ordering::Greater) {
+                                let expected =
+                                    expected_val.ok_or_else(|| ScenarioError::Runtime {
+                                        scenario: scenario.name.clone(),
+                                        scan: scan_idx,
+                                        source: RuntimeError::ExecutionError {
+                                            pou: scenario.name.clone(),
+                                            message: "Assertion requires expected value"
+                                                .to_string(),
+                                        },
+                                    })?;
+                                let coerced = expected
+                                    .coerce_to(actual.iec_type())
+                                    .unwrap_or(expected.clone());
+                                if actual.partial_cmp(&coerced) != Some(std::cmp::Ordering::Greater)
+                                {
                                     return Err(ScenarioError::AssertionFailed {
                                         scenario: scenario.name.clone(),
                                         scan: scan_idx,
@@ -948,16 +992,23 @@ impl PlcRuntime {
                                 }
                             }
                             ferrite_project::AssertOp::GreaterEqual => {
-                                let expected = expected_val.ok_or_else(|| ScenarioError::Runtime {
-                                    scenario: scenario.name.clone(),
-                                    scan: scan_idx,
-                                    source: RuntimeError::ExecutionError {
-                                        pou: scenario.name.clone(),
-                                        message: "Assertion requires expected value".to_string(),
-                                    },
-                                })?;
-                                let coerced = expected.coerce_to(actual.iec_type()).unwrap_or(expected.clone());
-                                if !matches!(actual.partial_cmp(&coerced), Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)) {
+                                let expected =
+                                    expected_val.ok_or_else(|| ScenarioError::Runtime {
+                                        scenario: scenario.name.clone(),
+                                        scan: scan_idx,
+                                        source: RuntimeError::ExecutionError {
+                                            pou: scenario.name.clone(),
+                                            message: "Assertion requires expected value"
+                                                .to_string(),
+                                        },
+                                    })?;
+                                let coerced = expected
+                                    .coerce_to(actual.iec_type())
+                                    .unwrap_or(expected.clone());
+                                if !matches!(
+                                    actual.partial_cmp(&coerced),
+                                    Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+                                ) {
                                     return Err(ScenarioError::AssertionFailed {
                                         scenario: scenario.name.clone(),
                                         scan: scan_idx,
@@ -968,32 +1019,44 @@ impl PlcRuntime {
                                 }
                             }
                             ferrite_project::AssertOp::InRange => {
-                                let min = assert.min.as_ref().ok_or_else(|| ScenarioError::Runtime {
-                                    scenario: scenario.name.clone(),
-                                    scan: scan_idx,
-                                    source: RuntimeError::ExecutionError {
-                                        pou: scenario.name.clone(),
-                                        message: "InRange requires min".to_string(),
-                                    },
-                                })?;
-                                let max = assert.max.as_ref().ok_or_else(|| ScenarioError::Runtime {
-                                    scenario: scenario.name.clone(),
-                                    scan: scan_idx,
-                                    source: RuntimeError::ExecutionError {
-                                        pou: scenario.name.clone(),
-                                        message: "InRange requires max".to_string(),
-                                    },
-                                })?;
-                                let coerced_min = min.coerce_to(actual.iec_type()).unwrap_or(min.clone());
-                                let coerced_max = max.coerce_to(actual.iec_type()).unwrap_or(max.clone());
-                                let in_min = matches!(actual.partial_cmp(&coerced_min), Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal));
-                                let in_max = matches!(actual.partial_cmp(&coerced_max), Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal));
+                                let min =
+                                    assert.min.as_ref().ok_or_else(|| ScenarioError::Runtime {
+                                        scenario: scenario.name.clone(),
+                                        scan: scan_idx,
+                                        source: RuntimeError::ExecutionError {
+                                            pou: scenario.name.clone(),
+                                            message: "InRange requires min".to_string(),
+                                        },
+                                    })?;
+                                let max =
+                                    assert.max.as_ref().ok_or_else(|| ScenarioError::Runtime {
+                                        scenario: scenario.name.clone(),
+                                        scan: scan_idx,
+                                        source: RuntimeError::ExecutionError {
+                                            pou: scenario.name.clone(),
+                                            message: "InRange requires max".to_string(),
+                                        },
+                                    })?;
+                                let coerced_min =
+                                    min.coerce_to(actual.iec_type()).unwrap_or(min.clone());
+                                let coerced_max =
+                                    max.coerce_to(actual.iec_type()).unwrap_or(max.clone());
+                                let in_min = matches!(
+                                    actual.partial_cmp(&coerced_min),
+                                    Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+                                );
+                                let in_max = matches!(
+                                    actual.partial_cmp(&coerced_max),
+                                    Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                                );
                                 if !(in_min && in_max) {
                                     return Err(ScenarioError::AssertionFailed {
                                         scenario: scenario.name.clone(),
                                         scan: scan_idx,
                                         symbol: target_sym,
-                                        expected: IecValue::String(format!("in [{coerced_min}, {coerced_max}]")),
+                                        expected: IecValue::String(format!(
+                                            "in [{coerced_min}, {coerced_max}]"
+                                        )),
                                         actual,
                                     });
                                 }
@@ -1030,7 +1093,6 @@ impl PlcRuntime {
 }
 
 impl PlcRuntime {
-
     /// Evaluates all configured ISA-18.2 alarms against current tag and memory values.
     pub fn evaluate_alarms(&mut self) {
         let time_ms = self.virtual_time_ms;
@@ -1130,7 +1192,9 @@ impl PlcRuntime {
 
         let tmp_file_name = format!(
             ".{}.tmp.{}",
-            path.file_name().and_then(|n| n.to_str()).unwrap_or("retain"),
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("retain"),
             std::process::id()
         );
         let tmp_path = parent.join(tmp_file_name);
@@ -1223,10 +1287,8 @@ impl PlcRuntime {
     where
         I: IntoIterator<Item = Box<dyn ExecutablePou>>,
     {
-        let mut incoming: HashMap<PouId, Box<dyn ExecutablePou>> = new_pous
-            .into_iter()
-            .map(|p| (p.id(), p))
-            .collect();
+        let mut incoming: HashMap<PouId, Box<dyn ExecutablePou>> =
+            new_pous.into_iter().map(|p| (p.id(), p)).collect();
 
         let mut updated_pous = Vec::new();
         let mut added_pous = Vec::new();
@@ -1635,7 +1697,8 @@ mod tests {
     }
 
     #[test]
-    fn test_runtime_warm_restart_relatches_inputs_and_resets_fbs() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_runtime_warm_restart_relatches_inputs_and_resets_fbs()
+    -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = env::temp_dir().join("ferrite_plc_warm_restart_relatch_test");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
@@ -1648,7 +1711,9 @@ mod tests {
 
         // Mutate hardware input to FALSE and advance a timer
         let estop_addr: ferrite_core::address::DirectAddress = "%IX0.0".parse()?;
-        runtime.process_image.set_hw_input(estop_addr, &IecValue::Bool(false))?;
+        runtime
+            .process_image
+            .set_hw_input(estop_addr, &IecValue::Bool(false))?;
         runtime.process_image.latch_inputs();
         assert_eq!(runtime.read_value("EStop_OK")?, IecValue::Bool(false));
 
@@ -1683,7 +1748,8 @@ mod tests {
     }
 
     #[test]
-    fn test_regression_i5_breakpoint_pou_fires_only_when_executed() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_regression_i5_breakpoint_pou_fires_only_when_executed()
+    -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = env::temp_dir().join("ferrite_plc_i5_bp_test");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
@@ -1691,16 +1757,14 @@ mod tests {
         let mut project = Project::scaffold(&temp_dir, "i5_bp_plant")?;
         use ferrite_project::{TaskConfig, TaskKind};
         project.manifest.scan_cycle_ms = 10;
-        project.manifest.tasks = vec![
-            TaskConfig {
-                name: "SlowTask".to_string(),
-                kind: TaskKind::Cyclic,
-                priority: 1,
-                interval_ms: 30,
-                trigger_symbol: None,
-                pou_order: vec!["math_pid".to_string()],
-            },
-        ];
+        project.manifest.tasks = vec![TaskConfig {
+            name: "SlowTask".to_string(),
+            kind: TaskKind::Cyclic,
+            priority: 1,
+            interval_ms: 30,
+            trigger_symbol: None,
+            pou_order: vec!["math_pid".to_string()],
+        }];
         let mut runtime = PlcRuntime::from_project(&project)?;
         let pou_id = runtime.tasks()[0].pous[0].id();
 
@@ -1708,15 +1772,24 @@ mod tests {
 
         // Scan 1 (10ms): SlowTask elapsed 10 < 30ms -> did not run -> BP must NOT hit
         let tel1 = runtime.step_scan()?;
-        assert!(!tel1.breakpoint_hit, "Breakpoint fired when POU was not executed!");
+        assert!(
+            !tel1.breakpoint_hit,
+            "Breakpoint fired when POU was not executed!"
+        );
 
         // Scan 2 (20ms): SlowTask elapsed 20 < 30ms -> did not run -> BP must NOT hit
         let tel2 = runtime.step_scan()?;
-        assert!(!tel2.breakpoint_hit, "Breakpoint fired when POU was not executed!");
+        assert!(
+            !tel2.breakpoint_hit,
+            "Breakpoint fired when POU was not executed!"
+        );
 
         // Scan 3 (30ms): SlowTask elapsed 30 >= 30ms -> runs! -> BP hits
         let tel3 = runtime.step_scan()?;
-        assert!(tel3.breakpoint_hit, "Breakpoint should hit when POU actually executes!");
+        assert!(
+            tel3.breakpoint_hit,
+            "Breakpoint should hit when POU actually executes!"
+        );
         assert_eq!(tel3.hit_breakpoint, Some(Breakpoint::Pou(pou_id)));
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -1724,7 +1797,8 @@ mod tests {
     }
 
     #[test]
-    fn test_regression_i6_retain_snapshot_atomic_and_bak_fallback() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_regression_i6_retain_snapshot_atomic_and_bak_fallback()
+    -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = env::temp_dir().join("ferrite_plc_i6_retain_test");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
@@ -1748,7 +1822,10 @@ mod tests {
         runtime.save_retain_snapshot(&snap_path)?;
 
         let bak_path = snap_path.with_extension("bak");
-        assert!(bak_path.exists(), ".bak backup should exist after subsequent save");
+        assert!(
+            bak_path.exists(),
+            ".bak backup should exist after subsequent save"
+        );
 
         // Corrupt main snapshot file
         fs::write(&snap_path, b"CORRUPTED_JSON_DATA_GARBAGE")?;
@@ -1787,7 +1864,8 @@ mod tests {
     }
 
     #[test]
-    fn test_per_task_watchdog_flag_and_strict_stop_mode() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_per_task_watchdog_flag_and_strict_stop_mode() -> Result<(), Box<dyn std::error::Error>>
+    {
         let temp_dir = env::temp_dir().join("ferrite_plc_task_watchdog_test");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
@@ -1822,7 +1900,10 @@ mod tests {
         runtime.strict_deadline_mode = true;
         let res = runtime.step_scan();
         match res {
-            Err(RuntimeError::WatchdogTimeout { elapsed_us, limit_us }) => {
+            Err(RuntimeError::WatchdogTimeout {
+                elapsed_us,
+                limit_us,
+            }) => {
                 assert_eq!(limit_us, 50);
                 assert!(elapsed_us >= 50);
             }
@@ -1834,7 +1915,8 @@ mod tests {
     }
 
     #[test]
-    fn test_trace_ring_buffer_capacity_drain_and_fifo_order() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_trace_ring_buffer_capacity_drain_and_fifo_order()
+    -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = env::temp_dir().join("ferrite_plc_trace_test");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
@@ -1843,7 +1925,10 @@ mod tests {
         let mut runtime = PlcRuntime::from_project(&project)?;
 
         let t_level = runtime.tags.tag_id("Tank_Level").ok_or("Tank_Level tag")?;
-        let t_batch = runtime.tags.tag_id("Batch_Count").ok_or("Batch_Count tag")?;
+        let t_batch = runtime
+            .tags
+            .tag_id("Batch_Count")
+            .ok_or("Batch_Count tag")?;
 
         // Configure trace for 2 tags with capacity of 3 samples
         runtime.configure_trace(&[t_level, t_batch], 3);
@@ -1883,7 +1968,8 @@ mod tests {
     }
 
     #[test]
-    fn test_online_reload_pous_preserving_state_and_sfc_steps() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_online_reload_pous_preserving_state_and_sfc_steps()
+    -> Result<(), Box<dyn std::error::Error>> {
         use ferrite_project::PouSource;
 
         let temp_dir = env::temp_dir().join("ferrite_plc_online_reload_test");
@@ -1902,22 +1988,34 @@ mod tests {
         // Mutate live state: set tag values, apply force, verify SFC initial step
         runtime.set_stimulus("Tank_Level", IecValue::Int(84))?;
         runtime.force("Start_Button", IecValue::Bool(true))?;
-        assert!(runtime.tags.get_tag("Start_Button").ok_or("tag")?.forced.is_some());
+        assert!(
+            runtime
+                .tags
+                .get_tag("Start_Button")
+                .ok_or("tag")?
+                .forced
+                .is_some()
+        );
 
         // SFC step states live in TagTable (e.g. batch_seq.X0.state)
-        assert_eq!(runtime.read_value("batch_seq.X0.state")?, IecValue::Bool(true));
+        assert_eq!(
+            runtime.read_value("batch_seq.X0.state")?,
+            IecValue::Bool(true)
+        );
         assert_eq!(runtime.read_value("X0.state")?, IecValue::Bool(true));
 
         // Recompile only main_safety and math_pid POUs; omit batch_seq and pump_ctrl (they will be dropped)
         let tags = project.build_tag_table()?;
-        let ld_exec: Box<dyn ExecutablePou> = match project.pous.get("main_safety").ok_or("main_safety")? {
-            PouSource::Ld(p) => Box::new(p.compile(&tags)?),
-            _ => unreachable!(),
-        };
-        let st_exec: Box<dyn ExecutablePou> = match project.pous.get("math_pid").ok_or("math_pid")? {
-            PouSource::St(p) => Box::new(p.compile(&tags)?),
-            _ => unreachable!(),
-        };
+        let ld_exec: Box<dyn ExecutablePou> =
+            match project.pous.get("main_safety").ok_or("main_safety")? {
+                PouSource::Ld(p) => Box::new(p.compile(&tags)?),
+                _ => unreachable!(),
+            };
+        let st_exec: Box<dyn ExecutablePou> =
+            match project.pous.get("math_pid").ok_or("math_pid")? {
+                PouSource::St(p) => Box::new(p.compile(&tags)?),
+                _ => unreachable!(),
+            };
 
         let report = runtime.reload_pous_preserving_state(vec![ld_exec, st_exec]);
 
@@ -1934,9 +2032,19 @@ mod tests {
         assert_eq!(runtime.read_value("Tank_Level")?, IecValue::Int(84));
         // 3. Active forces survive
         assert_eq!(runtime.read_value("Start_Button")?, IecValue::Bool(true));
-        assert!(runtime.tags.get_tag("Start_Button").ok_or("tag")?.forced.is_some());
+        assert!(
+            runtime
+                .tags
+                .get_tag("Start_Button")
+                .ok_or("tag")?
+                .forced
+                .is_some()
+        );
         // 4. SFC active step states in TagTable survive
-        assert_eq!(runtime.read_value("batch_seq.X0.state")?, IecValue::Bool(true));
+        assert_eq!(
+            runtime.read_value("batch_seq.X0.state")?,
+            IecValue::Bool(true)
+        );
         assert_eq!(runtime.read_value("X0.state")?, IecValue::Bool(true));
 
         // Subsequent scans increment scan count and execute updated POUs smoothly
@@ -1948,7 +2056,8 @@ mod tests {
     }
 
     #[test]
-    fn test_reload_from_project_preserving_state_full_workflow() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_reload_from_project_preserving_state_full_workflow()
+    -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = env::temp_dir().join("ferrite_plc_project_reload_test");
         if temp_dir.exists() {
             let _ = fs::remove_dir_all(&temp_dir);
@@ -1971,8 +2080,63 @@ mod tests {
         // Live state preserved
         assert_eq!(runtime.scan_count, 3);
         assert_eq!(runtime.read_value("Tank_Level")?, IecValue::Int(42));
-        assert_eq!(runtime.read_value("Fast_Recipe_Mode")?, IecValue::Bool(true));
-        assert!(runtime.tags.get_tag("Fast_Recipe_Mode").ok_or("tag")?.forced.is_some());
+        assert_eq!(
+            runtime.read_value("Fast_Recipe_Mode")?,
+            IecValue::Bool(true)
+        );
+        assert!(
+            runtime
+                .tags
+                .get_tag("Fast_Recipe_Mode")
+                .ok_or("tag")?
+                .forced
+                .is_some()
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_task_deadline_violations_ring_buffer_bounded() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp_dir = env::temp_dir().join("ferrite_plc_deadline_ring_test");
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
+        let project = Project::scaffold(&temp_dir, "deadline_ring_plant")?;
+        let mut runtime = PlcRuntime::from_project(&project)?;
+
+        runtime.tasks[0].watchdog_us = 1; // 1us tight deadline -> guaranteed overrun
+        runtime.tasks[0].pous = vec![Box::new(MockSlowPou {
+            id: PouId::new("slow_ring"),
+            delay_ms: 1,
+        })];
+
+        // Exceed MAX_DEADLINE_VIOLATIONS via fast direct simulation or multiple scans
+        // Pre-fill near capacity then step a few scans
+        for i in 1..=(MAX_DEADLINE_VIOLATIONS as u64 + 3) {
+            if runtime.task_deadline_violations.len() >= MAX_DEADLINE_VIOLATIONS {
+                runtime.task_deadline_violations.pop_front();
+            }
+            runtime
+                .task_deadline_violations
+                .push_back(("MainTask".to_string(), i, 50));
+        }
+        assert_eq!(
+            runtime.task_deadline_violations.len(),
+            MAX_DEADLINE_VIOLATIONS
+        );
+
+        let _ = runtime.step_scan()?;
+        assert_eq!(
+            runtime.task_deadline_violations.len(),
+            MAX_DEADLINE_VIOLATIONS
+        );
+        assert_eq!(
+            runtime.task_deadline_violations.back().map(|v| v.1),
+            Some(1)
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())
